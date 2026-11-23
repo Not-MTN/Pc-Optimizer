@@ -40,6 +40,14 @@ def data_dir() -> Path:
     Windows: %LOCALAPPDATA%\\Keel — the per-user, non-roaming location that the
     uninstaller can find and that never needs admin rights.
     """
+    # PCO_DATA wins if it is already set: `main()` uses `setdefault` to publish
+    # its choice, so honouring it here keeps ONE source of truth. Without this,
+    # an explicitly set PCO_DATA was silently ignored and the app wrote to the
+    # platform default anyway — including the crash log, which is the file you
+    # most need to be in the place you were told to look.
+    override = os.environ.get("PCO_DATA")
+    if override:
+        return Path(override)
     if sys.platform.startswith("win"):
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or "."
         return Path(base) / APP_NAME
@@ -107,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
     if "--version" in argv:
-        from . import __version__ as v
+        from pco_engine import __version__ as v
         print(f"{APP_NAME} {v}")
         return 0
 
@@ -123,7 +131,12 @@ def main(argv: list[str] | None = None) -> int:
     url = f"http://127.0.0.1:{port}"
 
     # Import after the data dir is set: store.py resolves paths at import time.
-    from . import server as srv
+    #
+    # Absolute, not relative: this file is the frozen entry point, so it runs as
+    # a top-level module where `from .` raises
+    #   ImportError: attempted relative import with no known parent package
+    # The package directory is already on sys.path (PyInstaller's `pathex`).
+    from pco_engine import server as srv
 
     def serve() -> None:
         srv.main(["--host", "127.0.0.1", "--port", str(port)])
@@ -146,5 +159,27 @@ def main(argv: list[str] | None = None) -> int:
     return _open_window(url + "/", APP_NAME)
 
 
+def _crash_log(exc: BaseException) -> None:
+    """With console=False a frozen crash writes nowhere. The only clue is a
+    dialog that says "Unhandled exception in script", and the details vanish
+    when the user clicks Close. Put the traceback somewhere durable first."""
+    try:
+        path = data_dir() / "crash.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        import traceback
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+            fh.write("".join(traceback.format_exception(
+                type(exc), exc, exc.__traceback__)))
+    except Exception:      # noqa: BLE001 - logging must never mask the crash
+        pass
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except BaseException as exc:      # noqa: BLE001 - last line of defence
+        _crash_log(exc)
+        raise

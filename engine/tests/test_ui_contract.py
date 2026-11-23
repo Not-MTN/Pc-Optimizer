@@ -273,3 +273,102 @@ def test_the_gallery_does_not_blank_itself_before_it_has_an_answer():
     clear = body.index("grid.replaceChildren()")
     fetch = body.index('api("/api/themes")')
     assert fetch < clear, "the grid is cleared before the data arrives"
+
+
+# ------------------------------------------------- frozen entry-point contract
+# PyInstaller runs the entry script as a TOP-LEVEL MODULE (__main__), so any
+# `from . import x` in it raises:
+#     ImportError: attempted relative import with no known parent package
+# and the user sees a dialog titled "Unhandled exception in script" before the
+# window ever appears. `python -m pco_engine.app` supplies a package, which is
+# why the source tree never showed it — only the frozen binary is script-mode.
+def test_the_frozen_entry_point_has_no_relative_imports():
+    from pathlib import Path
+    app = Path(__file__).resolve().parent.parent / "pco_engine" / "app.py"
+    text = app.read_text()
+    offenders = [
+        f"{i}: {line.strip()}"
+        for i, line in enumerate(text.splitlines(), 1)
+        if line.strip().startswith(("from .", "import ."))
+    ]
+    assert not offenders, (
+        "app.py is the PyInstaller entry point and must use absolute imports:\n  "
+        + "\n  ".join(offenders))
+
+
+def test_the_entry_point_actually_runs_as_a_script():
+    """The real check: run app.py the way the freeze does, not the way -m does."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    engine = Path(__file__).resolve().parent.parent
+    app = engine / "pco_engine" / "app.py"
+    env = dict(**__import__("os").environ)
+    env["PYTHONPATH"] = str(engine)
+    env["PCO_DATA"] = str(Path(__file__).resolve().parent / ".no-write")
+    r = subprocess.run([sys.executable, str(app), "--version"],
+                       capture_output=True, text=True, env=env, timeout=120)
+    assert r.returncode == 0, (
+        f"app.py failed as a top-level script:\n{r.stderr[-1500:]}")
+    assert "Keel" in r.stdout
+
+
+def test_the_data_dir_honours_pco_data():
+    """`main()` publishes its choice with `setdefault("PCO_DATA", …)`, so
+    data_dir() has to read it back or the two disagree. They did: an explicitly
+    set PCO_DATA was ignored, and the crash log went to the platform default
+    instead of the directory the user had been pointed at."""
+    import importlib
+    import os
+    from pathlib import Path
+    engine = Path(__file__).resolve().parent.parent
+    import sys
+    sys.path.insert(0, str(engine))
+    try:
+        import pco_engine.app as app
+        old = os.environ.get("PCO_DATA")
+        os.environ["PCO_DATA"] = "/tmp/keel-pco-data-check"
+        try:
+            assert str(app.data_dir()) == "/tmp/keel-pco-data-check"
+        finally:
+            if old is None:
+                os.environ.pop("PCO_DATA", None)
+            else:
+                os.environ["PCO_DATA"] = old
+    finally:
+        if str(engine) in sys.path:
+            sys.path.remove(str(engine))
+
+
+def test_a_frozen_crash_writes_a_traceback_before_dying():
+    """console=False means a frozen crash writes nowhere. The dialog vanishes on
+    Close and the details with it. This is the file that survives."""
+    import os
+    import sys
+    import tempfile
+    from pathlib import Path
+    engine = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(engine))
+    try:
+        import pco_engine.app as app
+        old = os.environ.get("PCO_DATA")
+        with tempfile.TemporaryDirectory() as d:
+            os.environ["PCO_DATA"] = d
+            try:
+                try:
+                    raise RuntimeError("deliberate test crash")
+                except BaseException as exc:
+                    app._crash_log(exc)
+                log = Path(d) / "crash.log"
+                assert log.exists(), "no crash.log was written"
+                text = log.read_text(encoding="utf-8")
+                assert "deliberate test crash" in text
+                assert "Traceback" in text
+            finally:
+                if old is None:
+                    os.environ.pop("PCO_DATA", None)
+                else:
+                    os.environ["PCO_DATA"] = old
+    finally:
+        if str(engine) in sys.path:
+            sys.path.remove(str(engine))
