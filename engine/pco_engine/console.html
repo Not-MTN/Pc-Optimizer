@@ -183,10 +183,6 @@
              display:flex;gap:14px}
   kbd{background:#1c2230;border:1px solid #2c3444;border-bottom-width:2px;border-radius:5px;
       padding:1px 6px;font:inherit;font-size:11px;color:var(--dim)}
-  .toast{position:fixed;right:22px;bottom:22px;display:flex;flex-direction:column;gap:9px;z-index:50}
-  .toast div{background:#1a1f28;border:1px solid var(--line);border-left:3px solid var(--lime);
-             padding:11px 15px;border-radius:10px;font-size:13px;box-shadow:0 18px 40px -24px #000;
-             animation:slide var(--t4) cubic-bezier(.2,.8,.3,1) both}
   @keyframes slide{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
   .sect{display:none} .sect.on{display:block;animation:rise var(--t3) both}
   .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12.5px;color:var(--dim)}
@@ -282,11 +278,14 @@
         <button class="btn ghost" id="themeSetWall">Set as my wallpaper</button>
         <button class="btn ghost" id="themeExportBtn">Copy theme file</button>
       </div>
-      <div class="gallery" id="galleryGrid"></div>
-      <div class="card" id="themeDiffCard" style="margin-top:16px;display:none">
+      <!-- The answer to a click belongs where the click happened. This card used
+           to sit below all fifteen tiles: a ~1800px scroll away, which made four
+           working buttons look broken. -->
+      <div class="card" id="themeDiffCard" style="margin-bottom:16px;display:none">
         <h2 id="themeDiffTitle">Changes</h2>
         <div id="themeDiffBody" class="sub"></div>
       </div>
+      <div class="gallery" id="galleryGrid"></div>
       <div class="card" style="margin-top:16px">
         <h2>Make your own</h2>
         <div class="sub">Paste a theme file someone shared. It is validated and
@@ -873,8 +872,6 @@
       </div>
     </section>
 
-    <div class="toast" id="toast"></div>
-
     <div class="scrim" id="palScrim">
       <div class="pal" role="dialog" aria-label="Command palette">
         <input id="palInput" placeholder="Type a command…  (clean, fix, dns on, snap)"
@@ -899,12 +896,6 @@ const ago = (ms) => { const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 86400) return Math.floor(s / 3600) + "h ago"; return Math.floor(s / 86400) + "d ago"; };
 let STATE = {};
 
-function toast(msg, bad) {
-  const t = el("div", null, msg);
-  if (bad) t.style.borderLeftColor = "var(--red)";
-  $("#toast").appendChild(t);
-  setTimeout(() => t.remove(), 4200);
-}
 
 async function api(path, body) {
   const opt = body ? { method: "POST", headers: { "content-type": "application/json" },
@@ -2525,8 +2516,23 @@ let selectedTheme = null;
 async function loadGallery() {
   const grid = $("#galleryGrid");
   if (!grid) return;
+  // Do not clear before the network call: if it failed, the grid was emptied and
+  // the screen went blank with no explanation. Build first, swap at the end.
+  let data;
+  try {
+    data = await api("/api/themes");
+  } catch (err) {
+    if (galleryThemes.length) return;   // keep whatever is already on screen
+    grid.replaceChildren();
+    const box = el("div", "empty", "Could not load the gallery: " +
+      ((err && err.message) || "the engine did not answer") +
+      ". Nothing was changed.");
+    box.style.borderLeft = "3px solid var(--red)";
+    box.style.paddingLeft = "12px";
+    grid.append(box);
+    return;
+  }
   grid.replaceChildren();
-  const data = await api("/api/themes");
   galleryThemes = data.themes || [];
   galleryThemes.forEach((t) => {
     const card = el("button", "tile");
@@ -2572,69 +2578,124 @@ async function themeDoc() {
   return r.doc;
 }
 
-$("#themeApplyActive")?.addEventListener("click", async () => {
-  if (!selectedTheme) return;
-  const r = await api("/api/themes/apply", { theme_id: selectedTheme });
-  if (!r.ok) { $("#themeDiffTitle").textContent = "Could not apply"; return; }
-  $("#themeDiffCard").style.display = "";
-  $("#themeDiffTitle").textContent = "Applied · " + r.summary;
-  $("#themeDiffBody").textContent =
-    (r.warnings || []).join(" ") ||
-    "The shell settings went through the normal journaled path, so Undo works.";
-});
+/* Every gallery action reports in one place, in front of the user. Nothing here
+   is allowed to return silently: a button that does nothing looks broken, and a
+   button that worked but hid its answer looks identical. */
+function themeReport(title, body, bad) {
+  const card = $("#themeDiffCard");
+  card.style.display = "";
+  $("#themeDiffTitle").textContent = title;
+  $("#themeDiffTitle").style.color = bad ? "var(--red)" : "";
+  const box = $("#themeDiffBody");
+  box.style.whiteSpace = "pre-wrap";
+  box.textContent = body || "";
+  // The card sits directly under the buttons now, but if the user has scrolled
+  // into the grid it may still be above the fold.
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
 
-$("#themePreviewBtn")?.addEventListener("click", async () => {
-  const doc = await themeDoc();
-  const r = await api("/api/themes/preview", { doc });
-  $("#themeDiffCard").style.display = "";
-  if (!r.ok) {
-    $("#themeDiffTitle").textContent = "That theme is not valid";
-    $("#themeDiffBody").textContent = (r.problems || []).join(" ");
-    return;
+/* Runs one gallery action with a visible busy state and a single failure path.
+   Without the try/catch, api()'s throw escaped to the global handler and the
+   card never appeared. */
+async function themeAction(btn, label, fn) {
+  const original = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = label + "…"; }
+  try {
+    await fn();
+  } catch (err) {
+    themeReport("Could not " + label.toLowerCase(),
+                (err && err.message) || String(err), true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
   }
-  $("#themeDiffTitle").textContent =
-    `${r.count} change${r.count === 1 ? "" : "s"} · ${r.summary}`;
-  const rows = r.changes.slice(0, 40).map((c) =>
-    `${c.key}: ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`);
-  $("#themeDiffBody").textContent =
-    rows.join("\n") + (r.count > 40 ? `\n…and ${r.count - 40} more` : "");
-  $("#themeDiffBody").style.whiteSpace = "pre-wrap";
+}
+
+function requireTheme() {
+  if (selectedTheme) return true;
+  themeReport("No theme selected", "Click any tile below to pick one first.", true);
+  return false;
+}
+
+$("#themeApplyActive")?.addEventListener("click", async (ev) => {
+  if (!requireTheme()) return;
+  await themeAction(ev.currentTarget, "Applying", async () => {
+    const r = await api("/api/themes/apply", { theme_id: selectedTheme });
+    if (!r.ok) { themeReport("Could not apply", r.reason || "unknown reason", true); return; }
+    themeReport("Applied · " + r.summary,
+      (r.warnings || []).join(" ") ||
+      "The shell settings went through the normal journaled path, so Undo works.");
+  });
 });
 
-$("#themeSaveWall")?.addEventListener("click", async () => {
-  const doc = await themeDoc();
-  const r = await api("/api/wallpaper/save", { doc });
-  $("#themeDiffCard").style.display = "";
-  $("#themeDiffTitle").textContent = r.ok ? "Wallpaper saved" : "Could not render";
-  $("#themeDiffBody").style.whiteSpace = "pre-wrap";
-  $("#themeDiffBody").textContent = r.ok
-    ? `${r.width}×${r.height}, ${Math.round(r.bytes / 1024)} KB\n${r.path}\n\n${r.note}`
-    : (r.problems || [r.reason]).join(" ");
+$("#themePreviewBtn")?.addEventListener("click", async (ev) => {
+  if (!requireTheme()) return;
+  await themeAction(ev.currentTarget, "Checking", async () => {
+    const doc = await themeDoc();
+    const r = await api("/api/themes/preview", { doc });
+    if (!r.ok) {
+      themeReport("That theme is not valid", (r.problems || []).join(" "), true);
+      return;
+    }
+    if (!r.count) {
+      // "0 changes" is an answer, not an error — and a much better one when it
+      // is spelled out, because the alternative is a blank card that looks
+      // like a failure.
+      themeReport("Nothing to change",
+        `${r.summary}\n\nThis theme already matches what your machine is doing, ` +
+        `so there is no diff to show.`);
+      return;
+    }
+    const rows = r.changes.slice(0, 40).map((c) =>
+      `${c.key}: ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`);
+    themeReport(`${r.count} change${r.count === 1 ? "" : "s"} · ${r.summary}`,
+      rows.join("\n") + (r.count > 40 ? `\n…and ${r.count - 40} more` : ""));
+  });
 });
 
-$("#themeSetWall")?.addEventListener("click", async () => {
-  const doc = await themeDoc();
-  const r = await api("/api/wallpaper/apply", { doc });
-  $("#themeDiffCard").style.display = "";
-  $("#themeDiffTitle").textContent = r.applied ? "Desktop background changed" : "Saved, not applied";
-  $("#themeDiffBody").style.whiteSpace = "pre-wrap";
-  $("#themeDiffBody").textContent = r.applied
-    ? `${r.path}\nPrevious: ${r.previous || "(unknown)"}`
-    : `${r.path || ""}\n${r.reason || ""}`;
+$("#themeSaveWall")?.addEventListener("click", async (ev) => {
+  if (!requireTheme()) return;
+  await themeAction(ev.currentTarget, "Rendering", async () => {
+    const doc = await themeDoc();
+    const r = await api("/api/wallpaper/save", { doc });
+    if (!r.ok) {
+      themeReport("Could not render", (r.problems || [r.reason]).join(" "), true);
+      return;
+    }
+    themeReport("Wallpaper saved",
+      `${r.width}×${r.height}, ${Math.round(r.bytes / 1024)} KB\n${r.path}\n\n${r.note}`);
+  });
 });
 
-$("#themeExportBtn")?.addEventListener("click", async () => {
-  if (!selectedTheme) return;
-  const r = await api("/api/themes/export?theme_id=" + encodeURIComponent(selectedTheme));
-  if (!r.ok) return;
-  try { await navigator.clipboard.writeText(r.text); } catch (e) { /* no clipboard */ }
-  $("#themeImportBox").value = r.text;
-  $("#themeDiffCard").style.display = "";
-  $("#themeDiffTitle").textContent = "Theme file ready";
-  $("#themeDiffBody").style.whiteSpace = "pre-wrap";
-  $("#themeDiffBody").textContent =
-    "Copied to the clipboard and pasted into the box below, so you can see it. " +
-    "Share that text and someone else can import it.";
+$("#themeSetWall")?.addEventListener("click", async (ev) => {
+  if (!requireTheme()) return;
+  await themeAction(ev.currentTarget, "Setting", async () => {
+    const doc = await themeDoc();
+    const r = await api("/api/wallpaper/apply", { doc });
+    if (r.applied) {
+      themeReport("Desktop background changed",
+        `${r.path}\nPrevious: ${r.previous || "(unknown)"}\n\nUndo is in the journal.`);
+    } else {
+      // Not a failure: this is Linux, or the backend is in dry-run. Say which.
+      themeReport("Saved, not applied",
+        `${r.path || ""}\n${r.reason || "This build cannot change the desktop background."}`);
+    }
+  });
+});
+
+$("#themeExportBtn")?.addEventListener("click", async (ev) => {
+  if (!requireTheme()) return;
+  await themeAction(ev.currentTarget, "Copying", async () => {
+    const r = await api("/api/themes/export?theme_id=" + encodeURIComponent(selectedTheme));
+    if (!r.ok) { themeReport("Could not export", r.reason || "unknown reason", true); return; }
+    let copied = false;
+    try { await navigator.clipboard.writeText(r.text); copied = true; } catch (e) { /* no clipboard */ }
+    const box = $("#themeImportBox");
+    if (box) box.value = r.text;
+    themeReport("Theme file ready",
+      (copied ? "Copied to the clipboard. " : "The clipboard is blocked here, so copy it by hand. ") +
+      "It is also pasted into the box below so you can see it. " +
+      "Share that text and someone else can import it.");
+  });
 });
 
 async function checkImport() {

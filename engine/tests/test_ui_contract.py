@@ -216,3 +216,60 @@ def test_json_errors_never_leak_a_traceback_to_the_ui(handler):
     fn = text.split(f"def {handler}", 1)[1].split("\n    def ", 1)[0]
     assert 'self._json(500' in fn, f"{handler} must answer 500 with JSON"
     assert "traceback.format_exc(limit=3)" in fn
+
+
+# ------------------------------------------------ no dead buttons, ever again
+# The gallery's four ghost buttons "did nothing". They were calling the server,
+# the server was answering, and the answer was being written into a card 1800px
+# below the fold. These tests pin the three things that made that possible.
+def _html() -> str:
+    from pathlib import Path
+    return (Path(__file__).resolve().parent.parent / "pco_engine" /
+            "console.html").read_text()
+
+
+def test_a_buttons_result_is_not_placed_further_down_the_page():
+    """A result card must sit above the content the user clicked through.
+    Below fifteen tiles it is invisible, and an invisible success is
+    indistinguishable from a broken button."""
+    s = _html()
+    assert s.index('id="themeDiffCard"') < s.index('id="galleryGrid"'), \
+        "the result card drifted below the gallery again"
+
+
+def test_there_is_exactly_one_toast_implementation():
+    """Two functions named `toast` is not a style issue: the second silently
+    replaces the first, and one of them wrote into a container that was itself
+    positioned fixed — so every toast stacked on top of the last one."""
+    s = _html()
+    assert s.count("function toast") == 1
+    assert "toastBar" in s
+    assert 'id="toast"' not in s, "a second, unused toast container came back"
+
+
+def test_no_button_handler_returns_in_silence():
+    """`if (!selectedTheme) return;` is a button that does nothing when it
+    cannot act. It must say so instead."""
+    s = _html()
+    assert "if (!selectedTheme) return;" not in s
+    assert "function requireTheme" in s
+
+
+def test_every_gallery_action_has_a_visible_busy_and_failure_state():
+    """All five go through themeAction, which disables the button, shows a
+    verb, and catches a throw into the result card."""
+    s = _html()
+    assert s.count("await themeAction(") == 5, \
+        "a gallery handler bypasses the shared busy/failure wrapper"
+    assert "function themeReport" in s
+
+
+def test_the_gallery_does_not_blank_itself_before_it_has_an_answer():
+    """loadGallery cleared the grid, then awaited the network. A failure left an
+    empty screen with no message — which is what 'the buttons do nothing' looks
+    like from the other side."""
+    s = _html()
+    body = s[s.index("async function loadGallery"):s.index("async function themeDoc")]
+    clear = body.index("grid.replaceChildren()")
+    fetch = body.index('api("/api/themes")')
+    assert fetch < clear, "the grid is cleared before the data arrives"

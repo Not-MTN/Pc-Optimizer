@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (546 tests: 535 here, 11 that only a real Windows machine can run)
+## What works today (551 tests: 540 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -369,6 +369,29 @@ Then the app got a name, an installer and four tabs, which found five more:
 64. **A missing parameter was a 500 traceback** on every GET route that needs one.
     `do_GET` had no `KeyError` handler; `do_POST` always did. It now answers 400
     with `missing query parameter 'theme_id'`, which is a thing a user can act on.
+
+65. **A result card sat 1800 px below the button that filled it.** The gallery's
+    four ghost buttons all wrote their answer into `#themeDiffCard`, which was
+    placed *after* the fifteen-tile grid. Every click worked, the server answered
+    every time, and the user saw nothing happen — because the answer was four
+    screens below the fold. This is the most expensive kind of UI bug: a working
+    feature that is indistinguishable from a dead one. The card now sits directly
+    under the button row.
+66. **Two functions named `toast`.** The second silently replaced the first. One
+    appended into `#toast`; the other created `#toastBar`. Both containers
+    existed, both CSS blocks existed, and `#toast` was itself
+    `position:fixed` — so every toast pinned itself to the same corner on top of
+    the last one. The app's only failure channel was a pile of overlapping
+    rectangles. One implementation, one container, one rule.
+67. **Five gallery handlers could fail in total silence** — `if (!selectedTheme)
+    return;`, an uncaught `themeDoc()` throw, and `api()`'s throw escaping before
+    the card was written. All five now go through one wrapper that disables the
+    button, shows a verb ("Rendering…"), catches the failure into the card, and
+    says "pick a theme first" instead of doing nothing.
+68. **The gallery cleared itself before the network answered.** `grid
+    .replaceChildren()` ran first, so any failure left a blank screen with no
+    message. It now builds the new grid first and swaps at the end, and on
+    failure says which call failed and that nothing was changed.
 
 ## The wallpaper engine
 
