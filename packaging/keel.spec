@@ -42,8 +42,16 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         # Nothing here is imported, and each of these adds tens of MB.
-        "tkinter", "unittest", "pydoc_data", "test", "distutils",
-        "setuptools", "pip", "numpy", "pandas", "PIL", "PyQt5", "PySide6",
+        #
+        # `distutils` and `setuptools` are deliberately NOT excluded. On Python
+        # 3.12+ PyInstaller's own pre-safe-import hook aliases `distutils` to
+        # `setuptools._distutils`, and excluding the alias target raises
+        #   ValueError: Target module "distutils" already imported as
+        #   ExcludedModule('distutils',)
+        # which is an opaque failure inside step 4 of build.ps1. Neither is
+        # imported by Keel, so they cost nothing when they stay in.
+        "tkinter", "unittest", "pydoc_data", "test",
+        "pip", "numpy", "pandas", "PIL", "PyQt5", "PySide6",
     ],
     noarchive=False,
     optimize=0,

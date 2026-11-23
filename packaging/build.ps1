@@ -45,14 +45,27 @@ function Fail($msg) {
 }
 
 function Find-Python {
-    foreach ($c in @('py -3', 'python')) {
+    # Prefer a pinned 3.11 before the newest interpreter. `py -3` resolves to the
+    # HIGHEST installed 3.x, so on a runner that also has 3.12 or 3.13 it silently
+    # builds under a different Python than the one CI set up. That produced an
+    # opaque PyInstaller failure (distutils/setuptools aliasing, which only
+    # happens on 3.12+), and nothing in the log said which interpreter was used.
+    $candidates = @()
+    if ($env:KEEL_PYTHON) { $candidates += $env:KEEL_PYTHON }
+    $candidates += @('py -3.11', 'py -3.12', 'py -3.13')
+    $candidates += @('python')
+    $candidates += @('py -3')
+    foreach ($c in $candidates) {
         try {
-            $v = & cmd /c "$c -c `"import sys;print(sys.version_info[:2])`"" 2>$null
+            $v = & cmd /c "$c -c `"import sys;print('%d.%d' % sys.version_info[:2])`"" 2>$null
             # $v can be an array if the probe writes anything unexpected.
-            $v = ($v -join ' ')
-            if ($LASTEXITCODE -eq 0 -and $v -match '\(3, (\d+)') {
-                $minor = [int]$Matches[1]
-                if ($minor -ge 10) { return $c }
+            $v = ($v -join ' ').Trim()
+            if ($LASTEXITCODE -eq 0 -and $v -match '^(3)\.(\d+)$') {
+                $minor = [int]$Matches[2]
+                if ($minor -ge 10) {
+                    Write-Host "    using $c -> Python $v" -ForegroundColor DarkGray
+                    return $c
+                }
             }
         } catch { }
     }

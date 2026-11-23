@@ -87,6 +87,12 @@ jobs:
 
       - name: build
         shell: pwsh
+        env:
+          # Pin the interpreter explicitly. `setup-python` puts 3.11 first on
+          # PATH, but build.ps1 used to probe `py -3` first, which resolves to
+          # the NEWEST install on the image — a different Python than the job
+          # selected, and the source of an opaque distutils failure on 3.12+.
+          KEEL_PYTHON: python
         run: |
           $ErrorActionPreference = 'Continue'
           ./packaging/build.ps1 -SkipTests *>&1 | Tee-Object -FilePath build.log
