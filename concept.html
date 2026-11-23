@@ -510,6 +510,16 @@
   }
   html.js body.reduce-motion .card{opacity:1!important;transform:none!important;transition:none!important}
 
+
+  /* v3.1 — sensitivity bits reused from the lab vocabulary */
+  .hud-chip{font:500 9px var(--mono);color:#cfe0f0;border:1px solid var(--stroke-2);background:rgba(0,0,0,.32);border-radius:5px;padding:3px 6px}
+  .hud-chip b{color:var(--accent);font-weight:600}
+  .verdict-big{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;background:rgba(255,180,84,.08);border:1px solid rgba(255,180,84,.28)}
+  .verdict-big .vi{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;background:rgba(255,180,84,.16);color:var(--warn);flex:0 0 auto}
+  .verdict-big .vi svg{width:14px;height:14px}
+  .verdict-big b{display:block;font-size:11px;color:#f3e2c8;font-weight:650}
+  .verdict-big span{font-size:9.5px;color:var(--muted);display:block;margin-top:1px;line-height:1.45}
+
   @media (pointer:coarse){ .card{transform:none!important} }
 
   /* =========================================================
@@ -670,6 +680,9 @@
     <symbol id="i-win" viewBox="0 0 24 24"><path d="M3.5 5.6l7.4-1v7.1H3.5zM12.6 4.4l7.9-1.1v8.4h-7.9zM3.5 12.6h7.4v7.1l-7.4-1zM12.6 12.6h7.9v8.4l-7.9-1.1z" fill="currentColor"/></symbol>
     <symbol id="i-steam" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="15.4" cy="9.2" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8.4" cy="15.2" r="1.6" fill="currentColor"/><path d="M9.6 14.2l3-2.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="4.6" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></symbol>
+    <symbol id="i-crosshair" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
     <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4.5h10l4 4v11H5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 4.5v5h6v-5M8.5 19.5v-5h7v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 11v5.5M12 7.6v.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
     <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.3l2.7 2.7L16 9.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -940,6 +953,47 @@
               <button class="btn ghost" type="button" onclick="coachApply()"><svg><use href="#i-check"/></svg>Apply suggested settings</button>
             </div>
             <div class="verdict"><svg><use href="#i-check"/></svg><span><b>Honest rule:</b> every number above comes from your own sessions. If a change is inside the noise, the row says ±0% and I leave it alone.</span></div>
+          </article>
+
+          <!-- SENSITIVITY -->
+          <article class="card span2" id="sensCard" data-sec="gaming">
+            <h2><svg><use href="#i-target"/></svg>Sensitivity Lab <span class="micro">measured, then converted</span></h2>
+            <div class="row" style="margin-top:10px;gap:14px;align-items:flex-start">
+              <div style="flex:0 0 auto;width:126px">
+                <div style="height:86px;border-radius:9px;border:1px solid var(--stroke-2);background:radial-gradient(70% 80% at 50% 45%,rgba(30,42,64,.9),rgba(9,13,21,.98));position:relative;overflow:hidden">
+                  <svg viewBox="0 0 120 80" style="position:absolute;inset:0;width:100%;height:100%">
+                    <circle cx="60" cy="40" r="7" fill="none" stroke="rgba(255,122,89,.85)" stroke-width="1.6"/>
+                    <circle cx="60" cy="40" r="1.6" fill="#fff"/>
+                    <path d="M60 12v-5M60 73v-5M32 40h-5M93 40h-5" stroke="rgba(79,209,197,.8)" stroke-width="1.4" stroke-linecap="round"/>
+                  </svg>
+                  <span style="position:absolute;left:6px;bottom:4px;font:500 7.5px var(--mono);color:var(--muted)">sens lab</span>
+                </div>
+                <div class="big-num" style="margin-top:9px;font-size:20px">34.2<small>cm/360</small></div>
+                <div class="sub" style="margin-top:2px;font-size:9px">±2.1 · high confidence</div>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div class="verdict-big" style="margin-top:0">
+                  <div class="vi"><svg><use href="#i-target"/></svg></div>
+                  <div>
+                    <b>Same motion, every game.</b>
+                    <span>yaw constants make cm/360 the only transferable number. Find yours once, convert to 20+ games, capture the rest.</span>
+                  </div>
+                </div>
+                <div class="hud-line" style="margin-top:8px">
+                  <span class="hud-chip">VALORANT <b>0.312</b></span>
+                  <span class="hud-chip">CS2 <b>0.99</b></span>
+                  <span class="hud-chip">Apex <b>0.99</b></span>
+                  <span class="hud-chip">OW2 <b>3.31</b></span>
+                  <span class="hud-chip">Fortnite <b>3.94</b></span>
+                  <span class="hud-chip">R6 <b>capture</b></span>
+                </div>
+                <p class="sub" style="margin-top:8px">Play the drill, fit the U-curve of overshoot vs undershoot, get your optimum with a confidence interval — then watch mode reads raw input to refine per game.</p>
+              </div>
+            </div>
+            <div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap">
+              <a class="btn" href="concept-sensitivity.html" style="text-decoration:none"><svg><use href="#i-play"/></svg>Open the Sens Lab</a>
+              <button class="btn ghost" type="button" onclick="toast('360° capture','Turn once in any game with the hotkey down. I derive that game\'s yaw from raw mouse counts — works even where no converter exists.')"><svg><use href="#i-crosshair"/></svg>360° capture</button>
+            </div>
           </article>
 
           <!-- GAMING -->

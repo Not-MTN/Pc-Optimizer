@@ -187,11 +187,23 @@ Anti-aliasing TAA → keep        ±0%       CPU-bound on your 6-core; MSAA woul
 
 **A/B benchmark** — record a repeatable 60–120 s scene twice with different configs; the app compares distributions (n, variance, 1% lows) and tells you which actually won. If the difference is inside noise: **"no measurable difference"**, in large type.
 
+**Sensitivity per game** — see the Sens Lab below; the coach and the lab share one profile.
 **Overlay HUD** — external, top-most window (never injected): FPS, frametime graph, temps, VRAM, and a coach whisper when a pattern is detected ("stutter cluster — 3 spikes/20 s, GPU clock dropped to 1.2 GHz"). Costs < 0.5% CPU; auto-off when the game is exclusive-fullscreen and the driver refuses composition.
 
 **Session history** — per-game timeline: "1% lows improved 14% since the power-plan change", "6% slower in this game since driver 560.94". Regression detection is the point.
 
 **Extras** — game library readiness (space, drivers, pending downloads), move games between drives, shader warm-up, mouse polling/controller check, streaming assist (encoder + bitrate vs upload), VR/emulator profiles.
+
+### Sensitivity Lab (full spec in `SENSITIVITY.md`)
+
+Find *your* sensitivity with a real drill, not a pro's number, then convert it everywhere.
+
+- **Why it can be exact:** every FPS rotates a fixed **yaw** (degrees per mouse count at sens 1). `cm/360 = (360×2.54)/(DPI×sens×yaw)` is the only number that means the same thing in every game, so it transfers exactly. Verified yaw table ships as data (CS2/Apex 0.022, Valorant 0.07, OW2/CoD 0.0066, Fortnite 0.005555, plus Source/Quake family), with community values flagged and non-linear games routed to capture.
+- **The test:** 3 log-spaced points ±18%, 6 acquisition shots each, then an optional refine pass. Measures acquisition time, normalized miss error, **overshoot rate**, **undershoot rate**, correction count and tracking RMS. Fits the U-curve and returns the vertex with a confidence interval. If the points are inside the noise it says **"don't change anything."**
+- **360° capture (universal coverage):** turn once in *any* game with the hotkey held; raw input counts + DPI give cm/360 exactly, and deriving the yaw lets us support games nobody has ever converted.
+- **Watch mode (opt-in, raw input only):** overshoot corrections, pad usage, sweep limits and reposition frequency → per-genre adjustments. Never injection, never game memory, per-game allow list, ≥3 sessions before it becomes advice.
+- **Per game:** ADS/scoped multipliers, FOV matching modes, controller mode (deadzone/curve/ADS multiplier with the same U-curve logic), DPI and polling guidance, acceleration checks.
+- **Applying:** config write with backup, OCR of sliders, or the exact number for built-in converters. Every applied change is a journaled Guardian tweak.
 
 ### Anti-cheat matrix
 

@@ -76,6 +76,15 @@ From that it suggests **actual game settings** — `Shadows: High → Medium, +6
 - **Screenshot reading:** open the game's settings menu, press a hotkey, and it reads your current settings off the screen (locally, nothing uploaded). No typing.
 - **90-second A/B test:** records the same scene twice with different settings and says which actually won. If it's too close to call, it says **"no measurable difference"** and leaves your settings alone.
 
+**Sensitivity Lab.** Finding the right mouse sensitivity is usually folklore. There's actual math behind it: every game has a fixed "yaw" value, so the one number that means the same thing everywhere is **cm/360** — how many centimetres you move the mouse to spin exactly once. So the app:
+
+1. **Measures yours** with a short practice drill (about 5 minutes). It tests three speeds, measures how often you overshoot versus fall short, and fits the shape of that tradeoff. Too fast overshoots; too slow falls short; the best speed is the bottom of the curve. It gives you a range and a confidence level — and if your current setting is already there, it tells you *not* to change anything.
+2. **Converts it to every game** — Valorant 0.312, CS2 0.99, Apex 0.99, Fortnite 3.94 — all the same physical movement.
+3. **Covers games nobody measured** with a 10-second "360° capture": turn once in any game with a hotkey held, and it calculates that game's exact value from raw mouse counts.
+4. **Watches you play (only if you turn it on)** and notices "you overshoot 2.3× more here — go 10% slower in this game," using raw input only. No reading the game's memory, no injecting anything, and it never touches anti-cheat games unless you allow that game.
+
+The number is yours, not a pro's — and it's the reason your aim carries over between games instead of resetting.
+
 Plus an optional on-screen overlay (fps, frame times, temps), per-game history ("14% smoother since that power change"), library checks, and saved profiles.
 
 ### 4. Ad and tracker blocking — for every app, not just your browser
