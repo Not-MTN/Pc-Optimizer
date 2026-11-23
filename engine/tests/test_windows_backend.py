@@ -323,3 +323,116 @@ def test_the_real_registry_adapter_has_the_five_methods():
     reg = WinregRegistry()
     for name in ("get", "set", "delete", "enum_values", "enum_keys"):
         assert hasattr(reg, name)
+
+
+# ============================================ the service on a "real" machine
+#
+# These run the *whole* Service against a WindowsBackend wired to doubles. They
+# are the closest thing to "what happens on a user's PC" that can run on Linux,
+# and they exist because windows-latest found the opposite bug: the server's
+# `auto` default picked the real backend, the demo fixtures vanished, and six
+# bridge tests failed. That is a configuration bug — but it is also the shape of
+# the real thing, so it is now tested deliberately.
+
+class FakeMachineRunner(FakeRunner):
+    """A runner that *remembers* what it was told to change.
+
+    FakeRunner answers from a script, which is right for parser tests and wrong
+    for anything that applies then reads back — the engine would verify a write
+    it never made. This one models powercfg and sc as state.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.scheme = "381b4222-f694-41f0-9685-ff5bb260df2e"
+
+    def __call__(self, argv):
+        self.calls.append(list(argv))
+        if argv[:2] == ["powercfg.exe", "/setactive"]:
+            self.scheme = argv[2]
+            return 0, ""
+        if argv[:2] == ["powercfg.exe", "/getactivescheme"]:
+            names = {"381b4222-f694-41f0-9685-ff5bb260df2e": "Balanced",
+                     "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c": "High performance"}
+            return 0, (f"Power Scheme GUID: {self.scheme}  "
+                       f"({names.get(self.scheme, 'Unknown')})")
+        if argv[:2] == ["sc.exe", "qc"]:
+            return 0, "START_TYPE         : 2   AUTO_START\n"
+        return 0, ""
+
+
+def _real_service(tmp_path, *, stateful_runner: bool = False):
+    from pco_engine.service import Service
+    reg = FakeRegistry({
+        (HKLM, r"SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters", "SMB1"): (1, 4),
+        (HKLM, r"SOFTWARE\Policies\Microsoft\Windows\DataCollection", "AllowTelemetry"): (3, 4),
+    })
+    runner = FakeMachineRunner() if stateful_runner else FakeRunner({
+        "sc.exe qc": (0, "START_TYPE         : 2   AUTO_START\n"),
+        "powercfg.exe /getactivescheme": (
+            0, "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"),
+    })
+    be = WindowsBackend(registry=reg, runner=runner)
+    return Service(str(tmp_path / "real.db"), catalog_dir=CATALOG_DIR, backend=be)
+
+
+def test_a_real_machine_gets_no_demo_data(tmp_path):
+    """The simulated machine's fixtures are not facts about the user's PC."""
+    svc = _real_service(tmp_path)
+    assert svc._demo is False
+
+    # no demo blocklists pushed into a real user's blocker
+    dns = svc.status()["dns"]
+    assert dns["lists"] == 0 and dns["patterns"] == 0
+    # no invented junk/dup GB: the only findings are the two the fake registry
+    # and runner genuinely support (telemetry=3, Balanced power plan)
+    ck = svc.checkup()
+    kinds = {f["check_id"] for f in ck["findings"]}
+    assert kinds == {"power.scheme", "privacy.telemetry"}, (
+        f"a finding appeared that no measurement supports: {kinds}")
+    # no demo battery, because the reader is only wired on the demo machine
+    assert svc.battery()["available"] is False
+    assert "Windows backend" in svc.battery()["reason"]
+
+
+def test_a_real_machine_reports_its_own_values(tmp_path):
+    svc = _real_service(tmp_path)
+    smb1 = "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters"
+    assert svc.backend.read(smb1) == 1
+    assert svc.backend.read("power:active_scheme") == "balanced"
+    assert svc.backend.read("service:diagtrack.start_type") == "auto"
+    tele = "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection"
+    assert svc.backend.read(tele) == "full"
+
+
+def test_a_fix_on_a_real_machine_writes_through_and_journals(tmp_path):
+    """The whole point: plan → apply → verified → revert, against the real seam."""
+    svc = _real_service(tmp_path, stateful_runner=True)
+    out = svc.apply_fixes(["power.scheme.high"])
+    assert out["applied"] is True
+    assert svc.backend.read("power:active_scheme") == "high"
+    ok, rows, _ = svc.engine.journal.verify_chain()
+    # one effect = begin + applied + verified. The chain verifies, which is the
+    # assertion that matters; the count guards against a phase going missing.
+    assert ok and rows == 3
+
+    svc.undo(out["tx_id"])
+    assert svc.backend.read("power:active_scheme") == "balanced"
+
+
+def test_an_unserviced_address_never_reports_success(tmp_path):
+    svc = _real_service(tmp_path)
+    with pytest.raises(BackendError) as exc:
+        svc.backend.write("driver:pco_dpc.state", "loaded")
+    assert "not built" in str(exc.value) or "needs" in str(exc.value)
+
+
+def test_doctor_on_a_real_backend_names_what_it_cannot_do(tmp_path, capsys):
+    """`pco doctor` is the first command a nervous user runs. It must be honest."""
+    from pco_engine import cli
+    svc = _real_service(tmp_path)
+    args = type("A", (), {"json": False})()
+    cli.cmd_doctor(svc.engine, args)
+    text = capsys.readouterr().out
+    assert "refused until verified" in text
+    assert "driver:pco_dpc.state" in text or "pco_dpc" in text

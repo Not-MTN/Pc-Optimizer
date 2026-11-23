@@ -121,6 +121,10 @@ def live_server(tmp_path_factory):
 
     data = tmp_path_factory.mktemp("srv")
     os.environ["PCO_DATA"] = str(data)
+    # Pin the simulated machine. Without this, `auto` picks the *real* backend on
+    # Windows and the demo fixtures stop existing — which is exactly how this
+    # suite failed on windows-latest while passing everywhere else.
+    os.environ["PCO_BACKEND"] = "demo"
     os.environ["PCO_CATALOG"] = os.path.join(os.path.dirname(__file__), "..", "catalog")
     srv._SVC = None
     srv._service()
@@ -132,6 +136,7 @@ def live_server(tmp_path_factory):
     yield f"http://127.0.0.1:{port}"
     httpd.shutdown()
     srv._SVC = None
+    os.environ.pop("PCO_BACKEND", None)
 
 
 def _get(base, path):

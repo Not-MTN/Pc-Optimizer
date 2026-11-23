@@ -96,11 +96,17 @@ class Service:
                               engine=self.engine)
         self.cleaner.seed_rules(DEFAULT_RULES)
 
-        self.checker = Checker(self.conn, Probe(self.backend, DEMO_METRICS), self.clock)
+        # Demo metrics only on the simulated machine. On a real one, a hardcoded
+        # "42 GB of junk" would be a fabricated finding — exactly what the whole
+        # honesty story forbids.
+        self.checker = Checker(self.conn,
+                               Probe(self.backend, DEMO_METRICS if self._demo else {}),
+                               self.clock)
         self.bench = Bench(self.conn, self.clock)
         self.sentinel = Sentinel(self.conn, self.clock)
         self.dns = DnsBlocker(self.conn, self.clock)
-        self._install_demo_lists()
+        if self._demo:
+            self._install_demo_lists()
         self.recipes = Recipes(self.conn, self.clock, run_action=self.run_action)
         self.sens = SensLab(self.conn, self.clock)
         self.gaming = Gaming(self.conn, self.clock)

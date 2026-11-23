@@ -48,8 +48,10 @@ jobs:
       - name: unit tests (mapping logic, same as Linux)
         working-directory: engine
         run: python -m pytest -q
-      - name: real-backend contract (this is the part Linux cannot run)
+      - name: real-backend contract (the part Linux cannot run)
         working-directory: engine
+        env:
+          PCO_REAL_WINDOWS: "1"
         run: python -m pytest -q tests/test_real_windows.py -v
       - name: doctor (writes nothing; fails the build if a mapped address is unreachable)
         working-directory: engine

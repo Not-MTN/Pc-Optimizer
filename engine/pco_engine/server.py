@@ -33,13 +33,17 @@ _SVC: Service | None = None
 
 
 def _pick_backend() -> Any:
-    """Same rule as the CLI: real machine on Windows, simulated everywhere else.
+    """Which machine the console is looking at.
 
-    `PCO_BACKEND=demo` forces the simulated machine, which is what every test and
-    the published preview use. `PCO_BACKEND=windows` refuses to start on a
-    non-Windows OS rather than pretending.
+    Defaults to **demo**, deliberately, even on Windows. The CLI is a person
+    typing a command; a browser tab is something you leave open. Anything that
+    can change a real machine has to be started with `PCO_BACKEND=windows` (or
+    `run.ps1 -Real`, which prints the doctor report first).
+
+    `PCO_BACKEND=windows` refuses to start on a non-Windows OS rather than
+    pretending to be one.
     """
-    mode = os.environ.get("PCO_BACKEND", "auto")
+    mode = os.environ.get("PCO_BACKEND", "demo")
     if mode == "demo":
         return None                      # Service builds its own FakeBackend
     if mode == "windows" or (mode == "auto" and sys.platform == "win32"):
@@ -156,9 +160,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/health":
             self._json(200, {"ok": True, "version": __version__,
-                             "backend": ("windows" if os.environ.get("PCO_BACKEND") == "windows"
-                                         else "demo" if os.environ.get("PCO_BACKEND") == "demo"
-                                         else "auto")})
+                             "backend": ("windows" if _SVC is not None
+                                         and getattr(_SVC.backend, "environment", "") == "windows"
+                                         else os.environ.get("PCO_BACKEND", "demo"))})
             return
         try:
             svc = _service()
