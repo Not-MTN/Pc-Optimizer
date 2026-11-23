@@ -176,7 +176,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # --------------------------------------------------------------------- GET
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path.rstrip("/") or "/"
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
         if path in {"/", "/index.html"}:
             html = (Path(__file__).resolve().parent / "console.html").read_bytes()
             self._send(200, html, "text/html; charset=utf-8")
@@ -225,8 +226,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             svc = _service()
             if path in ROUTES:
+                # Query parameters are passed through. Without this, every
+                # parameterised GET router ("theme.get": theme_id) raised a
+                # KeyError and returned 500 — the console asked, the server had
+                # the answer, and the wire between them dropped the argument.
+                from urllib.parse import parse_qs
+                query = {k: v[0] for k, v in parse_qs(parsed.query).items() if v}
                 with _LOCK:
-                    result = svc.run_action(ROUTES[path])
+                    # run_action defaults args to {}, so a verb that takes nothing
+                    # needs no special case here.
+                    result = svc.run_action(ROUTES[path], query)
                 self._json(200, result)
                 return
             if path == "/api/sens":
@@ -284,13 +293,26 @@ class Handler(BaseHTTPRequestHandler):
 
     # -------------------------------------------------------------------- POST
     def do_POST(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path.rstrip("/")
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/")
         length = int(self.headers.get("Content-Length") or 0)
         try:
             args = json.loads(self.rfile.read(length) or b"{}") if length else {}
         except json.JSONDecodeError:
             self._json(400, {"error": "body is not JSON"})
             return
+        if not isinstance(args, dict):
+            self._json(400, {"error": "body must be a JSON object"})
+            return
+        # Query parameters are merged in, body wins on conflict. The console has
+        # always sent /api/themes/get?theme_id=... as a GET, and the handler
+        # looked only at a POST body — every theme detail request was a 500 with
+        # a KeyError nobody could see. Accepting both is the fix; the alternative
+        # is a client and server that disagree about where a parameter lives.
+        from urllib.parse import parse_qs
+        for key, values in parse_qs(parsed.query).items():
+            if key not in args and values:
+                args[key] = values[0]
 
         try:
             svc = _service()

@@ -588,3 +588,47 @@ def test_bridge_prompt_identity_names_its_evidence(live_server):
 
     vague = _get(live_server, "/api/shell/prompt")
     assert vague["confidence"] in {"confirmed", "likely", "none"}
+
+
+def test_every_get_route_answers_without_a_body(live_server):
+    """A GET route that needs a parameter must fail with a 4xx that names it,
+    never a 500. This exists because `/api/themes/get?theme_id=…` returned 500
+    for hours: the handler read `theme_id` from a POST body the console never
+    sent, and the only symptom was a button that did nothing."""
+    import urllib.error
+    import urllib.request
+    for path in ("/api/shell", "/api/themes", "/api/display", "/api/status",
+                 "/api/palette/all", "/api/catalog"):
+        try:
+            with urllib.request.urlopen(live_server + path, timeout=10) as r:
+                assert r.status == 200, f"{path} -> {r.status}"
+        except urllib.error.HTTPError as exc:
+            raise AssertionError(f"{path} -> {exc.code}, expected 200") from exc
+
+
+def test_query_parameters_reach_the_action(live_server):
+    """The console sends /api/themes/get?theme_id=keel. The server must read the
+    query string, not only a request body."""
+    r = _get(live_server, "/api/themes/get?theme_id=keel")
+    assert r["ok"] is True
+    assert r["doc"]["meta"]["name"] == "Keel"
+
+
+def test_an_unknown_theme_is_a_4xx_not_a_500(live_server):
+    """Bad input is the caller's problem and must be reported as such."""
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                live_server + "/api/themes/get?theme_id=nope", timeout=10) as r:
+            body = r.read()
+        # either a 200 carrying ok:false, or a 4xx — never a 5xx
+        assert b"nope" in body
+    except urllib.error.HTTPError as exc:
+        assert 400 <= exc.code < 500, f"expected 4xx, got {exc.code}"
+
+
+def test_the_export_route_answers_over_http(live_server):
+    r = _get(live_server, "/api/themes/export?theme_id=dusk")
+    assert r["ok"] is True
+    assert '"name": "Dusk"' in r["text"]

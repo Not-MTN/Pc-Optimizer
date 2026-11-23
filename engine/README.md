@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (539 tests: 528 here, 11 that only a real Windows machine can run)
+## What works today (543 tests: 532 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -346,6 +346,19 @@ Then the app got a name, an installer and four tabs, which found five more:
     "placeholder replaced below", read by nothing. Deleted rather than left as a
     trap: the next caller would have used it and hit a `KeyError` on a real
     machine.
+
+61. **Every parameterised GET route returned 500** — `/api/themes/get?theme_id=keel`
+    was the visible one, and it had been failing for the entire life of the
+    gallery screen. `do_GET` called `run_action(route)` with no arguments, so the
+    handler raised `KeyError` on a `theme_id` the console had sent as a query
+    string. The console asked, the server knew the answer, and the wire between
+    them dropped the argument. Found in the server's own access log, not by a
+    test: the route existed, the contract test passed, and the feature was dead.
+62. **Then my fix broke every GET** — the new code read a `parsed` variable that
+    only existed in `do_POST`, so `NameError` turned 21 passing tests red. Exactly
+    what the suite is for. There is now a test that fetches every parameterless
+    GET route and asserts 200, and another that asserts query parameters reach
+    the action.
 
 ## The wallpaper engine
 
