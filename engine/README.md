@@ -51,10 +51,20 @@ run and git-ignored.
 | Cleaner | scan by rule, move to vault, restore, 30-day retention |
 | Blocking | on / off / strict, pause 30 min, per-app rules, allow rules, counters |
 | Sens Lab | cm/360 ⇄ every game, eDPI, and the PSA two-candidate test (6 rounds to <1 cm) |
+| Storage | what grew this week, a forecast of when you hit 90%, and hash-confirmed duplicates |
+| Startup | what starts with Windows, what is safe to defer, and what is refused (with the reason) |
+| Hardware Lab | mouse double-click, keyboard chatter, sensor jitter, polling rate, monitor patterns, and the printable Health Report |
 | Gaming | watch gameplay → frame stats, bottleneck diagnosis, settings plan, session history |
 | Autopsy | watch an install, read what it left, erase exactly that (critical items immune) |
 | Studio | themes with a declared idle-GPU cost; anything over 3% is refused |
 | Performance | benchmark score vs baseline, weekly report, drift check |
+
+Two things cut across every view:
+
+* **Command palette** (`Ctrl/⌘ K`) — engine-native verbs, fuzzy search, no console
+  flash. Shell/script executors are refused unless explicitly enabled.
+* **Ask** — "what did I change?", "why is my disk full?", "am I secure?" answered
+  from the journal and the live database, never from generated prose.
 
 Plus a **consent** control on the Checkup view: `safe` applies only catalog-declared
 auto-safe fixes; `trusted` also applies review-tier items *that have a real fix*.
@@ -63,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (177 tests, all passing)
+## What works today (245 tests, all passing)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -102,6 +112,16 @@ the console is a reference client, not a toy.
 | Consent survives a restart and resets to the documented default | `test_consent_survives_a_restart`, `test_reset_returns_to_the_documented_default` |
 | Applying writes a receipt with before/after values; undo marks it | `test_applying_writes_a_receipt_and_undo_marks_it` |
 | Fixing an already-fixed machine is a no-op, not an error | `test_applying_something_already_applied_is_success_not_an_error` |
+| An unmeasured startup item is never counted as zero | `test_unmeasured_items_are_unattributed_never_zero` |
+| A service with dependents is refused and the dependent is named | `test_service_with_dependents_is_refused_and_named` |
+| "Your disk will fill in 78 days" is arithmetic, not a guess | `test_two_samples_produce_a_ranked_delta` |
+| Duplicates are only grouped after the bytes match | `test_confirmed_only_after_bytes_match`, `test_different_files_are_never_grouped` |
+| A mouse that double-fires says "hardware fault", and RMA advice | `test_failing_switch_is_called_a_hardware_fault` |
+| No clicks recorded is "inconclusive", never a pass | `test_no_clicks_is_inconclusive_not_a_pass` |
+| The Health Report's numbers match the live machine | `test_report_numbers_match_the_machine` |
+| The report HTML escapes hostile text | `test_html_escapes_hostile_text` |
+| Every "ask" answer is traceable to a journal row | `test_every_answer_is_traceable` |
+| The palette refuses shell execution by default | `test_shell_commands_are_refused_by_default` |
 
 ## Architecture
 
@@ -143,6 +163,13 @@ catalog/tweaks.json ──► Catalog ──► Preflight ──► PLAN (read-o
 | `pco_engine/autopsy.py` | install watcher + eraser with a critical-item immune system |
 | `pco_engine/studio.py` | theme validation and the idle-GPU governor |
 | `pco_engine/consent.py` | the one gate every automatic fix passes through |
+| `pco_engine/startup.py` | boot inventory, knowledge base, dependency refusals, relapse watchdog |
+| `pco_engine/dupes.py` | three-stage duplicate cascade with an explainable keeper |
+| `pco_engine/space.py` | folder-size time travel and the 90%-full forecast |
+| `pco_engine/palette.py` | engine-native command palette + permission diffs |
+| `pco_engine/peripheral.py` | five hardware tests with evidence and advice |
+| `pco_engine/report.py` | the printable Health Report (Markdown + self-contained HTML) |
+| `pco_engine/ask.py` | local intent parsing over the journal |
 | `pco_engine/address.py` | canonical addresses — one string per managed thing |
 | `pco_engine/catalog.py` | tweak documents, validation, index |
 | `pco_engine/backend.py` | the only I/O seam + `FakeBackend` (and policy `pin()`) |
@@ -177,6 +204,11 @@ Recorded because they are the argument for building the tests first:
 18. **A dead button shipped unnoticed** — the console posted to `/api/autopsy/erase`, which had no route. JS syntax checks and Python tests both passed. Fixed by writing `test_ui_contract.py`, which parses the console and asserts every URL it calls exists in the router (and vice versa). It immediately found a second one: the fix-all button was bypassing the new consent path.
 19. **Autopsy erased nothing** — `/api/autopsy/begin` never recorded items, so "erase every trace" erased an empty list and reported success. The bridge can now record what a watcher found (note/finish), and the flow is tested over HTTP with a real critical file in the list.
 20. **Validation errors were 500s** — an invalid theme returned a Python traceback to the browser. Bad input is now a 400 with the reason.
+21. **`group` is a reserved word** — the palette's table used it unquoted and every palette query failed at runtime. Caught immediately, but it is the kind of bug that only appears on the code path a user actually takes.
+22. **A forecast that said "0 days"** — the demo's free-space figures implied an already-full disk, so the projection was nonsense. Fixed the seed; the forecast now says 78 days.
+23. **Two different installers grouped as duplicates** — my fixture gave both 2 MB files identical bytes, and the finder correctly reported them as copies. The fixture was wrong, not the finder — but it proved the byte comparison is the only thing standing between this feature and deleting a user's file.
+24. **"Am I secure?" answered "0 findings" before any checkup had run** — which reads as "all clear". It now says there is no evidence yet.
+25. **Polling-rate advice was backwards** — it told you to check the USB port whether the rate was too low or too high. Now it branches.
 
 ## Porting to Rust (the contract)
 

@@ -60,6 +60,15 @@ ROUTES: dict[str, str] = {
     "/api/studio/themes": "studio.themes",
     "/api/games": "game.sessions",
     "/api/verify": "verify",
+    "/api/startup": "startup.inspect",
+    "/api/startup/apply": "startup.apply",
+    "/api/space": "space.grew",
+    "/api/space/forecast": "space.forecast",
+    "/api/space/sample": "space.sample",
+    "/api/dupes": "dupes.scan",
+    "/api/ask": "ask",
+    "/api/report/md": "report.md",
+    "/api/report/json": "report.json",
 }
 
 
@@ -97,6 +106,13 @@ class Handler(BaseHTTPRequestHandler):
             html = (Path(__file__).resolve().parent / "console.html").read_bytes()
             self._send(200, html, "text/html; charset=utf-8")
             return
+        if path == "/api/report/html":
+            try:
+                html = _service().health_report("html").encode("utf-8")
+                self._send(200, html, "text/html; charset=utf-8")
+            except Exception:  # noqa: BLE001
+                self._json(500, {"error": traceback.format_exc(limit=3)})
+            return
         if path == "/api/health":
             self._json(200, {"ok": True, "version": "0.2.0"})
             return
@@ -122,6 +138,23 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/games/library":
                 with _LOCK:
                     self._json(200, {"games": svc.gaming.games()})
+                return
+            if path == "/api/palette":
+                with _LOCK:
+                    q = ""
+                    if "?" in self.path:
+                        from urllib.parse import parse_qs
+                        q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+                    self._json(200, {"results": svc.palette.search(q)})
+                return
+            if path == "/api/palette/all":
+                with _LOCK:
+                    self._json(200, {"commands": [c.as_dict() for c in svc.palette.commands()]})
+                return
+            if path == "/api/peripheral":
+                with _LOCK:
+                    self._json(200, {"summary": svc.peripheral.summary(),
+                                     "history": svc.peripheral.history(10)})
                 return
             if path == "/api/consent":
                 with _LOCK:
@@ -229,6 +262,16 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/studio/import":
                 with _LOCK:
                     self._json(200, svc.studio.import_doc(args["doc"]))
+                return
+            if path == "/api/palette/run":
+                with _LOCK:
+                    out = svc.palette.execute(args["verb"], args.get("args"))
+                self._json(200, out)
+                return
+            if path == "/api/peripheral/test":
+                with _LOCK:
+                    out = svc.peripheral_run(args["kind"], args.get("payload", {}))
+                self._json(200, out)
                 return
             if path == "/api/autopsy/note":
                 with _LOCK:

@@ -111,6 +111,29 @@
   th,td{text-align:left;padding:7px 6px;border-bottom:1px solid #1c222c}
   th{color:var(--faint);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.07em}
   .ok{color:var(--lime)} .warn{color:var(--amber)} .bad{color:var(--red)}
+  /* command palette */
+  .scrim{position:fixed;inset:0;background:rgba(4,6,9,.72);backdrop-filter:blur(3px);
+         display:none;align-items:flex-start;justify-content:center;padding-top:12vh;z-index:80}
+  .scrim.on{display:flex;animation:fade .12s ease both}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .pal{width:min(620px,92vw);background:#11151b;border:1px solid #2b3342;border-radius:16px;
+       box-shadow:0 40px 90px -40px #000;overflow:hidden;
+       animation:pop 160ms cubic-bezier(.2,.8,.3,1) both}
+  @keyframes pop{from{opacity:0;transform:translateY(-8px) scale(.985)}to{opacity:1;transform:none}}
+  .pal input{border:0;border-bottom:1px solid #232a36;border-radius:0;background:none;
+             padding:16px 18px;font-size:15px}
+  .pal input:focus{box-shadow:none;border-color:#232a36}
+  .pal ul{list-style:none;margin:0;padding:6px;max-height:50vh;overflow:auto}
+  .pal li{padding:10px 12px;border-radius:9px;display:flex;gap:10px;align-items:center;cursor:pointer}
+  .pal li[aria-selected="true"]{background:rgba(182,242,74,.1)}
+  .pal li .verb{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--lime)}
+  .pal li .t{font-size:13px}
+  .pal li .g{margin-left:auto;font-size:11px;color:var(--faint);text-transform:uppercase;
+             letter-spacing:.06em}
+  .pal .foot{padding:8px 14px;border-top:1px solid #232a36;color:var(--faint);font-size:11px;
+             display:flex;gap:14px}
+  kbd{background:#1c2230;border:1px solid #2c3444;border-bottom-width:2px;border-radius:5px;
+      padding:1px 6px;font:inherit;font-size:11px;color:var(--dim)}
   .toast{position:fixed;right:22px;bottom:22px;display:flex;flex-direction:column;gap:9px;z-index:50}
   .toast div{background:#1a1f28;border:1px solid var(--line);border-left:3px solid var(--lime);
              padding:11px 15px;border-radius:10px;font-size:13px;box-shadow:0 18px 40px -24px #000;
@@ -156,6 +179,15 @@
     <button class="nav" data-view="sens" title="Sens Lab">
       <svg viewBox="0 0 24 24"><path d="M12 3v4"/><rect x="7" y="8" width="10" height="13" rx="5"/><path d="M12 12v3"/></svg>
     </button>
+    <button class="nav" data-view="space" title="Storage &amp; Duplicates">
+      <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+    </button>
+    <button class="nav" data-view="startup" title="Startup Surgeon">
+      <svg viewBox="0 0 24 24"><path d="M12 3v6"/><path d="M5 12h14l-2 8H7z"/><path d="M9 12V9h6v3"/></svg>
+    </button>
+    <button class="nav" data-view="lab" title="Hardware Lab">
+      <svg viewBox="0 0 24 24"><path d="M9 3h6v5l4 10a2 2 0 01-2 3H7a2 2 0 01-2-3l4-10z"/><path d="M9 3h6M7.5 15h9"/></svg>
+    </button>
     <button class="nav" data-view="gaming" title="Gaming">
       <svg viewBox="0 0 24 24"><path d="M6 12h4M8 10v4"/><circle cx="16" cy="11" r="1"/><circle cx="18.5" cy="13.5" r="1"/><path d="M3 14l2-6a3 3 0 013-2h8a3 3 0 013 2l2 6a2 2 0 01-3.6 1.6L16 14H8l-1.4 1.6A2 2 0 013 14z"/></svg>
     </button>
@@ -181,6 +213,10 @@
         <div class="sub" id="subtitle">Loading the engine…</div>
       </div>
       <div class="row">
+        <input id="askBox" placeholder="Ask: what did I change?" aria-label="Ask the journal"
+               style="width:230px;padding:8px 12px">
+        <button class="btn ghost" id="askBtn" aria-label="Ask">Ask</button>
+        <button class="btn ghost" id="palBtn" title="Command palette (Ctrl+K)">⌘K</button>
         <span class="pill" id="enginePill"><span class="dot"></span><span id="engineText">engine</span></span>
         <button class="btn primary" id="quickFix">Fix everything safe</button>
       </div>
@@ -352,6 +388,106 @@
       </div>
     </section>
 
+    <!-- ============ SPACE ============ -->
+    <section class="sect" id="view-space">
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>What grew</h2>
+          <div class="big" id="spaceHeadline">—</div>
+          <div class="sub" id="spaceForecast">—</div>
+          <button class="btn ghost" id="spaceSample" style="margin-top:12px">Take a sample now</button>
+        </div>
+        <div class="card">
+          <h2>Duplicates</h2>
+          <div class="big" id="dupeWaste">—</div>
+          <div class="sub" id="dupeMethod">Three-stage: size → fingerprint → SHA-256</div>
+          <button class="btn primary" id="dupeScan" style="margin-top:12px">Scan for duplicates</button>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="card">
+          <h2>Growth by folder</h2>
+          <table><thead><tr><th>Folder</th><th>Change</th><th>Now</th></tr></thead>
+            <tbody id="spaceTable"></tbody></table>
+        </div>
+        <div class="card">
+          <h2>Confirmed duplicate sets</h2>
+          <div id="dupeGroups" class="empty">Scan to see what is actually duplicated.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ STARTUP ============ -->
+    <section class="sect" id="view-startup">
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>Boot time</h2>
+          <div class="big" id="bootNow">—</div>
+          <div class="sub" id="bootVerdict">—</div>
+          <div class="bar" style="margin:12px 0"><i id="bootBar"></i></div>
+          <div class="row">
+            <button class="btn primary" id="startupDefer">Defer everything safe</button>
+            <span class="sub" id="startupSaving"></span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Rules being enforced</h2>
+          <ul style="margin:0;padding-left:18px;color:var(--dim);font-size:12.5px">
+            <li>Only measured costs are counted — unmeasured items are labelled <b>unattributed</b>.</li>
+            <li>A service with live dependents is refused, and the dependent is named.</li>
+            <li>Deferring is preferred over disabling: 60 seconds buys the win, not the breakage.</li>
+            <li>Whatever re-adds itself is reported next scan, with a guess at who.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="card">
+        <h2>What starts with Windows</h2>
+        <table><thead><tr><th>Item</th><th>Class</th><th>Phase</th><th>Cost</th>
+          <th>Recommended</th></tr></thead><tbody id="startupTable"></tbody></table>
+      </div>
+    </section>
+
+    <!-- ============ HARDWARE LAB ============ -->
+    <section class="sect" id="view-lab">
+      <div class="grid g2">
+        <div class="card">
+          <h2>Mouse double-click</h2>
+          <p class="sub">Click normally 20 times. Ghost clicks are what a dying switch does.</p>
+          <div class="row" style="margin:12px 0"><button class="btn" id="dcClick">Record a click</button>
+            <span class="sub" id="dcCount">0 clicks</span></div>
+          <div id="dcVerdict" class="sub"></div>
+          <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+          <h2>Keyboard chatter</h2>
+          <p class="sub">Type the letters you use most. A key repeating under 45 ms is a fault.</p>
+          <input id="chatterInput" placeholder="type here…" autocomplete="off">
+          <div id="chatterVerdict" class="sub" style="margin-top:10px"></div>
+        </div>
+        <div class="card">
+          <h2>Monitor</h2>
+          <p class="sub">Full-screen colour fields. A dead pixel never changes colour.</p>
+          <div class="row" style="margin:12px 0">
+            <button class="btn" data-pattern="dead_pixel">Dead pixel</button>
+            <button class="btn" data-pattern="uniformity">Uniformity</button>
+          </div>
+          <div id="monitorNote" class="sub"></div>
+          <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+          <h2>Test history</h2>
+          <table><thead><tr><th>Device</th><th>Verdict</th><th>When</th></tr></thead>
+            <tbody id="labHistory"></tbody></table>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Health report</h2>
+        <p class="sub">The document you hand to a warranty tech or a buyer. Generated locally.</p>
+        <div class="row">
+          <button class="btn primary" id="reportView">Open printable report</button>
+          <button class="btn ghost" id="reportMd">Copy Markdown</button>
+        </div>
+        <pre id="reportPreview" class="mono" style="margin-top:14px;font-size:11.5px;
+             color:var(--dim);max-height:280px;overflow:auto;white-space:pre-wrap"></pre>
+      </div>
+    </section>
+
     <!-- ============ GAMING ============ -->
     <section class="sect" id="view-gaming">
       <div class="grid g2">
@@ -449,6 +585,17 @@
     </section>
 
     <div class="toast" id="toast"></div>
+
+    <div class="scrim" id="palScrim">
+      <div class="pal" role="dialog" aria-label="Command palette">
+        <input id="palInput" placeholder="Type a command…  (clean, fix, dns on, snap)"
+               autocomplete="off" spellcheck="false">
+        <ul id="palList" role="listbox"></ul>
+        <div class="foot"><span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+          <span><kbd>↵</kbd> run</span><span><kbd>esc</kbd> close</span>
+          <span style="margin-left:auto">engine-native · no console flash</span></div>
+      </div>
+    </div>
   </main>
 </div>
 
@@ -487,6 +634,9 @@ const TITLES = { home: ["Overview", "Everything the Guardian engine knows, live.
   clean: ["Cleaner", "Space is not speed. This page is honest about that."],
   dns: ["Blocking", "Off means off — the toggle is real, not a marketing one."],
   sens: ["Sens Lab", "cm/360 is the truth; each game is just a dialect."],
+  space: ["Storage", "Direction, not just a full bar."],
+  startup: ["Startup Surgeon", "Cut boot time without breaking anything."],
+  lab: ["Hardware Lab", "Decisive answers about failing hardware."],
   gaming: ["Gaming", "It watches real frames, then says the one useful thing."],
   autopsy: ["Installer Autopsy", "Every install leaves a receipt. Every line is erasable."],
   studio: ["Desktop Studio", "Beautiful is a feature. Over 3% idle GPU is a defect."],
@@ -499,6 +649,9 @@ function show(view) {
   $("#title").textContent = TITLES[view][0];
   $("#subtitle").textContent = TITLES[view][1];
   if (view === "sens") loadSens();
+  if (view === "space") loadSpace();
+  if (view === "startup") loadStartup();
+  if (view === "lab") loadLab();
   if (view === "gaming") loadGaming();
   if (view === "autopsy") loadAutopsy();
   if (view === "studio") loadStudio();
@@ -862,6 +1015,242 @@ async function psaStep(better) {
   } catch (err) { toast(err.message, true); }
 }
 
+/* ---------------------------------------------------------------- space */
+async function loadSpace() {
+  try {
+    const grew = await api("/api/space?days=7");
+    $("#spaceHeadline").textContent = grew.available ? grew.summary : "No samples yet";
+    const fc = await api("/api/space/forecast");
+    $("#spaceForecast").textContent = fc.available
+      ? (fc.verdict || "") + (fc.slope_per_day
+          ? " · " + (fc.slope_per_day / 1e6).toFixed(0) + " MB/day" : "")
+      : "Take two samples a day apart to get a forecast.";
+    const tb = $("#spaceTable"); tb.replaceChildren();
+    if (!grew.available || !grew.changed.length) {
+      tb.append(el("tr")).append(el("td", "empty", "Nothing changed in the window."));
+    } else {
+      grew.changed.forEach((d) => {
+        const tr = el("tr");
+        const up = d.delta_bytes > 0;
+        tr.append(el("td", null, d.folder),
+                  el("td", "mono " + (up ? "warn" : "ok"),
+                     (up ? "+" : "") + (d.delta_bytes / 1e9).toFixed(2) + " GB"),
+                  el("td", "mono", (d.now_bytes / 1e9).toFixed(1) + " GB"));
+        tb.append(tr);
+      });
+    }
+  } catch (err) { toast(err.message, true); }
+}
+
+async function scanDupes() {
+  const b = $("#dupeScan"); busy(b, true);
+  try {
+    const d = await api("/api/dupes", {});
+    $("#dupeWaste").textContent = (d.wasted_bytes / 1e6).toFixed(0) + " MB wasted";
+    $("#dupeMethod").textContent = d.group_count + " confirmed set(s) from " +
+      d.scanned_files + " files · " + d.method;
+    const box = $("#dupeGroups"); box.replaceChildren(); box.classList.remove("empty");
+    if (!d.groups.length) { box.textContent = "No duplicates confirmed by hash."; }
+    d.groups.forEach((g) => {
+      const row = el("div", "finding"); row.style.animation = "none";
+      const body = el("div"); body.style.flex = "1";
+      body.append(el("h3", null, (g.size / 1e6).toFixed(1) + " MB × " + g.count));
+      body.append(el("p", null, "keep: " + g.keep.path.split("/").pop() +
+        " — " + g.keep.why));
+      g.duplicates.forEach((p) => body.append(el("p", null, "dup: " + p.split("/").pop())));
+      row.append(body); box.append(row);
+    });
+    toast(d.group_count + " set(s), " + (d.wasted_bytes / 1e6).toFixed(0) + " MB reclaimable");
+  } catch (err) { toast(err.message, true); }
+  busy(b, false);
+}
+
+/* ---------------------------------------------------------------- startup */
+async function loadStartup() {
+  try {
+    const d = await api("/api/startup");
+    if (!d.available) { $("#bootNow").textContent = "n/a";
+      $("#bootVerdict").textContent = d.reason; return; }
+    const rep = d.report, plan = d.plan;
+    $("#bootNow").innerHTML = (rep.total_ms / 1000).toFixed(1) +
+      "s <small>attributed</small>";
+    $("#bootVerdict").textContent = d.verdict;
+    $("#bootBar").style.width = Math.min(100,
+      (100 * plan.saving_ms) / Math.max(1, rep.total_ms)) + "%";
+    $("#startupSaving").textContent = "deferring saves " + (plan.saving_ms / 1000).toFixed(1) +
+      "s → " + (plan.after_ms / 1000).toFixed(1) + "s";
+    const tb = $("#startupTable"); tb.replaceChildren();
+    const advise = {};
+    (plan.rows || []).forEach((r) => { advise[r.item] = r; });
+    (d.knowledge || []).forEach((k) => {
+      const tr = el("tr");
+      const row = advise[k.item] || {};
+      tr.append(el("td", null, k.item),
+                el("td", "sub mono", k["class"] || ""),
+                el("td", "sub", k.phase || ""),
+                el("td", "mono " + (k.cost_label === "unattributed" ? "warn" : ""),
+                   k.cost_label || "—"),
+                el("td", "sub " + (k.refusal ? "warn" : ""),
+                   k.refusal ? k.refusal.split(":")[0] : (k.recommended + " · " + row.action)));
+      tb.append(tr);
+    });
+    if (!d.knowledge || !d.knowledge.length)
+      tb.append(el("tr")).append(el("td", "empty", "Nothing inventoried."));
+  } catch (err) { toast(err.message, true); }
+}
+
+async function deferStartup() {
+  const b = $("#startupDefer"); busy(b, true);
+  try {
+    const out = await api("/api/startup/apply", { mode: "defer" });
+    toast((out.applied ? out.applied.length : 0) + " item(s) deferred");
+    await loadStartup(); await refreshAll();
+  } catch (err) { toast(err.message, true); }
+  busy(b, false);
+}
+
+/* ---------------------------------------------------------------- lab */
+let dcClicks = [];
+let dcLast = 0;
+function recordClick() {
+  const now = performance.now();
+  if (dcLast) dcClicks.push(Math.round(now - dcLast));
+  dcLast = now;
+  $("#dcCount").textContent = dcClicks.length + " intervals";
+  if (dcClicks.length >= 8) runDoubleClick();
+}
+
+async function runDoubleClick() {
+  try {
+    const r = await api("/api/peripheral/test",
+      { kind: "mouse_double_click", payload: { intervals_ms: dcClicks } });
+    $("#dcVerdict").textContent = r.headline;
+    $("#dcVerdict").className = "sub " + (r.verdict === "fail" ? "bad" : "ok");
+    loadLab();
+  } catch (err) { toast(err.message, true); }
+}
+
+let chatterEvents = [];
+let chatterLast = {};
+function onChatterKey(e) {
+  if (e.key.length !== 1) return;
+  const t = Math.round(performance.now());
+  chatterEvents.push([e.key, t]);
+  $("chatterVerdict") && (document.getElementById("chatterVerdict").textContent =
+    chatterEvents.length + " keystrokes — keep going");
+  if (chatterEvents.length >= 30) {
+    api("/api/peripheral/test",
+        { kind: "keyboard_chatter", payload: { events: chatterEvents } })
+      .then((r) => {
+        $("#chatterVerdict").textContent = r.headline;
+        $("#chatterVerdict").className = "sub " + (r.verdict === "fail" ? "bad" : "ok");
+        chatterEvents = [];
+        loadLab();
+      }).catch((err) => toast(err.message, true));
+  }
+}
+
+async function loadLab() {
+  try {
+    const d = await api("/api/peripheral");
+    const tb = $("#labHistory"); tb.replaceChildren();
+    if (!d.history || !d.history.length) {
+      tb.append(el("tr")).append(el("td", "empty", "No tests run yet."));
+      return;
+    }
+    d.history.forEach((t) => {
+      const tr = el("tr");
+      tr.append(el("td", null, t.device + " · " + t.kind),
+                el("td", (t.verdict === "fail" ? "bad" : t.verdict === "pass" ? "ok" : "warn"),
+                   t.verdict),
+                el("td", "sub", ago(t.at)));
+      tb.append(tr);
+    });
+    $("#monitorNote").textContent = d.summary.verdict;
+  } catch (err) { toast(err.message, true); }
+}
+
+async function showReport() {
+  try {
+    const d = await api("/api/report/md", {});
+    $("#reportPreview").textContent = d.markdown;
+    toast("Report built from the live database.");
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ---------------------------------------------------------------- palette */
+let palIndex = 0;
+let palItems = [];
+
+async function openPalette() {
+  $("#palScrim").classList.add("on");
+  const inp = $("#palInput");
+  inp.value = "";
+  inp.focus();
+  await searchPalette("");
+}
+function closePalette() { $("#palScrim").classList.remove("on"); }
+
+async function searchPalette(q) {
+  try {
+    const d = await api("/api/palette?q=" + encodeURIComponent(q));
+    palItems = d.results || [];
+    palIndex = 0;
+    renderPalette();
+  } catch (err) { toast(err.message, true); }
+}
+
+function renderPalette() {
+  const ul = $("#palList"); ul.replaceChildren();
+  if (!palItems.length) {
+    ul.append(el("li", null, "No command matches."));
+    return;
+  }
+  palItems.forEach((c, i) => {
+    const li = el("li");
+    li.setAttribute("aria-selected", i === palIndex ? "true" : "false");
+    li.append(el("span", "verb", ":" + c.verb), el("span", "t", c.title),
+              el("span", "g", c.group));
+    li.onclick = () => runPalette(c);
+    ul.append(li);
+  });
+}
+
+async function runPalette(cmd) {
+  closePalette();
+  try {
+    const out = await api("/api/palette/run", { verb: cmd.verb });
+    toast(":" + out.command + " — " + out.elapsed_ms + " ms");
+    await refreshAll();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function askJournal() {
+  const q = $("#askBox").value.trim();
+  if (!q) return;
+  try {
+    const d = await api("/api/ask", { question: q });
+    const box = $("#palList");
+    showPaletteResult(d);
+  } catch (err) { toast(err.message, true); }
+}
+
+function showPaletteResult(d) {
+  $("#palScrim").classList.add("on");
+  const ul = $("#palList"); ul.replaceChildren();
+  const head = el("li");
+  head.style.cursor = "default";
+  head.append(el("span", "t", d.headline));
+  ul.append(head);
+  (d.items || []).slice(0, 10).forEach((i) => {
+    const li = el("li");
+    li.style.cursor = "default";
+    const text = i.question || i.what || i.title || JSON.stringify(i).slice(0, 110);
+    li.append(el("span", "t", String(text)));
+    ul.append(li);
+  });
+}
+
 /* ---------------------------------------------------------------- gaming */
 let LIBRARY = [];
 async function loadGaming() {
@@ -1185,6 +1574,36 @@ $("#reportBtn").addEventListener("click", async () => {
   });
 });
 $("#watchBtn").addEventListener("click", watchGame);
+$("#spaceSample").addEventListener("click", async () => {
+  try { await api("/api/space/sample", {}); toast("Sample taken."); loadSpace(); }
+  catch (err) { toast(err.message, true); }
+});
+$("#dupeScan").addEventListener("click", scanDupes);
+$("#startupDefer").addEventListener("click", deferStartup);
+$("#dcClick").addEventListener("click", recordClick);
+$("#chatterInput").addEventListener("keydown", onChatterKey);
+document.querySelectorAll("[data-pattern]").forEach((b) =>
+  b.addEventListener("click", () => {
+    toast("Colour-field walk: " + b.dataset.pattern + " — full screen on the real build.");
+    $("#monitorNote").textContent = b.dataset.pattern === "dead_pixel"
+      ? "Look for a dot that never changes colour." : "Look for patches of uneven brightness.";
+  }));
+$("#reportView").addEventListener("click", () => window.open("/api/report/html", "_blank"));
+$("#reportMd").addEventListener("click", showReport);
+$("#askBtn").addEventListener("click", askJournal);
+$("#askBox").addEventListener("keydown", (e) => { if (e.key === "Enter") askJournal(); });
+$("#palBtn").addEventListener("click", openPalette);
+$("#palInput").addEventListener("input", (e) => searchPalette(e.target.value));
+$("#palInput").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closePalette();
+  if (e.key === "ArrowDown") { palIndex = Math.min(palIndex + 1, palItems.length - 1);
+    renderPalette(); e.preventDefault(); }
+  if (e.key === "ArrowUp") { palIndex = Math.max(palIndex - 1, 0); renderPalette(); e.preventDefault(); }
+  if (e.key === "Enter" && palItems[palIndex]) runPalette(palItems[palIndex]);
+});
+$("#palScrim").addEventListener("click", (e) => {
+  if (e.target.id === "palScrim") closePalette();
+});
 $("#autopsyBegin").addEventListener("click", beginAutopsy);
 $("#consentSafe").addEventListener("click", () => setConsent({ level: "safe" }));
 $("#consentTrusted").addEventListener("click", () => setConsent({ trust_everything: true }));
@@ -1194,6 +1613,10 @@ document.querySelectorAll("[data-psa]").forEach((b) =>
   b.addEventListener("click", () => psaStep(b.dataset.psa)));
 $("#dnsOn").addEventListener("click", loadDns);
 document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault(); openPalette(); return;
+  }
+  if (e.key === "Escape") closePalette();
   if (e.key === "r" && !/input|select|textarea/i.test(document.activeElement.tagName)) refreshAll();
   if (e.key === "Escape") { $("#psaChoices").style.display = "none"; }
 });

@@ -81,3 +81,14 @@ def make_tweak(**overrides):
     }
     base.update(overrides)
     return parse_tweak(base)
+
+
+@pytest.fixture()
+def service(tmp_path, engine, clock):
+    """The whole app, wired, on a temp database. Shared by every suite so a module
+    test and a bridge test exercise the same object graph."""
+    from pco_engine import FakeBackend
+    from pco_engine.service import DEMO_STATE, Service
+    return Service(str(tmp_path / "svc.db"), backend=FakeBackend(DEMO_STATE),
+                   catalog_dir=CATALOG_DIR, vault_root=str(tmp_path / "vault"),
+                   clock=clock)

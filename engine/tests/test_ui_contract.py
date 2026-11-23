@@ -26,6 +26,7 @@ INTERNAL_OK = {
     "/api/health", "/api/catalog", "/api/feed", "/api/verify",
     "/api/dns/toggle", "/api/games", "/api/checkup/fix",
     "/api/sens/save", "/api/game/profile/save", "/api/studio/save",
+    "/api/palette/all", "/api/report/json",
 }
 
 
@@ -45,23 +46,33 @@ def _client_calls() -> set[str]:
 
 
 def _client_paths() -> set[str]:
-    """Every /api/... string literal in the console's markup or script."""
+    """Every /api/... string literal in the console, query strings stripped."""
     text = _console_text()
     found = set(re.findall(r"""["'](/api/[A-Za-z0-9_\-/.]*)["']""", text))
+    found |= set(re.findall(r"""["'](/api/[A-Za-z0-9_\-/.]*)\?""", text))
     # "/api/dns/" is a prefix for string concatenation, not an endpoint
-    return {p for p in found if not p.endswith("/")}
+    return {p.split("?")[0] for p in found if not p.endswith("/")}
+
+
+def _route_matches(path: str, routes: set[str]) -> bool:
+    """Exact route, or a routed prefix (the report endpoint is opened in a new tab
+    as `/api/report/html`, which the router handles by startswith)."""
+    if path in routes:
+        return True
+    return any(path.startswith(r) for r in routes if r.count("/") >= 3)
 
 
 def _server_routes() -> set[str]:
     text = (Path(srv.__file__)).read_text(encoding="utf-8")
     table = set(re.findall(r'"(/api/[A-Za-z0-9_\-/]*)"\s*:', text))
     branches = set(re.findall(r'path == "(/api/[A-Za-z0-9_\-/]*)"', text))
+    # routes served by a prefix branch, declared in the ROUTES table as well
     return table | branches
 
 
 def test_no_client_path_is_missing_from_the_router():
     routes = _server_routes()
-    missing = sorted(p for p in _client_paths() if p not in routes)
+    missing = sorted(p for p in _client_paths() if not _route_matches(p, routes))
     assert not missing, (
         "the console calls endpoints the server does not route — these are dead "
         f"buttons in the browser: {missing}")
@@ -74,7 +85,10 @@ def test_router_has_no_orphan_routes():
     ('/api/dns/' + action) is covered by `test_dynamic_dns_paths_resolve` instead
     of being counted as unreachable here.
     """
-    orphans = sorted(_server_routes() - _client_calls() - _client_paths() - INTERNAL_OK)
+    called = _client_calls() | _client_paths()
+    orphans = sorted(r for r in _server_routes()
+                     if r not in INTERNAL_OK
+                     and not any(c.startswith(r) or r.startswith(c) for c in called))
     assert not orphans, f"routes exposed but never called by the console: {orphans}"
 
 

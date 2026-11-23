@@ -19,12 +19,19 @@ from . import Engine, FakeBackend, Catalog
 from .bench import Bench
 from .checker import Checker, Probe
 from .cleaner import Cleaner, Rule
+from .ask import Ask
 from .autopsy import AutopsyLab
 from .consent import Consent
 from .dns import DnsBlocker
 from .ids import new_id
+from .palette import Palette
+from .peripheral import PeripheralLab
+from .report import Report, build as build_report, to_html, to_markdown
+from .space import Space
+from .startup import BootReport, StartupItem, StartupSurgeon
 from .address import values_equal
 from .engine import EngineError, PreflightBlocked
+from .dupes import Duplicates
 from .gaming import Gaming
 from .recipes import Recipes, Spec
 from .sens import SensLab
@@ -43,6 +50,9 @@ DEFAULT_RULES = [
          ["{cache}/dns/*"], note="Rebuilds on the next lookup"),
     Rule("junk.old_logs", "Old logs and crash dumps", "free", "cosmetic",
          ["{logs}/*.log", "{logs}/*.dmp"], note="Nothing reads these after 30 days"),
+    Rule("junk.installers", "Leftover installers", "free", "low",
+         ["{downloads}/*.exe", "{downloads}/*.msi"],
+         note="Installer downloads you have already used"),
 ]
 
 DEMO_LIST = """# a tiny, honest sample list (real builds ship compiled lists)
@@ -91,6 +101,15 @@ class Service:
         self.gaming = Gaming(self.conn, self.clock)
         self.studio = Studio(self.conn, self.clock)
         self.consent = Consent(self.conn, self.clock)
+        self.startup = StartupSurgeon(self.conn, self.clock,
+                                      backend=self.backend, catalog=self.catalog)
+        self.palette = Palette(self.conn, self.clock, run_action=self.run_action)
+        self.space = Space(self.conn, self.clock, roots=self._space_roots())
+        self.peripheral = PeripheralLab(self.conn, self.clock)
+        self.dupes = Duplicates(self.conn, self.clock)
+        self.ask = Ask(self)
+        if self._demo:
+            self._seed_demo_space()
         self.autopsy = AutopsyLab(
             self.conn, self.clock,
             snapshot=lambda: self.engine.snapshots.capture(
@@ -305,6 +324,133 @@ class Service:
             payload=res.as_dict()))
         return res.as_dict()
 
+    # ================================================================== startup
+    def startup_items(self) -> list:
+        """Demo machine inventory: real shape, modelled costs, honest nulls."""
+        from .startup import StartupItem
+        if not self._demo:
+            return []
+        raw = [
+            ("DiagTrack (diagnostics)", "service", "service:diagtrack", 1450, "services"),
+            ("Windows Search", "service", "service:wusearch", 900, "services"),
+            ("SysMain (prefetch)", "service", "service:sysmain", 620, "services"),
+            ("OneDrive", "run_key", "run_key:onedrive", 900, "logon"),
+            ("Steam", "run_key", "run_key:steam", 1400, "logon"),
+            ("Epic Games Launcher", "run_key", "run_key:epicgameslauncher", 1100, "logon"),
+            ("RGB Suite", "run_key", "run_key:rgbsuite", 700, "shell"),
+            ("Acme Updater", "run_key", "run_key:acmeupdater", 600, "logon"),
+            ("Cloud Sync", "run_key", "run_key:cloudsync", 1200, "logon"),
+            ("Vendor Tray", "run_key", "run_key:vendortray", 500, "shell"),
+            ("Office Background Task", "task",
+             "task:\\microsoft\\office\\officebackgroundtaskhandler", 800, "kernel"),
+            ("Spotify", "run_key", "run_key:spotify", 400, "logon"),
+            ("NVIDIA Container", "service", "service:nvcontainer", None, "unattributed"),
+            ("Unknown tray helper", "run_key", "run_key:unknown1", None, "unattributed"),
+        ]
+        return [StartupItem(id=f"su{i}", name=n, cls=c, locator=loc, cost_ms=cost,
+                            phase=ph) for i, (n, c, loc, cost, ph) in enumerate(raw)]
+
+    def startup_report(self) -> dict[str, Any]:
+        from .startup import Dependency
+        items = self.startup_items()
+        if not items:
+            return {"available": False,
+                    "reason": "startup inventory needs the Windows backend"}
+        self.startup.set_dependencies([
+            Dependency(dependent="wuauserv", needs="service:wuauserv"),
+            Dependency(dependent="Security Center", needs="service:wusearch"),
+        ])
+        rep = self.startup.report(items)
+        plan = self.startup.plan(items)
+        kg = [self._knowledge_row(i) for i in items]
+        return {"available": True, "report": rep.as_dict(), "plan": plan,
+                "knowledge": kg,
+                "verdict": (f"{rep.measured} item(s) have a measured cost; "
+                            f"{rep.unattributed} are unattributed and are not counted.")}
+
+    def _knowledge_row(self, item) -> dict[str, Any]:
+        from .startup import knowledge_for, refusal
+        k = knowledge_for(item)
+        why = refusal(item, self.startup._deps)
+        return {"item": item.name, "class": item.cls, "phase": item.phase,
+                "cost_label": item.as_dict()["cost_label"],
+                "does": (k or {}).get("does", "no knowledge entry"),
+                "recommended": (k or {}).get("recommended", "unattributed — measure first"),
+                "breaks": (k or {}).get("breaks", []),
+                "refusal": why}
+
+    def startup_apply(self, *, mode: str = "defer") -> dict[str, Any]:
+        rep = self.startup_report()
+        if not rep.get("available"):
+            return {"applied": [], "reason": rep["reason"]}
+        out = self.startup.apply_plan(rep["plan"], mode=mode)
+        self.sentinel.record(Event(
+            kind="startup", source="startup", severity="info",
+            narrative=f"Startup plan applied ({mode}): {len(out['applied'])} item(s).",
+            payload=out))
+        self._write_receipt(kind="startup", title="Startup Surgeon",
+                            summary=f"{len(out['applied'])} item(s) {mode}ed",
+                            tx_id=None, detail=out)
+        return out
+
+    # ================================================================== ask/space
+    def ask_question(self, question: str) -> dict[str, Any]:
+        return self.ask.ask(question).as_dict()
+
+    def space_sample(self) -> dict[str, Any]:
+        s = self.space.sample()
+        return s.as_dict()
+
+    def space_grew(self, days: int = 7) -> dict[str, Any]:
+        return self.space.grew(days)
+
+    def space_forecast(self) -> dict[str, Any]:
+        return self.space.forecast()
+
+    def find_duplicates(self, roots: list[str] | None = None) -> dict[str, Any]:
+        """Scan the demo temp tree, or the given roots, and report confirmed dups."""
+        if roots is None:
+            roots = ([r for r in (self.cleaner.roots.get("downloads"),
+                                  self.cleaner.roots.get("temp")) if r]
+                     if self._demo else [str(Path.home())])
+        return self.dupes.scan(roots).as_dict()
+
+    def peripheral_run(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run one hardware test and store the verdict with its evidence."""
+        from . import peripheral as p
+        if kind == "mouse_double_click":
+            res = p.double_click_test(payload.get("intervals_ms", []),
+                                      device=payload.get("device", "Mouse"))
+        elif kind == "keyboard_chatter":
+            pairs = payload.get("events", [])
+            res = p.chatter_test([(k, int(t)) for k, t in pairs],
+                                 device=payload.get("device", "Keyboard"))
+        elif kind == "sensor_jitter":
+            res = p.sensor_jitter_test([(float(a), float(b)) for a, b in
+                                        payload.get("samples", [])],
+                                       device=payload.get("device", "Mouse"))
+        elif kind == "polling_rate":
+            res = p.polling_rate_test(payload.get("intervals_us", []),
+                                      device=payload.get("device", "Mouse"))
+        elif kind == "monitor":
+            return p.monitor_pattern(payload.get("pattern", "dead_pixel"))
+        else:
+            raise ValueError(f"unknown test {kind!r}")
+        self.peripheral.record(res)
+        if res.verdict == "fail":
+            self.sentinel.record(Event(
+                kind="hardware", source="peripheral", severity="warning",
+                narrative=res.headline, payload=res.as_dict()))
+        return res.as_dict()
+
+    def health_report(self, fmt: str = "json") -> Any:
+        rep = build_report(self)
+        if fmt == "md":
+            return to_markdown(rep)
+        if fmt == "html":
+            return to_html(rep)
+        return rep.as_dict()
+
     # =================================================================== status
     def status(self) -> dict[str, Any]:
         latest = self.checker.latest_run()
@@ -326,6 +472,12 @@ class Service:
             "studio": self.studio.budget(),
             "autopsy": self.autopsy.list(3),
             "consent": self.consent.decision().as_dict(),
+            "startup": (lambda r: {"available": r.get("available", False),
+                                   "current_ms": r.get("report", {}).get("total_ms"),
+                                   "unattributed": r.get("report", {}).get("unattributed_items"),
+                                   "saving_ms": r.get("plan", {}).get("saving_ms")})(
+                self.startup_report()),
+            "space": self.space.grew(7),
             "feed": self.sentinel.feed(8),
             "digest": self.sentinel.digest(),
             "receipts": self.receipts(10),
@@ -345,6 +497,45 @@ class Service:
         return {"id": sn.id, "kind": sn.kind, "bytes": sn.size_bytes}
 
     # ------------------------------------------------------------------- extras
+    def _space_roots(self) -> dict[str, str]:
+        """Map the space sampler onto whatever this build actually has."""
+        if getattr(self, "_demo", False):
+            base = Path(self.cleaner.roots.get("temp", ".")).parent if hasattr(self, "cleaner") else Path(".")
+            return {"Demo temp": str(Path(self.cleaner.roots["temp"]).parent),
+                    "Demo logs": self.cleaner.roots["logs"]}
+        home = Path.home()
+        return {"Downloads": str(home / "Downloads"),
+                "Documents": str(home / "Documents"),
+                "AppData": str(home / "AppData" / "Local")}
+
+    def _seed_demo_space(self) -> None:
+        """A simulated machine arrives with a week of history. A feature that only
+        works after seven days of uptime is a feature nobody sees."""
+        import json as _json
+        if self.conn.execute("SELECT COUNT(*) FROM space_samples").fetchone()[0]:
+            return
+        base_free = 180_000_000_000      # 512 GB drive, ~115 GB used today
+        total = 512_000_000_000
+        now = self.clock()
+        # days 6..1 ago, then a fresh sample now
+        for days_ago in range(7, 0, -1):
+            grown = (7 - days_ago) * 1_900_000_000          # ~1.9 GB/day
+            folders = {
+                "Downloads": {"bytes": 8_000_000_000 + (7 - days_ago) * 900_000_000,
+                              "files": 400 + (7 - days_ago) * 12},
+                "Demo temp": {"bytes": 42_000_000 + (7 - days_ago) * 2_000_000,
+                              "files": 9},
+                "Demo logs": {"bytes": 4_000_000 + (7 - days_ago) * 400_000, "files": 3},
+                "AppData": {"bytes": 26_000_000_000 + (7 - days_ago) * 600_000_000,
+                            "files": 52_000},
+            }
+            with self.conn:
+                self.conn.execute(
+                    "INSERT INTO space_samples(id,at,folders_json,free_bytes,total_bytes) "
+                    "VALUES(?,?,?,?,?)",
+                    (new_id(), now - days_ago * 86_400_000, _json.dumps(folders),
+                     base_free - grown, total))
+
     def _seed_demo_junk(self, base: Path) -> dict[str, str]:
         """A simulated machine should contain simulated junk, otherwise the
         Cleaner page has nothing honest to show. These are real files on disk, so
@@ -364,8 +555,27 @@ class Service:
                 f = base / sub / name
                 if not f.exists():
                     f.write_bytes(b"\0" * size)
+
+        # a believable duplicate set: the same installer downloaded twice, one
+        # copy in Downloads and one in a backup folder
+        dupdir = base / "downloads"
+        dupdir.mkdir(exist_ok=True)
+        # each *pair* shares bytes; the two pairs are deliberately different, so a
+        # finder that only compares sizes would be caught reporting them as one.
+        pairs = {
+            "game": ("downloads/game-setup.exe", "temp/game-setup (1).exe"),
+            "tool": ("downloads/tool-installer.msi", "temp/tool-installer (2).msi"),
+        }
+        for tag, (first, second) in pairs.items():
+            payload = (tag.encode() * (2 * 1024 * 1024 // len(tag) + 1))[:2 * 1024 * 1024]
+            for rel in (first, second):
+                f = base / rel
+                f.parent.mkdir(parents=True, exist_ok=True)
+                if not f.exists():
+                    f.write_bytes(payload)
         return {"temp": str(base / "temp"), "temp_system": str(base / "temp"),
-                "cache": str(base / "cache"), "logs": str(base / "logs")}
+                "cache": str(base / "cache"), "logs": str(base / "logs"),
+                "downloads": str(base / "downloads")}
 
     def _install_demo_lists(self) -> None:
         if self.dns.total_blocked() == 0:
@@ -455,6 +665,19 @@ ACTIONS = {
     "studio.import": lambda s, a: s.studio.import_doc(a["doc"]),
     "autopsy.begin": lambda s, a: {"autopsy_id": s.autopsy.begin(a.get("installer", "unknown.exe"))},
     "autopsy.erase": lambda s, a: s.autopsy.erase(a["autopsy_id"]),
+    "startup.inspect": lambda s, a: s.startup_report(),
+    "startup.apply": lambda s, a: s.startup_apply(mode=a.get("mode", "defer")),
+    "palette.search": lambda s, a: {"results": s.palette.search(a.get("q", ""))},
+    "palette.run": lambda s, a: s.palette.execute(a["verb"], a.get("args")),
+    "ask": lambda s, a: s.ask_question(a["question"]),
+    "space.sample": lambda s, a: s.space_sample(),
+    "space.grew": lambda s, a: s.space_grew(int(a.get("days", 7))),
+    "space.forecast": lambda s, a: s.space_forecast(),
+    "dupes.scan": lambda s, a: s.find_duplicates(a.get("roots")),
+    "report.md": lambda s, a: {"markdown": s.health_report("md")},
+    "report.html": lambda s, a: {"html": s.health_report("html")},
+    "report.json": lambda s, a: s.health_report("json"),
+    "peripheral.summary": lambda s, a: s.peripheral.summary(),
     "clean.scan": lambda s, a: s.clean_scan(),
     "clean.run": lambda s, a: s.clean_run(),
     "clean.restore": lambda s, a: s.clean_restore(a["run_id"]),

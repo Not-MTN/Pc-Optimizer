@@ -285,12 +285,7 @@ def test_broken_source_does_not_stop_the_feed(engine):
 
 # --------------------------------------------------------------------- service
 
-@pytest.fixture()
-def service(tmp_path, engine, clock):
-    svc = Service(str(tmp_path / "svc.db"), backend=FakeBackend(DEMO_STATE),
-                  catalog_dir=os.path.join(os.path.dirname(__file__), "..", "catalog"),
-                  vault_root=str(tmp_path / "vault"), clock=clock)
-    return svc
+# `service` comes from conftest.py so every suite shares one definition
 
 
 def test_service_status_runs_every_module(service):

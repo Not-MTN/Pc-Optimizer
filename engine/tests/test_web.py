@@ -338,3 +338,64 @@ def test_bridge_rejects_bad_consent_level_with_400(live_server):
     code, body = _post(live_server, "/api/consent/set", {"level": "godmode"})
     assert code == 400
     assert "level must be one of" in body["error"]
+
+
+# ============================================== intel endpoints over the bridge
+
+def test_bridge_startup_inventory_and_plan(live_server):
+    d = _get(live_server, "/api/startup")
+    assert d["available"] is True
+    assert d["report"]["measured_items"] >= 10
+    assert d["report"]["unattributed_items"] >= 1        # never invented
+    assert d["plan"]["saving_ms"] > 0
+    assert any(k["refusal"] for k in d["knowledge"])      # at least one refusal
+
+
+def test_bridge_palette_search_and_run(live_server):
+    hits = _get(live_server, "/api/palette?q=dns")
+    assert hits["results"] and hits["results"][0]["verb"].startswith("dns")
+    code, out = _post(live_server, "/api/palette/run", {"verb": "help"})
+    assert code == 200 and out["command"] == "help"
+
+
+def test_bridge_palette_refuses_a_shell_command(live_server):
+    code, body = _post(live_server, "/api/palette/run", {"verb": "shell-anything"})
+    assert code == 400
+    assert "unknown command" in body["error"]
+
+
+def test_bridge_space_history_and_forecast(live_server):
+    grew = _get(live_server, "/api/space?days=7")
+    assert grew["available"] is True and grew["changed"]
+    fc = _get(live_server, "/api/space/forecast")
+    assert fc["available"] is True
+
+
+def test_bridge_duplicates_are_confirmed(live_server):
+    d = _post(live_server, "/api/dupes", {})[1]
+    assert d["group_count"] >= 1
+    assert all(len(g["files"]) >= 2 for g in d["groups"])
+    assert d["method"].startswith("size")
+
+
+def test_bridge_ask_answers_from_the_journal(live_server):
+    out = _post(live_server, "/api/ask", {"question": "what did I change?"})[1]
+    assert out["intent"] == "what_changed"
+    assert "journal" in out["note"]
+
+
+def test_bridge_report_renders_printable_html(live_server):
+    with urllib.request.urlopen(live_server + "/api/report/html", timeout=20) as r:
+        html = r.read().decode()
+    assert html.startswith("<!DOCTYPE html>")
+    assert "PC Health Report" in html
+
+
+def test_bridge_peripheral_test_records_a_verdict(live_server):
+    _, out = _post(live_server, "/api/peripheral/test",
+                   {"kind": "mouse_double_click",
+                    "payload": {"intervals_ms": [300, 11, 290, 9, 280]}})
+    assert out["verdict"] == "fail"
+    assert "hardware fault" in " ".join(out["advice"])
+    hist = _get(live_server, "/api/peripheral")["history"]
+    assert hist and hist[0]["verdict"] == "fail"
