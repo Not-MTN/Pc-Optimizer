@@ -14,12 +14,13 @@
 | [`SAFETY.md`](SAFETY.md) | Full access without breakage: guardrails, preflight, journal, golden snapshots, boot guard, panic key, failure scenarios, recovery playbook |
 | [`MOTION.md`](MOTION.md) | The frame contract, tokens, motion language, screen-by-screen choreography, accessibility, measurement |
 | [`IDENTITY.md`](IDENTITY.md) | Two moods (Casual / Pro), Nim the mascot, copy voice, naming |
+| [`DESKTOP.md`](DESKTOP.md) | The customization suite: terminal, taskbar/shell theming, icon packs, wallpaper engine, widget layer, one-file themes |
 
 ## Clickable concepts
 
 Open in any browser — every control is wired:
 
-- **[`concept.html`](concept.html)** — the dashboard: Nim, power modes, cleaner receipts, DNS blocker, palette, customization, gaming session with honest measurement, Guardian journal, sandbox, privacy, motion lab
+- **[`concept.html`](concept.html)** — the dashboard with four sections (Overview · Gaming · Desktop studio · Safety): PC Checkup with one-button fixes, Nim, power modes, cleaner receipts, DNS blocker with master switch, palette, gaming coach + session, terminal, wallpaper engine, widgets, themes, Guardian journal, sandbox, privacy, motion lab
 - **[`concept-sandbox.html`](concept-sandbox.html)** — **Installer Autopsy**: watch an installer, read the receipt, then keep or erase every trace. Includes the **Casual ↔ Pro** mood switch
 
 ## The one-line promise
