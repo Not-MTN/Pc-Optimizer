@@ -131,8 +131,13 @@ def test_a_look_that_is_not_a_string_is_a_400(base, look):
 def test_a_look_that_is_not_known_is_a_400_that_lists_the_real_ones(base, look):
     status, raw = post(base, "/api/spotify/export", {"look": look})
     assert status == 400
-    # the message must be useful: it names what is valid
-    assert b"known looks are" in raw
+    # The contract is "refused with a reason", not one fixed sentence: an
+    # over-long id is caught by the length guard before the look validator
+    # sees it, which is a better error, not a worse one.
+    body = raw.decode("utf-8", "replace").lower()
+    assert "look" in body, body
+    assert any(word in body for word in
+               ("known looks are", "limit", "must be a string")), body
 
 
 @pytest.mark.parametrize("directory,why", [
@@ -150,7 +155,8 @@ def test_a_bad_write_destination_is_refused_and_explained(base, directory, why):
     assert status == 400, f"{directory[:40]!r} -> {status}"
     body = raw.decode("utf-8", "replace").lower()
     assert any(word in body for word in
-               ("absolute", "..", "exist", "not a directory", "empty", "long")), body
+               ("absolute", "..", "exist", "not a directory", "empty", "long",
+                "limit")), body
 
 
 def test_a_symlink_destination_is_followed_not_escaped(base, tmp_path):
@@ -389,3 +395,94 @@ def test_zero_cost_variant_never_raises_on_a_non_document():
         out = cost.zero_cost_variant(junk)
         assert isinstance(out, dict)
         assert cost.cost_of(out) == 0.0
+
+
+# ------------------------------------------------- the routes ROUTES never had
+# The 69-route fuzzer covered srv.ROUTES. Thirty-one endpoints are special-cased
+# in do_POST *outside* that table, so they were never fuzzed — which is exactly
+# where `{"run_id": []}` reached SQLite and came back as a 500, and where a bogus
+# tx_id returned a full traceback with absolute paths to the browser.
+SPECIAL_ROUTES = [
+    "/api/apply", "/api/autopsy", "/api/autopsy/begin", "/api/autopsy/erase",
+    "/api/autopsy/finish", "/api/autopsy/note", "/api/catalog",
+    "/api/clean/restore", "/api/consent", "/api/consent/set", "/api/feed",
+    "/api/game/plan", "/api/game/profile/save", "/api/game/watch",
+    "/api/games/library", "/api/health", "/api/palette", "/api/palette/all",
+    "/api/palette/run", "/api/peripheral", "/api/peripheral/test",
+    "/api/receipts", "/api/report/html", "/api/sens", "/api/sens/psa/start",
+    "/api/sens/psa/step", "/api/sens/save", "/api/studio/apply",
+    "/api/studio/import", "/api/studio/save", "/api/undo",
+]
+
+JUNK = [
+    {}, {"x": 1}, {"tx_id": ["a"]}, {"tx_id": {"a": 1}}, {"tx_id": None},
+    {"run_id": []}, {"run_id": {}}, {"autopsy_id": []}, {"autopsy_id": {}},
+    {"id": []}, {"doc": []}, {"cm360": [], "dpi": 800}, {"game": {}},
+    {"theme_id": []}, {"verb": []}, {"kind": []}, {"state": [], "better": {}},
+]
+
+
+@pytest.mark.parametrize("route", SPECIAL_ROUTES)
+def test_no_special_route_answers_5xx_to_junk(base, route):
+    """Every special-cased endpoint, every shape of junk — none may 5xx."""
+    offenders = []
+    for body in JUNK:
+        status, raw = post(base, route, body)
+        if status >= 500:
+            offenders.append((body, status, raw[:120]))
+    assert not offenders, offenders
+
+
+def test_a_bogus_tx_id_is_a_409_not_a_traceback(base):
+    """This returned a full stack trace with absolute paths — a real leak."""
+    status, raw = post(base, "/api/undo", {"tx_id": "nope"})
+    assert status == 409, raw
+    body = raw.decode("utf-8", "replace")
+    assert "nothing journaled for nope" in body
+    for leak in ("Traceback", "File \"", "pco_engine", "/home/"):
+        assert leak not in body, f"{leak} leaked to the client: {body[:200]}"
+
+
+def test_no_endpoint_puts_a_traceback_in_a_response(base):
+    """Whatever goes wrong, the browser gets a sentence and a reference."""
+    leaked = []
+    for route in SPECIAL_ROUTES:
+        for body in ({"x": 1}, {}):
+            _, raw = post(base, route, body)
+            text = raw.decode("utf-8", "replace")
+            if "Traceback (most recent call last)" in text or 'File "' in text:
+                leaked.append((route, text[:120]))
+    assert not leaked, leaked
+
+
+@pytest.mark.parametrize("route,body,key", [
+    ("/api/sens/save", {"cm360": "abc", "dpi": 800}, "cm360"),
+    ("/api/sens/save", {"cm360": None, "dpi": 800}, "cm360"),
+    ("/api/sens/save", {"cm360": [], "dpi": 800}, "cm360"),
+    ("/api/sens/save", {"cm360": {}, "dpi": 800}, "cm360"),
+    ("/api/sens/save", {"cm360": 1e999, "dpi": 800}, "cm360"),
+    ("/api/sens/save", {"cm360": 30.0, "dpi": "800"}, "dpi"),
+    ("/api/sens/save", {"cm360": 30.0, "dpi": []}, "dpi"),
+])
+def test_numeric_fields_reject_non_numbers_with_a_reason(base, route, body, key):
+    """float([]) and int("x") used to raise from inside the handler — a 500."""
+    status, raw = post(base, route, body)
+    assert status == 400, f"{key}={body[key]!r} -> {status}: {raw[:100]}"
+    assert key.encode() in raw, f"the message must name {key}: {raw[:120]}"
+
+
+def test_a_fractional_dpi_is_refused_rather_than_truncated(base):
+    """Truncating 800.5 to 800 would quietly change what the user asked for."""
+    status, raw = post(base, "/api/sens/save", {"cm360": 30.0, "dpi": 800.5})
+    assert status == 400
+    assert b"whole number" in raw
+
+
+def test_an_identifier_that_is_not_a_scalar_is_refused(base):
+    for route, key in (("/api/undo", "tx_id"), ("/api/clean/restore", "run_id"),
+                       ("/api/autopsy/finish", "autopsy_id"),
+                       ("/api/studio/apply", "theme_id")):
+        for value in ([], {}, ["a"], {"a": 1}):
+            status, raw = post(base, route, {key: value})
+            assert status == 400, f"{route} {key}={value!r} -> {status}"
+            assert key.encode() in raw, raw[:120]

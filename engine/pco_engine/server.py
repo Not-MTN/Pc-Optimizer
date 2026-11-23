@@ -20,6 +20,7 @@ import os
 import sys
 import threading
 import traceback
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,12 @@ from urllib.parse import parse_qs as urlparse_qs
 from urllib.parse import urlparse
 
 from . import __version__
+from .backend import BackendError
+from .display import DisplayError
+from .engine import EngineError
+from .journal import JournalError
+from .recipes import RecipeError
+from .store import StoreError
 from .service import Service
 
 _LOCK = threading.Lock()
@@ -264,8 +271,11 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 html = _service().health_report("html").encode("utf-8")
                 self._send(200, html, "text/html; charset=utf-8")
-            except Exception:  # noqa: BLE001
-                self._json(500, {"error": traceback.format_exc(limit=3)})
+            except Exception as exc:  # noqa: BLE001
+                ref = f"keel-{uuid.uuid4().hex[:12]}"
+                _log_exception(ref, exc)
+                self._json(500, {"error": "Keel hit an internal error and did "
+                                          "not change anything.", "ref": ref})
             return
         if path == "/api/health":
             self._json(200, {"ok": True, "version": __version__,
@@ -347,8 +357,11 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
             return
-        except Exception:  # noqa: BLE001 - the UI must show the failure, not crash
-            self._json(500, {"error": traceback.format_exc(limit=3)})
+        except Exception as exc:  # noqa: BLE001 - the UI must show the failure
+            ref = f"keel-{uuid.uuid4().hex[:12]}"
+            _log_exception(ref, exc)
+            self._json(500, {"error": "Keel hit an internal error and did not "
+                                      "change anything.", "ref": ref})
             return
         self._json(404, {"error": f"no route {path}"})
 
@@ -398,26 +411,26 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/undo":
                 with _LOCK:
-                    self._json(200, svc.undo(args["tx_id"]))
+                    self._json(200, svc.undo(_ident(args, "tx_id")))
                 return
             if path == "/api/clean/restore":
                 with _LOCK:
-                    self._json(200, svc.clean_restore(args["run_id"]))
+                    self._json(200, svc.clean_restore(_ident(args, "run_id")))
                 return
             if path == "/api/dns/pause":
                 with _LOCK:
-                    self._json(200, {"paused_until": svc.dns.pause(int(args.get("minutes", 30)))})
+                    self._json(200, {"paused_until": svc.dns.pause(_int(args, "minutes", default=30))})
                 return
             if path == "/api/sens/save":
                 with _LOCK:
-                    prof = svc.sens.save(cm360=float(args["cm360"]),
-                                         dpi=int(args["dpi"]))
+                    prof = svc.sens.save(cm360=_num(args, "cm360"),
+                                         dpi=_int(args, "dpi"))
                 self._json(200, prof.as_dict())
                 return
             if path == "/api/sens/from-game":
                 with _LOCK:
-                    prof = svc.sens.from_game(args["game"], float(args["sens"]),
-                                              int(args["dpi"]))
+                    prof = svc.sens.from_game(_ident(args, "game"), _num(args, "sens"),
+                                              _int(args, "dpi"))
                 self._json(200, {"profile": prof.as_dict(),
                                  "table": svc.sens.table()})
                 return
@@ -427,7 +440,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/sens/psa/step":
                 with _LOCK:
-                    self._json(200, svc.sens.psa_step(args["state"], args["better"]))
+                    self._json(200, svc.sens.psa_step(_ident(args, "state"), bool(args["better"])))
                 return
             if path == "/api/consent/set":
                 with _LOCK:
@@ -438,62 +451,65 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/game/watch":
                 with _LOCK:
-                    out = svc.gaming.capture(args["game"],
-                                             seconds=float(args.get("seconds", 45)))
+                    out = svc.gaming.capture(_ident(args, "game"),
+                                             seconds=_num(args, "seconds", default=45))
                 self._json(200, out)
                 return
             if path == "/api/game/plan":
                 with _LOCK:
-                    out = svc.gaming.plan(args["game"], args.get("session_id"))
+                    out = svc.gaming.plan(_ident(args, "game"), args.get("session_id"))
                 self._json(200, out)
                 return
             if path == "/api/game/profile/save":
                 with _LOCK:
-                    self._json(200, svc.gaming.save_profile(args["game"], args["settings"]))
+                    self._json(200, svc.gaming.save_profile(_ident(args, "game"),
+                                             _obj(args, "settings")))
                 return
             if path == "/api/studio/apply":
                 with _LOCK:
-                    self._json(200, svc.studio.apply(args["theme_id"],
+                    self._json(200, svc.studio.apply(_ident(args, "theme_id"),
                                                      force=bool(args.get("force"))))
                 return
             if path == "/api/studio/save":
                 with _LOCK:
-                    self._json(200, svc.studio.save(args["doc"], name=args.get("name")))
+                    self._json(200, svc.studio.save(_obj(args, "doc"), name=args.get("name")))
                 return
             if path == "/api/studio/import":
                 with _LOCK:
-                    self._json(200, svc.studio.import_doc(args["doc"]))
+                    self._json(200, svc.studio.import_doc(_obj(args, "doc")))
                 return
             if path == "/api/palette/run":
                 with _LOCK:
-                    out = svc.palette.execute(args["verb"], args.get("args"))
+                    out = svc.palette.execute(_ident(args, "verb"), args.get("args"))
                 self._json(200, out)
                 return
             if path == "/api/peripheral/test":
                 with _LOCK:
-                    out = svc.peripheral_run(args["kind"], args.get("payload", {}))
+                    out = svc.peripheral_run(_ident(args, "kind"),
+                                       _obj(args, "payload", default={}))
                 self._json(200, out)
                 return
             if path == "/api/autopsy/note":
                 with _LOCK:
-                    items = svc.autopsy.note(args["autopsy_id"], args.get("items", []))
+                    items = svc.autopsy.note(_ident(args, "autopsy_id"),
+                                            _obj(args, "items", default=[], kind=list))
                 self._json(200, {"recorded": len(items),
-                                 "autopsy": svc.autopsy.get(args["autopsy_id"]).as_dict()})
+                                 "autopsy": svc.autopsy.get(_ident(args, "autopsy_id")).as_dict()})
                 return
             if path == "/api/autopsy/finish":
                 with _LOCK:
-                    au = svc.autopsy.finish(args["autopsy_id"])
+                    au = svc.autopsy.finish(_ident(args, "autopsy_id"))
                 self._json(200, au.as_dict())
                 return
             if path == "/api/autopsy/erase":
                 with _LOCK:
-                    out = svc.autopsy.erase(args["autopsy_id"])
+                    out = svc.autopsy.erase(_ident(args, "autopsy_id"))
                 self._json(200, out)
                 return
             if path == "/api/autopsy/begin":
                 with _LOCK:
                     self._json(200, {"autopsy_id": svc.autopsy.begin(
-                        args.get("installer", "unknown.exe"))})
+                        str(args.get("installer", "unknown.exe"))[:260])})
                 return
             if path in ROUTES:
                 with _LOCK:
@@ -508,10 +524,117 @@ class Handler(BaseHTTPRequestHandler):
             # 400 with the reason, never a 500 with a traceback.
             self._json(400, {"error": str(exc)})
             return
-        except Exception:  # noqa: BLE001
-            self._json(500, {"error": traceback.format_exc(limit=3)})
+        except _CLIENT_FAULTS as exc:
+            # The domain's own "you asked for something that is not there"
+            # errors — EngineError("nothing journaled for nope"), BackendError,
+            # DisplayError, RecipeError. These are the caller's problem, not a
+            # defect in Keel, and answering them with a traceback leaked absolute
+            # paths and source lines to the browser. Found by posting a bogus
+            # tx_id to /api/undo, which is special-cased outside ROUTES and so
+            # was never reached by the route fuzzer.
+            self._json(409, {"error": str(exc)})
+            return
+        except Exception as exc:  # noqa: BLE001
+            # Anything left is a Keel defect. The browser gets a fixed sentence
+            # and a correlation id; the full trace goes to the log, where it can
+            # be read by someone fixing it and not by a page in a WebView.
+            ref = f"keel-{uuid.uuid4().hex[:12]}"
+            _log_exception(ref, exc)
+            self._json(500, {"error": "Keel hit an internal error and did not "
+                                      "change anything.",
+                             "ref": ref})
             return
         self._json(404, {"error": f"no route {path}"})
+
+
+# Errors whose meaning is "the request cannot be satisfied", not "Keel is
+# broken". Mapped to 409 (conflict with the state of the world) with their own
+# message. StoreUnusable is deliberately absent: an unusable database is a real
+# fault and deserves the log, not a tidy 409.
+_CLIENT_FAULTS = (EngineError, BackendError, DisplayError, RecipeError,
+                  JournalError, StoreError)
+
+
+_MISSING = object()
+
+
+def _num(args: dict[str, Any], key: str, *, default: Any = _MISSING) -> float:
+    """Read a finite number, refusing strings, nulls, NaN and infinity.
+
+    `float([])` and `int("x")` raise TypeError/ValueError from inside the
+    handler, which used to be a 500. NaN is refused too: it compares false
+    against everything, so a NaN DPI would pass every range check downstream.
+    """
+    if key not in args:
+        if default is _MISSING:
+            raise KeyError(key)
+        return float(default)
+    raw = args[key]
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError(f"'{key}' must be a number, got {type(raw).__name__}")
+    value = float(raw)
+    if value != value or value in (float("inf"), float("-inf")):
+        raise ValueError(f"'{key}' must be a finite number")
+    return value
+
+
+def _int(args: dict[str, Any], key: str, *, default: Any = _MISSING) -> int:
+    """A whole number. Rejects 12.5 rather than silently truncating it."""
+    value = _num(args, key, default=default)
+    if value != int(value):
+        raise ValueError(f"'{key}' must be a whole number, got {value}")
+    return int(value)
+
+
+def _obj(args: dict[str, Any], key: str, *, default: Any = _MISSING,
+         kind: type = dict) -> Any:
+    """Read a JSON object/array argument, refusing scalars."""
+    if key not in args:
+        if default is _MISSING:
+            raise KeyError(key)
+        return default
+    raw = args[key]
+    if not isinstance(raw, kind):
+        raise ValueError(f"'{key}' must be a JSON "
+                         f"{'object' if kind is dict else 'array'}, got "
+                         f"{type(raw).__name__}")
+    return raw
+
+
+def _ident(args: dict[str, Any], key: str) -> str:
+    """Read an identifier argument, refusing anything that is not one.
+
+    The special-cased routes below call the service directly, so they miss the
+    shape check in run_action(). That is how `{"run_id": []}` reached SQLite and
+    came back as `ProgrammingError: type 'list' is not supported` — a 500 for
+    what is plainly a bad request. Every identifier read on these routes goes
+    through here.
+    """
+    if key not in args:
+        raise KeyError(key)
+    value = args[key]
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError(f"'{key}' must be a string or a number, got "
+                         f"{type(value).__name__}")
+    if isinstance(value, str) and len(value) > 4096:
+        raise ValueError(f"'{key}' is {len(value)} characters; limit 4096")
+    return str(value)
+
+
+def _log_exception(ref: str, exc: BaseException) -> None:
+    """Write a full traceback to the engine log, tagged with its reference.
+
+    The browser sees only the reference, so a user can quote one line and I can
+    find the exact failure — without shipping source paths into the page.
+    """
+    line = f"[{ref}] {type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+    print(line, file=sys.stderr, flush=True)
+    try:
+        from .app import log_path       # same file the crash log uses
+        with open(log_path(), "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:      # noqa: BLE001 - logging must never break the response
+        pass
 
 
 def list_game_table(svc: Service) -> list[dict[str, Any]]:

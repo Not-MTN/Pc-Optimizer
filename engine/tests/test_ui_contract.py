@@ -212,10 +212,31 @@ def test_console_never_uses_absolute_localhost_urls():
 
 @pytest.mark.parametrize("handler", ["do_GET", "do_POST"])
 def test_json_errors_never_leak_a_traceback_to_the_ui(handler):
+    """An unexpected error must answer 500 with a reference, not a stack trace.
+
+    This test used to assert the *opposite* — that the handler contained
+    `traceback.format_exc(limit=3)`. It was written when "the UI always gets
+    JSON" was the goal, and it locked in shipping absolute file paths and source
+    lines to the browser for every unhandled exception. The intent was right;
+    the assertion was measuring the wrong thing.
+    """
+    import ast
+
     text = Path(srv.__file__).read_text(encoding="utf-8")
-    fn = text.split(f"def {handler}", 1)[1].split("\n    def ", 1)[0]
+    tree = ast.parse(text)
+    cls = next(n for n in tree.body
+               if isinstance(n, ast.ClassDef))
+    node = next(n for n in cls.body
+                if isinstance(n, ast.FunctionDef) and n.name == handler)
+    # Source of *this method only*. Slicing the file to the next "\n    def "
+    # also swallowed the module-level helpers below the class, which do use
+    # format_exc legitimately (to write the log).
+    fn = ast.get_source_segment(text, node) or ""
     assert 'self._json(500' in fn, f"{handler} must answer 500 with JSON"
-    assert "traceback.format_exc(limit=3)" in fn
+    assert "traceback.format_exc" not in fn, (
+        f"{handler} must not put a traceback in the response body; "
+        "log it and return a reference")
+    assert "_log_exception" in fn, f"{handler} must log the error it hid"
 
 
 # ------------------------------------------------ no dead buttons, ever again

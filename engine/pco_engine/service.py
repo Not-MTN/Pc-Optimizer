@@ -277,6 +277,11 @@ class Service:
            into a dict may raise TypeError *from the unhashable input* — a list
            or dict where a string was expected. That is also the caller's fault
            and is reported the same way, rather than as a crash.
+        3. A handler that hands an argument straight to SQLite gets
+           `ProgrammingError: type 'list' is not supported` from the driver,
+           which is neither of the above and surfaced as a 500. Anything that is
+           not a string where a string belongs is now refused here, so the
+           driver is never asked the question.
         """
         if args is None:
             args = {}
@@ -286,6 +291,21 @@ class Service:
         handler = ACTIONS.get(name)
         if handler is None:
             raise KeyError(f"unknown action: {name}")
+        # Arguments named like identifiers are always strings. Checking the
+        # shape once here beats trusting sixty handlers to remember, and gives a
+        # message that names the offending argument.
+        for key, value in args.items():
+            if not isinstance(key, str):
+                raise ValueError("argument names must be strings")
+            if value is None:
+                continue
+            if (key == "id" or key.endswith(("_id", "_ids"))) and not isinstance(
+                    value, (str, int)):
+                raise ValueError(
+                    f"'{key}' must be a string or a number, got "
+                    f"{type(value).__name__}")
+            if len(str(value)) > 4096 and isinstance(value, str):
+                raise ValueError(f"'{key}' is {len(value)} characters; limit 4096")
         try:
             return handler(self, args)
         except TypeError as exc:

@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (652 tests: 641 here, 11 that only a real Windows machine can run)
+## What works today (694 tests: 683 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -472,6 +472,42 @@ below was found before a user could find it.
     promises "the cheap version of this" crashed on anything that was not a
     dict. A non-document now yields an empty document — whose cost is still 0.0,
     which is the property everything that calls it depends on.
+
+The next round started from a question rather than an attack: *does the undo
+button work?* It does. But following it exposed a blind spot in the fuzzing.
+
+83. **The fuzzer only ever saw 69 of 100 routes.** Thirty-one endpoints are
+    special-cased in `do_POST` outside the `ROUTES` table, so the route fuzzer
+    — which iterated `ROUTES` — never touched them. Fuzzing those thirty-one
+    found 18 further 500s in a single pass.
+84. **A bogus `tx_id` returned the whole stack trace.** `POST /api/undo
+    {"tx_id":"nope"}` raised `EngineError`, which nothing caught, so the client
+    received `traceback.format_exc()` — absolute file paths, line numbers,
+    source lines — inside a JSON error. The catch-all now answers 409 with the
+    engine's own sentence, and maps the domain's "the request cannot be
+    satisfied" errors (`EngineError`, `BackendError`, `DisplayError`,
+    `RecipeError`, `JournalError`, `StoreError`) to 409 rather than treating
+    them as defects. A true fault gets a fixed sentence plus a `keel-…`
+    reference, and the full trace goes to the log.
+85. **Every unhandled error leaked the same way.** There were three
+    `format_exc(limit=3)` sites, not one. Fixed all three. The contract test
+    that should have caught this had asserted the leak was *present* — it was
+    written to guarantee "the UI always gets JSON" and pinned the implementation
+    instead of the intent. It now asserts the opposite, and parses the handler
+    with `ast` so a helper below the class does not count as part of it.
+86. **`{"run_id": []}` reached SQLite.** `ProgrammingError: Error binding
+    parameter 1: type 'list' is not supported` arrived as a 500. Identifiers
+    are now shape-checked in two places: `run_action()` for every table route,
+    and `_ident()` for the special-cased ones that call the service directly.
+87. **Eight routes called `float(args[...])` / `int(args[...])` raw.**
+    `{"cm360":[]}`, `{"dpi":"x"}`, `{"autopsy_id":{}}`, `{"theme_id":[]}` and
+    friends were 500s on `/api/sens/save`, `/api/sens/psa/step`,
+    `/api/game/plan`, `/api/game/profile/save`, `/api/studio/apply`,
+    `/api/studio/save`, `/api/studio/import`, `/api/autopsy/*`,
+    `/api/clean/restore`. Added `_num`/`_int`/`_obj` readers: a string where a
+    number belongs, a NaN, an infinity, or a fractional DPI are all 400s that
+    name the field. Fractional DPI is refused rather than truncated — silently
+    turning 800.5 into 800 would change what the user asked for.
 
 ## The wallpaper engine
 
