@@ -41,7 +41,7 @@ cd engine && python3 -m venv .venv && .venv/bin/pip install -q pytest
 .venv/bin/python -m pytest tests -q                  # 308 passed
 ```
 
-The console covers seventeen views — Overview (health ring, live event feed, journal
+The console covers sixteen views — Overview (health ring, live event feed, journal
 verification), Checkup (per-category scores, consent tiers, fix-all with Undo),
 Cleaner (scan → vault → restore), Storage (growth, forecast, hash-confirmed
 duplicates), Startup (what boots, what to defer, what is refused), Hardware Lab
