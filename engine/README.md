@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (551 tests: 540 here, 11 that only a real Windows machine can run)
+## What works today (555 tests: 544 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -415,6 +415,27 @@ Then the app got a name, an installer and four tabs, which found five more:
 72. **Nothing ever cleaned the pytest temp dirs.** Three runs, 6.9 GB, and no
     mechanism to reclaim any of it. The suite now trims itself to the last three
     runs at session end.
+
+73. **The shipped exe could not start.** `app.py` is PyInstaller's *entry
+    script*, so it runs as a top-level module named `__main__` with no parent
+    package, and `from . import server` raised
+    `ImportError: attempted relative import with no known parent package` before
+    the window existed. `python -m pco_engine.app` supplies the package, which is
+    why the source tree never showed it — only the frozen binary is script-mode.
+    Both imports are absolute now.
+74. **The smoke test could not have caught 73.** It ran `Keel.exe --no-window`,
+    an early branch that never reaches the import. It now runs `--version`
+    through `main()`, the path a double-click takes, and fails on a non-zero exit
+    code. Then a second correction: requiring *output* was wrong, because
+    `console=False` means a windowed exe has no stdout. The exit code is the
+    signal.
+75. **A frozen crash wrote nowhere.** With `console=False` the traceback existed
+    only in a dialog that loses its details on Close. Crashes now append to
+    `<data>\crash.log` before the process dies.
+76. **`data_dir()` ignored `PCO_DATA`** while `main()` published its choice into
+    that same variable with `setdefault`. Two sources of truth for one directory:
+    an explicitly set `PCO_DATA` was silently overridden, so the store and the
+    crash log could land somewhere the user was not told about.
 
 ## The wallpaper engine
 
