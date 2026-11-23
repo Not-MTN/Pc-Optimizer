@@ -69,6 +69,15 @@ def _service() -> Service:
 
 ROUTES: dict[str, str] = {
     "/api/status": "status",
+    "/api/themes": "theme.gallery",
+    "/api/themes/get": "theme.get",
+    "/api/themes/validate": "theme.validate",
+    "/api/themes/preview": "theme.preview",
+    "/api/themes/apply": "theme.apply",
+    "/api/themes/apply-doc": "theme.apply_doc",
+    "/api/themes/export": "theme.export",
+    "/api/wallpaper/save": "wallpaper.save",
+    "/api/wallpaper/apply": "wallpaper.apply",
     "/api/display": "display.mode",
     "/api/display/set": "display.set",
     "/api/display/confirm": "display.confirm",
@@ -161,6 +170,34 @@ class Handler(BaseHTTPRequestHandler):
         if path in {"/", "/index.html"}:
             html = (Path(__file__).resolve().parent / "console.html").read_bytes()
             self._send(200, html, "text/html; charset=utf-8")
+            return
+        if path.startswith("/api/themes/tile/"):
+            theme_id = path[len("/api/themes/tile/"):]
+            try:
+                png = _service().wallpaper_preview_png(theme_id, width=360)
+            except KeyError:
+                self._json(404, {"error": f"no theme {theme_id!r}"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png)))
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.end_headers()
+            self.wfile.write(png)
+            return
+        if path.startswith("/api/themes/full/"):
+            theme_id = path[len("/api/themes/full/"):]
+            try:
+                from . import themes as _t
+                png = _service().wallpaper_png(_t.get(theme_id))
+            except (KeyError, ValueError) as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png)))
+            self.end_headers()
+            self.wfile.write(png)
             return
         if path == "/api/report/html":
             try:

@@ -58,6 +58,20 @@
     transition:border-color .15s,transform .15s}
   .hubCard:hover{border-color:rgba(182,242,74,.5);transform:translateY(-1px)}
   .hubTitle{font-weight:650;font-size:14.5px;margin-bottom:5px}
+  .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    overflow:hidden;cursor:pointer;transition:border-color .15s,transform .15s;
+    text-align:left;font:inherit;color:var(--ink);padding:0}
+  .tile:hover{border-color:rgba(182,242,74,.45);transform:translateY(-2px)}
+  .tile.on{border-color:var(--lime);box-shadow:0 0 0 1px var(--lime) inset}
+  .tile img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;
+    background:#0b0d10}
+  .tileBody{padding:10px 12px 12px}
+  .tileName{font-weight:650;font-size:13.5px;display:flex;align-items:center;gap:7px}
+  .swatch{width:9px;height:9px;border-radius:3px;flex:0 0 auto}
+  .tileNote{color:var(--dim);font-size:11.5px;margin-top:4px;line-height:1.45}
+  .tileMeta{color:var(--faint);font-size:10.5px;margin-top:7px;
+    letter-spacing:.05em;text-transform:uppercase}
   .hubBlurb{color:var(--dim);font-size:12.5px;line-height:1.55}
   /* ---------------- shell ---------------- */
   main{padding:26px 30px 70px;max-width:1240px}
@@ -238,6 +252,42 @@
     </header>
 
     <!-- ============ OVERVIEW ============ -->
+    <section class="sect" id="view-gallery">
+      <div class="hubIntro">
+        <h2>Fifteen looks, one click</h2>
+        <p>Each theme is a wallpaper, a widget layout, shell choices and a terminal
+           palette in one file. Every tile is rendered from its own theme — what you
+           see is what you get, not a stock screenshot.</p>
+      </div>
+      <div class="row" style="margin-bottom:16px;flex-wrap:wrap">
+        <button class="btn primary" id="themeApplyActive">Apply the selected theme</button>
+        <button class="btn ghost" id="themePreviewBtn">See what it changes</button>
+        <button class="btn ghost" id="themeSaveWall">Save wallpaper</button>
+        <button class="btn ghost" id="themeSetWall">Set as my wallpaper</button>
+        <button class="btn ghost" id="themeExportBtn">Copy theme file</button>
+      </div>
+      <div class="gallery" id="galleryGrid"></div>
+      <div class="card" id="themeDiffCard" style="margin-top:16px;display:none">
+        <h2 id="themeDiffTitle">Changes</h2>
+        <div id="themeDiffBody" class="sub"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Make your own</h2>
+        <div class="sub">Paste a theme file someone shared. It is validated and
+          diffed before anything is applied — a theme is somebody else's JSON.</div>
+        <textarea id="themeImportBox" rows="6" spellcheck="false"
+          style="width:100%;margin-top:10px;font-family:ui-monospace,Menlo,monospace;
+                 font-size:12px;padding:10px;border-radius:10px;background:#0d1117;
+                 color:var(--ink);border:1px solid var(--line)"
+          placeholder='{"meta":{"name":"My look"},"palette":{"accent":"#B6F24A"}}'></textarea>
+        <div class="row" style="margin-top:10px">
+          <button class="btn" id="themeImportCheck">Check it</button>
+          <button class="btn primary" id="themeImportApply">Apply it</button>
+        </div>
+        <div class="sub" id="themeImportOut" style="margin-top:10px"></div>
+      </div>
+    </section>
+
     <section class="sect" id="view-look">
       <div class="hubIntro">
         <h2>Make it yours</h2>
@@ -854,6 +904,7 @@ async function api(path, body) {
 /* ---------------------------------------------------------------- views */
 const TITLES = { home: ["Home", "Is anything wrong? Everything the engine knows, live."],
   look: ["Look", "Taskbar, Explorer, icons, themes."],
+  gallery: ["Themes", "Fifteen looks, rendered live from their own theme files."],
   speed: ["Speed", "Measure, change one thing, measure again."],
   fix: ["Fix", "Drivers, battery, hardware, recovery."],
   checkup: ["Checkup", "Findings are split by what they actually affect."],
@@ -893,6 +944,7 @@ function show(view) {
   if (view === "recipes") loadRecipes();
   if (view === "shell") loadShell();
   if (view === "power") loadDisplay();
+  if (view === "gallery") loadGallery();
 }
 
 function renderHub(which) {
@@ -2355,6 +2407,7 @@ async function panic() {
 // reach is the same as a feature you did not build.
 const BLURB = {
   home: "Health, what changed, and the one button that fixes what is safe to fix.",
+  gallery: "Fifteen complete looks: wallpaper, widgets, shell and terminal together.",
   shell: "Taskbar, Explorer, folder icons, terminal look and prompt identity.",
   studio: "Wallpaper-grade colour themes built from your own palette.",
   workspaces: "Save groups of windows and reopen them in one click.",
@@ -2375,7 +2428,7 @@ const BLURB = {
 
 const GROUPS = {
   home: ["home"],
-  look: ["shell", "studio", "workspaces", "recipes"],
+  look: ["gallery", "shell", "studio", "workspaces", "recipes"],
   speed: ["checkup", "clean", "dns", "power", "space", "startup", "gaming"],
   fix: ["drivers", "battery", "lab", "autopsy", "sens"],
 };
@@ -2400,6 +2453,145 @@ $("#moreBtn")?.addEventListener("click", (e) => {
   if (box.classList.contains("on")) buildMoreMenu();
 });
 document.addEventListener("click", () => $("#moreMenu")?.classList.remove("on"));
+
+/* ------------------------------------------------------------- themes */
+let galleryThemes = [];
+let selectedTheme = null;
+
+async function loadGallery() {
+  const grid = $("#galleryGrid");
+  if (!grid) return;
+  grid.replaceChildren();
+  const data = await api("/api/themes");
+  galleryThemes = data.themes || [];
+  galleryThemes.forEach((t) => {
+    const card = el("button", "tile");
+    card.dataset.id = t.id;
+    const img = document.createElement("img");
+    // The tile is the theme rendered by the engine — not a stock screenshot.
+    img.src = "/api/themes/tile/" + encodeURIComponent(t.id);
+    img.alt = t.name + " preview";
+    img.loading = "lazy";
+    card.append(img);
+    const body = el("div", "tileBody");
+    const name = el("div", "tileName");
+    const sw = el("span", "swatch");
+    sw.style.background = t.accent;
+    name.append(sw, document.createTextNode(t.name));
+    body.append(name);
+    body.append(el("div", "tileNote", t.note || ""));
+    body.append(el("div", "tileMeta",
+      `${t.scene} · ${t.widgets} widgets · ${t.accent}`));
+    card.append(body);
+    card.onclick = () => {
+      selectedTheme = t.id;
+      grid.querySelectorAll(".tile").forEach((n) => n.classList.toggle("on", n === card));
+    };
+    grid.append(card);
+  });
+  if (!selectedTheme && galleryThemes.length) {
+    selectedTheme = galleryThemes[0].id;
+    grid.querySelector(".tile")?.classList.add("on");
+  }
+}
+
+async function themeDoc() {
+  if (!selectedTheme) throw new Error("Pick a theme first.");
+  const r = await api("/api/themes/get?theme_id=" + encodeURIComponent(selectedTheme));
+  if (!r.ok) throw new Error(r.reason || "could not load that theme");
+  return r.doc;
+}
+
+$("#themeApplyActive")?.addEventListener("click", async () => {
+  if (!selectedTheme) return;
+  const r = await api("/api/themes/apply", { theme_id: selectedTheme });
+  if (!r.ok) { $("#themeDiffTitle").textContent = "Could not apply"; return; }
+  $("#themeDiffCard").style.display = "";
+  $("#themeDiffTitle").textContent = "Applied · " + r.summary;
+  $("#themeDiffBody").textContent =
+    (r.warnings || []).join(" ") ||
+    "The shell settings went through the normal journaled path, so Undo works.";
+});
+
+$("#themePreviewBtn")?.addEventListener("click", async () => {
+  const doc = await themeDoc();
+  const r = await api("/api/themes/preview", { doc });
+  $("#themeDiffCard").style.display = "";
+  if (!r.ok) {
+    $("#themeDiffTitle").textContent = "That theme is not valid";
+    $("#themeDiffBody").textContent = (r.problems || []).join(" ");
+    return;
+  }
+  $("#themeDiffTitle").textContent =
+    `${r.count} change${r.count === 1 ? "" : "s"} · ${r.summary}`;
+  const rows = r.changes.slice(0, 40).map((c) =>
+    `${c.key}: ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`);
+  $("#themeDiffBody").textContent =
+    rows.join("\n") + (r.count > 40 ? `\n…and ${r.count - 40} more` : "");
+  $("#themeDiffBody").style.whiteSpace = "pre-wrap";
+});
+
+$("#themeSaveWall")?.addEventListener("click", async () => {
+  const doc = await themeDoc();
+  const r = await api("/api/wallpaper/save", { doc });
+  $("#themeDiffCard").style.display = "";
+  $("#themeDiffTitle").textContent = r.ok ? "Wallpaper saved" : "Could not render";
+  $("#themeDiffBody").style.whiteSpace = "pre-wrap";
+  $("#themeDiffBody").textContent = r.ok
+    ? `${r.width}×${r.height}, ${Math.round(r.bytes / 1024)} KB\n${r.path}\n\n${r.note}`
+    : (r.problems || [r.reason]).join(" ");
+});
+
+$("#themeSetWall")?.addEventListener("click", async () => {
+  const doc = await themeDoc();
+  const r = await api("/api/wallpaper/apply", { doc });
+  $("#themeDiffCard").style.display = "";
+  $("#themeDiffTitle").textContent = r.applied ? "Desktop background changed" : "Saved, not applied";
+  $("#themeDiffBody").style.whiteSpace = "pre-wrap";
+  $("#themeDiffBody").textContent = r.applied
+    ? `${r.path}\nPrevious: ${r.previous || "(unknown)"}`
+    : `${r.path || ""}\n${r.reason || ""}`;
+});
+
+$("#themeExportBtn")?.addEventListener("click", async () => {
+  if (!selectedTheme) return;
+  const r = await api("/api/themes/export?theme_id=" + encodeURIComponent(selectedTheme));
+  if (!r.ok) return;
+  try { await navigator.clipboard.writeText(r.text); } catch (e) { /* no clipboard */ }
+  $("#themeImportBox").value = r.text;
+  $("#themeDiffCard").style.display = "";
+  $("#themeDiffTitle").textContent = "Theme file ready";
+  $("#themeDiffBody").style.whiteSpace = "pre-wrap";
+  $("#themeDiffBody").textContent =
+    "Copied to the clipboard and pasted into the box below, so you can see it. " +
+    "Share that text and someone else can import it.";
+});
+
+async function checkImport() {
+  let doc;
+  try { doc = JSON.parse($("#themeImportBox").value); }
+  catch (e) {
+    $("#themeImportOut").textContent = "That is not valid JSON: " + e.message;
+    return null;
+  }
+  const r = await api("/api/themes/validate", { doc });
+  $("#themeImportOut").textContent = r.ok
+    ? `Valid · ${r.summary}${(r.warnings || []).length ? " · " + r.warnings.join(" ") : ""}`
+    : (r.problems || []).join(" ");
+  return r.ok ? doc : null;
+}
+
+$("#themeImportCheck")?.addEventListener("click", checkImport);
+$("#themeImportApply")?.addEventListener("click", async () => {
+  const doc = await checkImport();
+  if (!doc) return;
+  const preview = await api("/api/themes/preview", { doc });
+  if (!preview.ok) { $("#themeImportOut").textContent = (preview.problems || []).join(" "); return; }
+  const r = await api("/api/themes/apply-doc", { doc });
+  $("#themeImportOut").textContent = r.ok
+    ? `Applied ${r.summary} (${preview.count} changes from what was there). Undo works.`
+    : (r.problems || [r.reason]).join(" ");
+});
 
 /* ------------------------------------------------------------- display */
 let displayTimer = null;

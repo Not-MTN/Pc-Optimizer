@@ -85,6 +85,7 @@ class Service:
         self.catalog = Catalog.load_dir(catalog_dir or str(here.parent / "catalog"))
         self.backend = backend if backend is not None else FakeBackend(DEMO_STATE)
         self._demo = self.backend is not None and self.backend.__class__.__name__ == "FakeBackend"
+        self.db_path = db_path
         self.conn = connect(db_path)
         migrate(self.conn, clock=self.clock)
         self.engine = Engine(self.conn, self.backend, self.catalog, clock=self.clock)
@@ -730,6 +731,206 @@ class Service:
                 "than saying so.")}
         return {"saved": True, **self.save_workspace(name, entries)}
 
+    # ------------------------------------------------------------- wallpaper
+    def theme_gallery(self) -> dict[str, Any]:
+        """Every built-in theme, with the scene and accent needed to draw a tile."""
+        from . import themes
+        return {"themes": themes.gallery(), "count": len(themes.BUILTIN),
+                "scenes": list(__import__("pco_engine.scenes", fromlist=["SCENES"]).SCENES)}
+
+    def theme_get(self, theme_id: str) -> dict[str, Any]:
+        from . import themes
+        try:
+            doc = themes.get(theme_id)
+        except KeyError as exc:
+            return {"ok": False, "reason": str(exc).strip("'\"")}
+        return {"ok": True, "id": theme_id, "doc": doc,
+                "summary": themes.summary(doc),
+                "warnings": themes.widget_warnings(doc),
+                "problems": themes.validate(doc)}
+
+    def theme_validate(self, doc: dict[str, Any]) -> dict[str, Any]:
+        from . import themes
+        problems = themes.validate(doc)
+        return {"ok": not problems, "problems": problems,
+                "summary": themes.summary(doc) if not problems else "",
+                "warnings": themes.widget_warnings(doc) if not problems else []}
+
+    def theme_preview(self, doc: dict[str, Any]) -> dict[str, Any]:
+        """What applying this would change, before it changes anything.
+
+        This is the feature that makes a theme gallery safe: a shared theme file
+        is somebody else's JSON, and 'apply' without a diff is a blind write.
+        """
+        from . import themes
+        problems = themes.validate(doc)
+        if problems:
+            return {"ok": False, "problems": problems}
+        current = self.active_theme_doc()
+        changes = themes.diff(current, doc)
+        return {"ok": True, "changes": changes, "count": len(changes),
+                "summary": themes.summary(doc),
+                "warnings": themes.widget_warnings(doc)}
+
+    def active_theme_doc(self) -> dict[str, Any]:
+        """The theme currently applied, or the house default."""
+        from . import themes
+        try:
+            row = self.conn.execute(
+                "SELECT doc_json FROM desktop_themes WHERE applied_at IS NOT NULL "
+                "ORDER BY applied_at DESC LIMIT 1").fetchone()
+            if row:
+                return json.loads(row[0])
+        except Exception:                    # noqa: BLE001 - table may be absent
+            pass
+        return themes.get("keel")
+
+    def theme_apply(self, theme_id: str) -> dict[str, Any]:
+        """Apply a built-in theme: journal the visual change, then render it."""
+        from . import themes
+        try:
+            doc = themes.get(theme_id)
+        except KeyError as exc:
+            return {"ok": False, "reason": str(exc).strip("'\"")}
+        return self._apply_theme_doc(doc, source=theme_id)
+
+    def theme_apply_doc(self, doc: dict[str, Any]) -> dict[str, Any]:
+        from . import themes
+        problems = themes.validate(doc)
+        if problems:
+            return {"ok": False, "problems": problems}
+        return self._apply_theme_doc(doc, source="imported")
+
+    def _apply_theme_doc(self, doc: dict[str, Any], *, source: str) -> dict[str, Any]:
+        """Store the theme, then hand the shell keys to the normal engine path.
+
+        Ordering matters: the document is saved *first*, so a shell write that
+        fails leaves a record of what was attempted rather than a half-applied
+        look with no trace.
+        """
+        from . import themes
+        tid = new_id()
+        # desktop_themes stores a full theme document and its GPU cost. The name
+        # gets a suffix so re-applying a theme records a new row instead of
+        # colliding with the unique-ish history of previous applies.
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO desktop_themes(id,name,doc_json,cost_milli,applied_at)"
+                " VALUES(?,?,?,?,?)",
+                (tid, f"{doc['meta']['name']} {tid[-4:]}", json.dumps(doc),
+                 int(_studio_cost(doc) * 1000), self.clock()))
+
+        warnings = themes.widget_warnings(doc)
+        shell = dict(doc.get("shell") or {})
+        result: dict[str, Any] = {"ok": True, "id": tid, "source": source,
+                                  "summary": themes.summary(doc),
+                                  "shell": None, "warnings": warnings}
+        if shell:
+            try:
+                result["shell"] = self.apply_customization(shell)
+            except Exception as exc:       # noqa: BLE001 - visual change, not core
+                result["shell"] = {"error": str(exc),
+                                   "note": "the theme is saved; the shell keys "
+                                           "did not apply"}
+        return result
+
+    def wallpaper_png(self, doc: dict[str, Any]) -> bytes:
+        """Render a theme's wallpaper to PNG bytes.
+
+        Size defaults to 1440p because a 4K render takes ~35 s in pure Python.
+        The caller can ask for a smaller preview; the UI does, four times per
+        gallery row.
+        """
+        from . import themes
+        from .wallpaper import compose
+        problems = themes.validate(doc)
+        if problems:
+            raise ValueError("; ".join(problems))
+        wall = dict(doc.get("wallpaper") or {})
+        wall["widgets"] = doc.get("widgets") or []
+        wall["palette"] = doc.get("palette") or {}
+        return compose(wall).png()
+
+    def wallpaper_preview_png(self, theme_id: str, *, width: int = 480) -> bytes:
+        """A small tile for the gallery. Rendered at 16:9, capped in size so a
+        gallery of fifteen does not take a minute to paint."""
+        from . import themes
+        from .wallpaper import compose, SIZES
+        doc = themes.get(theme_id)
+        sw, sh = SIZES.get("1080p")
+        scale = width / sw
+        wall = dict(doc.get("wallpaper") or {})
+        wall["size"] = f"{width}x{int(sh * scale)}"
+        wall["widgets"] = []
+        wall["palette"] = doc.get("palette") or {}
+        wall["vignette"] = 0.3
+        return compose(wall).png()
+
+    def wallpaper_save(self, doc: dict[str, Any], *, name: str = "") -> dict[str, Any]:
+        """Render a theme's wallpaper to a real PNG file and return its path.
+
+        This is the step that makes the feature real rather than a preview: the
+        file lands in the app's own data directory, so the user can open it, and
+        the Windows backend can then set it as the desktop background from a
+        path it already trusts. Nothing here touches the shell.
+        """
+        from . import themes
+        from .wallpaper import compose
+        problems = themes.validate(doc)
+        if problems:
+            return {"ok": False, "problems": problems}
+        wall = dict(doc.get("wallpaper") or {})
+        wall["widgets"] = doc.get("widgets") or []
+        wall["palette"] = doc.get("palette") or {}
+        try:
+            canvas = compose(wall)
+        except ValueError as exc:
+            return {"ok": False, "problems": [str(exc)]}
+        safe = "".join(c for c in (name or doc["meta"]["name"])
+                       if c.isalnum() or c in " -_")[:40].strip() or "wallpaper"
+        folder = os.path.join(os.path.dirname(self.db_path), "wallpapers")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, f"{safe} {canvas.w}.png")
+        canvas.save(path)
+        return {"ok": True, "path": path, "width": canvas.w, "height": canvas.h,
+                "bytes": os.path.getsize(path),
+                "note": ("Saved. On Windows this path can be handed straight to "
+                         "the desktop-background API; nothing else is needed.")}
+
+    def wallpaper_apply(self, doc: dict[str, Any], *, name: str = "") -> dict[str, Any]:
+        """Render, save, and (on Windows) actually set the desktop background.
+
+        Three outcomes, deliberately distinguished:
+          * rendered + set        -> the desktop changed, and `previous` can undo it
+          * rendered, not set     -> the image is on disk; no shell was touched
+          * not rendered          -> the document is invalid, and why
+        The middle case is what the simulated machine returns, and saying so is
+        the whole difference between a demo and a lie.
+        """
+        saved = self.wallpaper_save(doc, name=name)
+        if not saved.get("ok"):
+            return saved
+        setter = getattr(self.backend, "set_wallpaper", None)
+        if setter is None:
+            return {**saved, "applied": False,
+                    "reason": ("The simulated machine has no desktop to change. "
+                               "The image is saved and on Windows this becomes "
+                               "the actual background.")}
+        try:
+            out = setter(saved["path"])
+        except Exception as exc:              # noqa: BLE001 - never lose the file
+            return {**saved, "applied": False, "reason": str(exc)}
+        return {**saved, "applied": bool(out.get("set")),
+                "previous": out.get("previous", "")}
+
+    def theme_export(self, theme_id: str) -> dict[str, Any]:
+        from . import themes
+        try:
+            doc = themes.get(theme_id)
+        except KeyError as exc:
+            return {"ok": False, "reason": str(exc).strip("'\"")}
+        return {"ok": True, "name": doc["meta"]["name"], "text": themes.export(doc)}
+
     # ----------------------------------------------------------------- display
     def display_mode(self) -> dict[str, Any]:
         """Current mode, and whether this build may change it.
@@ -1038,6 +1239,17 @@ def _count_by(items: list[dict[str, Any]], key: str) -> dict[str, int]:
     return out
 
 
+def _studio_cost(doc: dict[str, Any]) -> float:
+    """GPU cost of a theme document, via the Studio's own cost model.
+
+    The cost table lives in `studio.py` and is the single source of truth for
+    what an effect costs; duplicating it here would let the two drift and the
+    governor would then approve something it should have refused.
+    """
+    from .studio import cost_of
+    return cost_of(doc)
+
+
 # ---------------------------------------------------------------- demo machine
 DEMO_STATE = {
     "display:primary.mode": {"hz": 59.94, "width": 2560, "height": 1440},
@@ -1172,6 +1384,15 @@ ACTIONS = {
     "power.summary": lambda s, a: s.power_summary(),
     "power.sample": lambda s, a: s.battery(),
     "power.drains": lambda s, a: s.drains(),
+    "theme.gallery": lambda s, a: s.theme_gallery(),
+    "theme.get": lambda s, a: s.theme_get(a["theme_id"]),
+    "theme.validate": lambda s, a: s.theme_validate(a["doc"]),
+    "theme.preview": lambda s, a: s.theme_preview(a["doc"]),
+    "theme.apply": lambda s, a: s.theme_apply(a["theme_id"]),
+    "theme.apply_doc": lambda s, a: s.theme_apply_doc(a["doc"]),
+    "theme.export": lambda s, a: s.theme_export(a["theme_id"]),
+    "wallpaper.save": lambda s, a: s.wallpaper_save(a["doc"], name=a.get("name", "")),
+    "wallpaper.apply": lambda s, a: s.wallpaper_apply(a["doc"], name=a.get("name", "")),
     "display.mode": lambda s, a: s.display_mode(),
     "display.set": lambda s, a: s.display_set(
         int(a["hz"]), width=a.get("width"), height=a.get("height")),

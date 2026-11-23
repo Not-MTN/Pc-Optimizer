@@ -35,6 +35,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
@@ -670,6 +671,46 @@ class WindowsBackend:
     def _service_name(self, address: str) -> str:
         body = address[len("service:"):]
         return body[: -len(SERVICE_SUFFIX)]
+
+    # -- wallpaper -----------------------------------------------------------
+    def set_wallpaper(self, path: str) -> dict[str, Any]:
+        """Set the desktop background to an image on disk.
+
+        `SystemParametersInfoW(SPI_SETDESKWALLPAPER, ...)` is the documented
+        call. It is materially safer than a display mode change: a wrong image is
+        a wrong image, not a black screen — and the previous path can be read
+        from the registry *before* the call and handed back, so undo restores an
+        exact value instead of guessing at "whatever was there before".
+        """
+        if not sys.platform.startswith("win"):
+            raise BackendError(
+                "setting the desktop background needs Windows; this build is on "
+                f"{sys.platform}. The image was written, nothing was changed.")
+        from pathlib import Path as _P
+        if not _P(path).is_file():
+            raise BackendError(f"no wallpaper image at {path}")
+        if _P(path).suffix.lower() not in (".png", ".jpg", ".jpeg", ".bmp"):
+            raise BackendError(
+                f"{path}: Windows accepts png/jpg/bmp for the desktop background")
+
+        previous = ""
+        try:
+            got = self._reg.get("hkcu", r"Control Panel\Desktop", "Wallpaper")
+            if got:
+                previous = str(got[0])
+        except Exception:                      # noqa: BLE001 - best effort only
+            previous = ""
+
+        import ctypes
+        ok = ctypes.windll.user32.SystemParametersInfoW(   # type: ignore[attr-defined]
+            0x0014,                         # SPI_SETDESKWALLPAPER
+            0, str(path),
+            0x01 | 0x02)                    # UPDATEINIFILE | SENDCHANGE
+        if not ok:
+            raise BackendError(
+                "Windows refused the wallpaper change "
+                f"(SystemParametersInfoW returned 0, error {ctypes.get_last_error()})")
+        return {"set": True, "path": str(path), "previous": previous}
 
     # -- display (guarded by a watchdog, enabled by consent) ----------------
     def _read_display(self, address: str) -> Any:
