@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (341 tests: 330 here, 11 that only a real Windows machine can run)
+## What works today (400 tests: 389 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -146,6 +146,15 @@ the console is a reference client, not a toy.
 | An unelevated shell produces a privilege message, not a mystery | `test_a_denied_write_explains_the_privilege_problem` |
 | Display writes refuse until verified on hardware | `test_display_writes_are_refused_until_verified` |
 | The real registry/sc.exe/schtasks/powercfg paths are checked **on Windows** | `test_real_windows.py` (11 tests, skipped here) |
+| Every desktop setting names the registry path **and value name** it writes | `test_every_option_names_the_registry_value_it_writes` |
+| Windows 11's refusals are stated, with the reason | `test_the_refusals_are_real_and_explained` |
+| A preview writes nothing; a refusal never reports success | `test_bridge_shell_preview_writes_nothing`, `test_service_apply_treats_a_refusal_as_a_refusal` |
+| Ten settings in one registry key stay distinct | `test_one_key_can_hold_many_settings_without_colliding` |
+| Undo restores the value that was changed, not the key's default | `test_undo_restores_the_right_value_when_ten_share_a_key` |
+| The desktop-lab table and the backend table cannot drift apart | `test_the_desktop_lab_table_and_the_backend_table_agree` |
+| An imported theme is validated whole, and never applied by importing | `test_themes_save_import_and_never_apply_on_import` |
+| The GitHub mark needs evidence, not a matching word | `test_a_local_repo_called_github_is_not_github` |
+| All four git remote spellings are recognised | `test_host_extraction_handles_every_git_remote_shape` |
 
 ## Architecture
 
@@ -200,6 +209,9 @@ catalog/tweaks.json ──► Catalog ──► Preflight ──► PLAN (read-o
 | `pco_engine/nlrecipe.py` | a narrow, honest natural-language grammar that always previews |
 | `pco_engine/guard.py` | boot chain verification, read-only mode, panic, boot events |
 | `pco_engine/windows_backend.py` | the only file that touches Windows: an explicit address → API table, refusing anything it cannot map |
+| `pco_engine/shell_lab.py` | taskbar/Explorer settings, saved themes, per-user icons, terminal look |
+| `pco_engine/providers.py` | which provider a command talks to, and the mark that follows — evidence first |
+| `pco_engine/windows_notes.py` | claims about Windows 11 as reviewable data, not scattered in code |
 | `pco_engine/address.py` | canonical addresses — one string per managed thing |
 | `pco_engine/catalog.py` | tweak documents, validation, index |
 | `pco_engine/backend.py` | the only I/O seam + `FakeBackend` (and policy `pin()`) |
@@ -252,6 +264,12 @@ Then `windows-latest` started running, and found four more that Linux could not:
 33. **Demo data leaked past the simulated machine** — `DEMO_METRICS` would have turned a hardcoded "42 GB of junk" into a *finding on a real PC*, and the demo blocklists would have been installed into a real user's blocker. Both were gated on `_demo` only after the Windows failure made me look.
 34. **`pco doctor` died on every Windows console** — output full of `·` and `→` against a cp1252 console raises `UnicodeEncodeError`, so the one command a nervous user runs first printed a traceback. Now the console is reconfigured to UTF-8, with a substitution fallback and an ASCII-safe JSON mode behind it.
 35. **PowerShell's `>` writes UTF-16** — the CI step redirected JSON to a file and `json.load` then choked on the BOM. Not a product bug, but the kind of thing that only appears on Windows and silently wastes an afternoon. — the first `sc qc` parser searched the whole output for the word "disabled", so a service whose description reads *"...is not disabled"* was reported as disabled, and the app would then "fix" a running service back on. Now only the `START_TYPE` line is parsed, and a missing line is an error rather than a guess. Caught by a test written before the parser had ever run against `sc.exe`. — a JS string literal with `\` breaks the whole `<script>` block, which no Python test can see. Every console edit is followed by extracting the script and running `node --check`.
+
+36. **`write()` accepted a value name and never forwarded it** — so all ten Explorer settings collapsed onto one registry value. Every write "succeeded", every read-back "did not stick", and on a real machine it would have looked like Windows ignoring the change. Found by asserting that two settings in one key end up as two registry values.
+37. **A `value_names` dict keyed by address lost all but the last change** — ten settings share one address, so changing two of them wrote both to the same value. Keyed by tweak id instead. This is bug 36's twin and the reason both now have tests.
+38. **Undo restored the key's default value, not the changed one** — `revert()` reads `address -> old` from the journal, and the address is a key. Undoing a widget change would have restored the *alignment*. Fixed by recovering the value name from the tweak id, which already records it.
+39. **`plan_icon` rejected `imageres.dll,-54`** — the comma and index are part of a Windows icon reference, not decoration. Anchoring the regex on `$` rejected every library icon, which is how most system icons are actually specified.
+40. **A plan of only-refusals reported `applied: True`** — asking for a transparent taskbar would have shown a success toast for something the app explicitly refuses to do.
 
 ## Porting to Rust (the contract)
 

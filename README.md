@@ -2,7 +2,7 @@
 
 > A Windows 11 optimizer with full access, honest receipts, and a beauty budget of 0% idle CPU.
 
-**Status: runnable prototype.** Thirteen design documents, four clickable concept screens, a validated 67-table schema, and at [`engine/`](engine) a working app: the Guardian safety core plus checkup, cleaner, benchmark, blocker, gaming session analysis, installer autopsy, desktop-studio governor, consent tiers, event feed and Sens Lab — driven by a local console (341 tests, runs on any OS; the Windows-only ones run in CI).
+**Status: runnable prototype.** Thirteen design documents, four clickable concept screens, a validated 67-table schema, and at [`engine/`](engine) a working app: the Guardian safety core plus checkup, cleaner, benchmark, blocker, gaming session analysis, installer autopsy, desktop-studio governor, consent tiers, event feed and Sens Lab — driven by a local console (400 tests, runs on any OS; the Windows-only ones run in CI).
 
 ```bash
 cd engine
@@ -33,16 +33,16 @@ The console is a reference client for the same JSON the WinUI shell will consume
 | Path | What it is |
 |---|---|
 | [`WINDOWS.md`](WINDOWS.md) | **how to run it on your actual PC** — the four steps from simulated to real, with the expected output at each one |
-| [`engine/`](engine) | **The app + the Guardian engine** — safety core (journal, preflight, snapshots, recovery, drift), checkup, cleaner with restorable vault, benchmark, ad/tracker blocker, recipes, event feed, Sens Lab, and the stdlib HTTP bridge + dark console. Python reference (341 passing tests), written to be ported to Rust 1:1 |
+| [`engine/`](engine) | **The app + the Guardian engine** — safety core (journal, preflight, snapshots, recovery, drift), checkup, cleaner with restorable vault, benchmark, ad/tracker blocker, recipes, event feed, Sens Lab, and the stdlib HTTP bridge + dark console. Python reference (400 passing tests), written to be ported to Rust 1:1 |
 
 ```bash
 cd engine && python3 -m venv .venv && .venv/bin/pip install -q pytest
 .venv/bin/python -m pco_engine.server                # the console, port 7788
 .venv/bin/python -m pco_engine.cli --fresh crash     # the promise, demonstrated
-.venv/bin/python -m pytest tests -q                  # 341 passed
+.venv/bin/python -m pytest tests -q                  # 400 passed
 ```
 
-The console covers sixteen views — Overview (health ring, live event feed, journal
+The console covers seventeen views — Overview (health ring, live event feed, journal
 verification), Checkup (per-category scores, consent tiers, fix-all with Undo),
 Cleaner (scan → vault → restore), Storage (growth, forecast, hash-confirmed
 duplicates), Startup (what boots, what to defer, what is refused), Hardware Lab
@@ -53,7 +53,11 @@ gameplay → bottleneck → settings), Autopsy (install receipt → erase), Stud
 Battery & Heat (health from design capacity, attributed drain, real throttle
 events, boot guard, panic), Workspaces (capture what is open, preview-first
 restore), Drivers (graded only by this machine's crashes) and Recipes (one
-sentence → a preview you have to save).
+sentence → a preview you have to save) and Desktop Lab (taskbar, Explorer, icon
+and theme customization — the 16 things Windows 11 allows, and the 5 it
+refuses, each with the reason). The command palette shows the provider's mark
+— GitHub, GitLab, Vercel, npm, PyPI — only when a remote, a token or a CLI
+actually names that provider.
 
 Plus a **command palette** (`Ctrl/⌘ K`) with engine-native verbs, and an **Ask**
 box that answers "what did I change?" and "why is my disk full?" from the journal.
