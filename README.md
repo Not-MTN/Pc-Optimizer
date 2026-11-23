@@ -25,3 +25,7 @@ Open in any browser — every control is wired:
 ## The one-line promise
 
 Full access, but **you will never be stuck** — every action is measured, journaled, and one click from undone.
+
+## In plain language
+
+- [`GUIDE.md`](GUIDE.md) — **start here.** The whole design and every future feature explained simply, no jargon
