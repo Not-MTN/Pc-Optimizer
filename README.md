@@ -17,6 +17,8 @@
 | [`DESKTOP.md`](DESKTOP.md) | The customization suite: terminal, taskbar/shell theming, icon packs, wallpaper engine, widget layer, one-file themes |
 | [`SENSITIVITY.md`](SENSITIVITY.md) | Sensitivity Lab: yaw math, the U-curve test, 360° capture, watch mode, per-game conversion |
 | [`MASTERPLAN.md`](MASTERPLAN.md) | **The audit:** what's designed, the honest gaps, ~40 new features scored, how every existing module upgrades, and the next ten in order |
+| [`SCHEMA.md`](SCHEMA.md) | **The full data model:** 67 validated SQLite tables, every document format, retention, migrations, privacy guarantees |
+| [`ROADMAP.md`](ROADMAP.md) | **Honest build estimates:** solo vs team, the MVP cut, what "best UI/UX" actually costs, and risk buffers |
 
 ## Clickable concepts
 
