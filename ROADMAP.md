@@ -142,3 +142,46 @@ A realistic **planning number** is scenario A × 1.25. If you plan to 33 months,
 ## The one-line answer
 
 **Solo, full-time, at the quality bar in these docs: ~33 months (plan 40). A shippable honest MVP: 6–8 months. A small team: 15–18 months.** The UI/UX is ~22% of the work and ~80% of why people trust it.
+
+---
+
+## AI-assisted build (me, in this environment)
+
+Different question from the human estimates above: **what could an AI agent produce, and what stays human?**
+
+### What I can run and verify *here* (Linux sandbox)
+
+| Available | Missing |
+|---|---|
+| Python 3.11, Node 22, git, SQLite (via Python) | **no Rust toolchain** (rustup host unreachable) |
+| Full network to npm/PyPI/GitHub | **no .NET / WinUI / MSBuild** |
+| — | **no MinGW, no cl.exe, no Wine, no Windows SDK/WDK** |
+
+So I can *write* Windows code but cannot **compile, run, or test** a single line of it here. That distinction is the whole answer.
+
+### Honest durations
+
+| Goal | Time | What you actually get |
+|---|---|---|
+| **Design + schema + prototypes** (done) | already delivered | 12 docs, 4 concept screens, 67 validated tables |
+| **Executable reference logic + tests** (journal chain, preflight simulator, DNS list compiler, scoring, yaw math, recipe engine, duplicate detection, bottleneck classifier) — in Python/Node, fully testable here | **2–4 weeks** of daily sessions | Verified behaviour specs that get ported to Rust 1:1, with a test suite that pins the rules |
+| **All UI screens as working prototypes** (runnable in a browser) | **2–3 weeks** | The entire surface, clickable, reviewable — not yet native |
+| **The complete product written, never compiled** | **3–6 weeks** | 150k–250k lines of unverified code. Legally faster than a human; practically a liability: debugging code that has never run costs more than writing it |
+| **The complete product, with a Windows machine/CI attached for me to iterate against** | **4–7 months** of continuous sessions | A real, testable codebase — still missing the things below |
+| **Shippable v0.1 MVP** | **2–3 weeks** sandbox-only (drafted) / **6–10 weeks** with a Windows CI loop | The core loop running on a real PC |
+
+### What no amount of my time can replace
+
+1. **A Windows machine.** Boot guard, ETW measurement, drivers, anti-cheat behaviour, sleep/wake, hardware variance — all require running on real hardware.
+2. **Calendar-bound work:** code-signing certificate issuance (days–weeks), antivirus/EDR false-positive submissions, driver attestation, beta feedback cycles.
+3. **Judgment.** Every "what should this do when X fails?" is a product decision, not a coding task.
+
+### The realistic collaboration model
+
+```
+me: specs → executable reference logic + tests → native code against a CI loop → docs, copy, assets
+you/hardware: run it on Windows, report what breaks, decide trade-offs
+calendar: signing, whitelisting, beta
+```
+
+**Rule of thumb:** I compress *design and drafting* by ~10×, and *verified implementation* by ~3–4× — but only where there's a test loop. Without one, speed is an illusion.
