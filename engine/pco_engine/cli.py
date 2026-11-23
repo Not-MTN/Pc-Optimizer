@@ -84,11 +84,29 @@ def build(args) -> Engine:
     return eng
 
 
+def _print_safely(text: str) -> None:
+    """Print without ever dying on the console's encoding.
+
+    A Windows console is cp1252 by default, and this app's output is full of
+    `·`, `→` and `⌘`. `print()` raises `UnicodeEncodeError` on the first one and
+    the whole command dies with a traceback — which is exactly what happened to
+    `pco doctor` on windows-latest. Substituting `?` is a cosmetic loss; a
+    traceback instead of a diagnostic is a real one.
+    """
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        enc = (sys.stdout.encoding or "ascii")
+        print(text.encode(enc, errors="replace").decode(enc, errors="replace"))
+
+
 def out(obj: Any, as_json: bool, human: str | None = None) -> None:
     if as_json:
-        print(json.dumps(obj, indent=2, default=str))
+        # ensure_ascii keeps machine output pure ASCII, so a pipe into another
+        # tool never depends on the console's code page.
+        _print_safely(json.dumps(obj, indent=2, default=str, ensure_ascii=True))
     else:
-        print(human if human is not None else json.dumps(obj, indent=2, default=str))
+        _print_safely(human if human is not None else json.dumps(obj, indent=2, default=str))
 
 
 # --------------------------------------------------------------------- commands
@@ -316,7 +334,22 @@ def cmd_crash(eng: Engine, args) -> int:
 
 # ---------------------------------------------------------------- arg parsing
 
+def _prefer_utf8_console() -> None:
+    """Ask the Windows console for UTF-8 before anything prints.
+
+    Python 3.7+ can reconfigure stdio; this makes `·` and `→` render properly
+    rather than being replaced. If it is unavailable, `_print_safely` is the
+    backstop.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _prefer_utf8_console()
     p = argparse.ArgumentParser(prog="pco", description="PC Optimizer Guardian (reference engine)")
     p.add_argument("--backend", default=os.environ.get("PCO_BACKEND", "auto"),
                    choices=["auto", "demo", "windows"],
