@@ -390,22 +390,36 @@ def test_a_frozen_crash_writes_a_traceback_before_dying():
                 os.environ["PCO_DATA"] = old
 
 
-def test_an_unwritable_data_folder_explains_itself_and_exits_clean():
+def test_an_unwritable_data_folder_explains_itself_and_exits_clean(tmp_path):
     """The worst failure a windowed app has: console=False means a traceback goes
     nowhere. This used to die with a raw FileNotFoundError inside mkdir, so a
-    double-click produced no window and no message at all."""
+    double-click produced no window and no message at all.
+
+    The data path is routed *through a regular file*, which no OS can create at
+    any privilege level. An earlier version of this test used "/proc/nope"; that
+    is uncreatable on Linux but on Windows it resolves to C:\\proc\\nope, and
+    the CI runners are administrators, so mkdir happily created it and the test
+    measured a different failure entirely.
+    """
     import os
     import subprocess
     import sys
     from pathlib import Path
+
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("a file, so nothing can be created underneath it\n")
+    unwritable = blocker / "data"
+
     engine = Path(__file__).resolve().parent.parent
     app = engine / "pco_engine" / "app.py"
     env = dict(os.environ)
     env["PYTHONPATH"] = str(engine)
-    env["PCO_DATA"] = "/proc/does-not-exist-and-cannot-be-created"
+    env["PCO_DATA"] = str(unwritable)
     r = subprocess.run([sys.executable, str(app), "--no-window"],
                        capture_output=True, text=True, env=env, timeout=120)
-    assert r.returncode == 3, f"expected the documented exit code 3, got {r.returncode}"
+    assert r.returncode == 3, (
+        f"expected the documented exit code 3, got {r.returncode}\n"
+        f"stdout: {r.stdout[-500:]}\nstderr: {r.stderr[-500:]}")
     assert "cannot use its data folder" in r.stderr
     assert "PCO_DATA" in r.stderr          # tells them how to fix it
     assert "Traceback" not in r.stderr     # a message, not a crash
