@@ -171,9 +171,15 @@ def _w_bar(c: Canvas, w: Widget, p: Palette) -> None:
 
 
 def _w_stat(c: Canvas, w: Widget, p: Palette) -> None:
-    """Big number, small label. The '8.4 GB / 32 GB' block."""
+    """Big number, small label. The '8.4 GB / 32 GB' block.
+
+    No plate above a size threshold: a glass rectangle behind a 90 px headline
+    reads as a smudge, and at that size the text is the only thing that needs to
+    carry itself.
+    """
     cx, cy, r = _origin(c, w)
-    _glass(c, cx, cy, r, p, w.opacity)
+    if r < 160:
+        _glass(c, cx, cy, r, p, w.opacity)
     big = (w.text or "—")[:8]
     scale = max(2, r // 8)
     tw = c.text_width(big, scale=scale)

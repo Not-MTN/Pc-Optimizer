@@ -325,3 +325,54 @@ def test_theme_is_json_serialisable():
     """Every theme must survive the trip through the database and the API."""
     for name, doc in BUILTIN.items():
         json.dumps(doc)
+
+
+# ------------------------------------------------- themes meet the real shell
+def test_theme_shell_keys_are_real_shell_keys():
+    """Themes used to invent flat names ("taskbar_align") while the engine used
+    namespaced ones ("taskbar.align"). Every theme applied cleanly, reported
+    success, and changed nothing — the exact failure this app exists against."""
+    from pco_engine.shell_lab import SHELL, TASKBAR
+    real = set(TASKBAR) | set(SHELL)
+    for name, doc in BUILTIN.items():
+        for key in (doc.get("shell") or {}):
+            assert key in real, f"{name}: {key!r} is not a shell_lab key"
+
+
+def test_every_theme_shell_value_is_a_real_option():
+    """A valid key with an invalid value is the same bug one level down: the
+    plan accepts it, the write refuses it, and the theme half-applies."""
+    from pco_engine.shell_lab import SHELL, TASKBAR
+    real = {**TASKBAR, **SHELL}
+    for name, doc in BUILTIN.items():
+        for key, value in (doc.get("shell") or {}).items():
+            spec = real[key]
+            allowed = spec.get("options") or {}
+            assert str(value) in {str(k) for k in allowed}, (
+                f"{name}: {key}={value!r} is not one of {sorted(allowed)}")
+
+
+def test_applying_a_theme_journals_real_changes():
+    """End-to-end through the service: a theme must produce actual journaled
+    diffs, not a saved document and a shrug."""
+    import tempfile
+    from pco_engine.service import Service
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/t.db", catalog_dir="catalog")
+    out = svc.theme_apply("synthwave")
+    assert out["ok"]
+    assert out["shell"]["applied"] is True
+    assert len(out["shell"]["changes"]) >= 2
+    assert out["shell"]["refused"] == []
+
+
+def test_applying_a_theme_twice_is_idempotent_and_honest():
+    """The second apply must say 'already', not invent changes to look busy."""
+    import tempfile
+    from pco_engine.service import Service
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/t.db", catalog_dir="catalog")
+    svc.theme_apply("dusk")
+    again = svc.theme_apply("dusk")
+    assert again["ok"]
+    assert again["shell"]["changes"] == [] or again["shell"].get("already")

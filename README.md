@@ -6,9 +6,30 @@
 
 **Status: packaged, not yet signed.** An installable Windows app — `Keel.exe`
 (one file, ~12 MB) plus a per-user installer that needs no administrator rights.
-Under it: sixteen feature screens collapsed into **four tabs**, a journal that
-undoes every change, and a local console with 437 tests (the Windows-only ones
-run in CI). No cloud, no account, no telemetry, no network connection at all.
+Under it: twenty-one screens collapsed into **four tabs**, a journal that undoes
+every change, and a local console with 517 tests (the Windows-only ones run in
+CI). No cloud, no account, no telemetry, no network connection at all.
+
+## Make it yours
+
+A real wallpaper engine and theme gallery, generated on your machine from pure
+Python — no image library, no shader runtime, nothing downloaded.
+
+| | |
+|---|---|
+| **8 scenes** | aurora, mesh, synth, topo, grain, loft, orbit, dusk. Each is a different structure, not a recolour |
+| **16 widgets** | gauges, bars, calendar, battery, clocks, system HUD, weather, dividers, quotes — composed into the wallpaper |
+| **15 themes** | one JSON file = wallpaper + widget layout + shell preferences + terminal palette |
+| **Share** | export a theme to text; import validates, diffs and previews before applying anything |
+
+Every gallery tile is rendered live from its own theme file, so what you see is
+what you get. Applying a theme journals its shell changes like any other change,
+so Undo works. `Set as my wallpaper` writes the PNG and calls the documented
+Win32 API, keeping the previous path for exact undo.
+
+The honest limit: widgets are baked into the image, not a live repainting layer —
+a live layer costs 1–3 % GPU forever, which is what this app refuses to do. Clocks
+in a still wallpaper are flagged as stale rather than silently frozen.
 
 **Why "Keel"?** The fin under a hull you never see from the deck, and the only
 reason the boat does not capsize. That is where the work is here: the switches
@@ -63,11 +84,11 @@ cd engine && python3 -m venv .venv && .venv/bin/pip install -q pytest
 .venv/bin/python -m pytest tests -q                  # 400 passed
 ```
 
-The console covers sixteen feature screens under **four tabs** — Home (health ring,
-live event feed, journal verification), Look (Desktop Lab, Studio themes,
-Workspaces, Recipes), Speed (Checkup, Cleaner, Storage, Startup, Blocking,
-Performance, Gaming) and Fix (Drivers, Battery & Heat, Hardware Lab, Autopsy,
-Sens Lab). The full list: Checkup (per-category scores, consent tiers, fix-all with Undo),
+The console covers twenty-one feature screens under **four tabs** — Home (health
+ring, live event feed, journal verification), Look (Theme gallery, Desktop Lab,
+Studio, Workspaces, Recipes), Speed (Checkup, Cleaner, Storage, Startup,
+Blocking, Performance, Gaming) and Fix (Drivers, Battery & Heat, Hardware Lab,
+Autopsy, Sens Lab). The full list: Checkup (per-category scores, consent tiers, fix-all with Undo),
 Cleaner (scan → vault → restore), Storage (growth, forecast, hash-confirmed
 duplicates), Startup (what boots, what to defer, what is refused), Hardware Lab
 (five peripheral tests + the printable Health Report), Blocking

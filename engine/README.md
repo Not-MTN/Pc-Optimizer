@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (437 tests: 426 here, 11 that only a real Windows machine can run)
+## What works today (517 tests: 506 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -278,6 +278,73 @@ Then the app got a name, an installer and four tabs, which found five more:
 43. **The hub screens were reachable but empty** — the primary buttons opened a group, and the group had no content because only leaf views had bodies. A blank screen behind a tab is worse than a hidden one. The primary tabs are now real hub screens with a card per destination.
 44. **`app.py` set the wrong environment variable** — it wrote `PCO_DATA_DIR` while `server.py` reads `PCO_DATA`, so the packaged app would have written its database to the *current working directory*. That works when launched from the project folder and fails the moment it is installed, which is the definition of a bug that ships. Caught by reading the reader instead of trusting the writer.
 45. **The display refusal and the display feature disagreed** — the module docstring promised a `CDS_TEST`-guarded write with automatic revert; the code raised `BackendError` unconditionally. A comment describing a safety feature that does not exist is worse than no comment, because it is the thing the next person trusts. The guard now exists (`display.py`, 15 tests) and the switch that enables it is explicit.
+
+46. **Every gradient ran backwards** — `linear()` computed `dy = -cos(rad)`,
+    which makes 0° point *down*, while its own docstring (and CSS) says 0° points
+    up. Every theme rendered upside down and nobody could tell, because a
+    gradient has no absolute direction to compare against. Found by writing a
+    test that asserted the docstring instead of the output.
+47. **`WallpaperSpec.dimensions()` silently fell back to 1440p** for any size it
+    did not recognise — so `width=240` produced a 1.1 MB full-resolution render,
+    and the 240 and 480 previews were byte-identical. A fallback that hides a
+    wrong argument is worse than an exception that names it.
+48. **`themes.validate` rejected sizes that `compose` accepted** — the validator
+    knew six named sizes, the renderer also took `WxH`, so the engine refused
+    themes it could render perfectly. Two sources of truth, one feature.
+49. **Themes invented their own shell key names.** They used `taskbar_align`
+    while `shell_lab` uses `taskbar.align`. Every theme applied cleanly, reported
+    success, and changed nothing on disk — the precise failure mode this project
+    exists to prevent, committed by the person who wrote the rule. `KNOWN_SHELL`
+    is now derived from `shell_lab` instead of hand-written, and two tests assert
+    every theme's key *and value* exist.
+50. **`apply_customization` was called on the Service, not the Engine** — an
+    `AttributeError` swallowed into a note, so a theme's shell section silently
+    did nothing while the theme itself saved. The fix was not to add the method
+    but to route through `shell_apply`, which plans first, journals, and reports
+    refusals by name.
+51. **Negative base, fractional exponent** — `(-0.3) ** 0.5` returns a *complex
+    number* in Python, not an exception, so the `TypeError` surfaced frames away
+    from the cause in five different places. Every one is now `max(0.0, x)`.
+52. **Degenerate splits at extreme aspect ratios** — a horizon at `int(h*0.58)`
+    is 0 when `h == 1`, which built a zero-height sub-canvas and called
+    `randrange(0)`. Found by a test that renders every scene at 1×1, 320×60 and
+    60×320 because 3840×1080 and 1080×1920 are real monitors.
+53. **A gauge bar with value 0 was invisible** — no track, no fill, nothing. It
+    was indistinguishable from a render failure. The track is now drawn before
+    the fill, always.
+54. **The disk bar's label and detail overlapped** at every size the defaults
+    use, and so did the calendar's day number and its header — because both were
+    positioned with hardcoded offsets instead of measuring the block first.
+
+## The wallpaper engine
+
+Pure stdlib: no Pillow, no numpy, no shader runtime — the exe is 12 MB and a
+wallpaper engine that needs 40 MB of image library to draw a gradient is not a
+wallpaper engine.
+
+| File | What it is |
+|---|---|
+| `canvas.py` | RGBA raster: integer blending, linear/radial gradients with ordered dither, additive glows, arcs, a 5×7 bitmap face, PNG encoding with Sub filtering |
+| `scenes.py` | 8 scenes — aurora, mesh, synth, topo, grain, loft, orbit, dusk. Deterministic from `(size, palette, seed)` |
+| `widgets.py` | 16 widgets drawn into the image. `LIVE_ONLY` marks the ones whose value moves |
+| `wallpaper.py` | Composition: scene + widget layer + scrim + vignette, with `WxH` sizes |
+| `themes.py` | 15 complete looks in one JSON document, strict validation, `diff()` for preview, `export()`/`import_()` |
+
+**Why widgets are baked into the image, not a live layer.** A repainting overlay
+costs 1–3% GPU forever and needs a DWM hook, which is exactly what the governor
+refuses. Drawing into the wallpaper costs nothing after the render, survives an
+Explorer crash, and cannot be covered by a window. The trade-off is stated where
+it bites: `LIVE_ONLY` widgets in a still image produce a warning that the clock
+will be stale, rather than silently baking a stopped clock.
+
+**Cost.** A 1440p render is ~7 s of pure Python, once. A 4K render is ~35 s. A
+360 px gallery tile is 52 KB in 0.1 s, which is why the gallery renders tiles on
+demand and caches them in the browser.
+
+**Setting it for real.** `set_wallpaper()` calls
+`SystemParametersInfoW(SPI_SETDESKWALLPAPER)`, reading the previous path from the
+registry first so undo restores an exact value. This is materially safer than a
+display mode change: a wrong image is a wrong image, not a black screen.
 
 ## Porting to Rust (the contract)
 

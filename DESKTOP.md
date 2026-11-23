@@ -82,6 +82,29 @@ Tier C is opt-in, clearly marked, never on by default, and the app refuses to en
 
 ## 3. Wallpaper engine
 
+**Built and shipping** (`engine/pco_engine/canvas.py`, `scenes.py`, `wallpaper.py`):
+
+| Scene | Structure | Notes |
+|---|---|---|
+| `aurora` | narrow vertical rays, bright lower edge, additive | three drafts; soft glows make fog, a bright bound makes a blob |
+| `mesh` | four colour poles, power-3 inverse-distance | sharp falloff keeps pockets saturated; a soft knee stops white clipping |
+| `synth` | horizon grid + banded sun | the retro look, drawn not traced |
+| `topo` | contours from fractal value noise | 5-cell lattice, 3 octaves: 22 bands across the frame |
+| `grain` | film grain + blotch layer | the one that survives thirty desktop icons |
+| `loft` | hard diagonal bands | filled by column; row-filling leaves uncut corners |
+| `orbit` | concentric rings, hot core | the best full-screen widget base |
+| `dusk` | banded sky, sun, noise ridge | a landscape with no photograph |
+
+Everything is deterministic from `(size, palette, seed)`, ordered-dithered so
+4K dark gradients do not band, and rendered in pure stdlib Python. 1440p takes
+~7 s once; a 360 px gallery tile is 52 KB in 0.1 s.
+
+The **original design below** is the target for the live layer, which needs DWM
+and a compositor and is not built. Keep the distinction: the still engine is
+real, the animated one is not.
+
+### The original spec (animated, not built)
+
 **Content types**
 
 | Type | Formats / notes |

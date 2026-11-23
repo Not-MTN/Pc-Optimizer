@@ -826,10 +826,14 @@ class Service:
                                   "summary": themes.summary(doc),
                                   "shell": None, "warnings": warnings}
         if shell:
+            # Route through shell_apply, which plans first, journals through the
+            # Engine, and reports refusals by name. Calling the Engine directly
+            # (as the first version did) skipped the plan and crashed on a
+            # missing attribute — the theme was saved and nothing was applied.
             try:
-                result["shell"] = self.apply_customization(shell)
+                result["shell"] = self.shell_apply(shell)
             except Exception as exc:       # noqa: BLE001 - visual change, not core
-                result["shell"] = {"error": str(exc),
+                result["shell"] = {"applied": False, "error": str(exc),
                                    "note": "the theme is saved; the shell keys "
                                            "did not apply"}
         return result
