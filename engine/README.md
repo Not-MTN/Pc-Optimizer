@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (245 tests, all passing)
+## What works today (308 tests, all passing)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -122,6 +122,22 @@ the console is a reference client, not a toy.
 | The report HTML escapes hostile text | `test_html_escapes_hostile_text` |
 | Every "ask" answer is traceable to a journal row | `test_every_answer_is_traceable` |
 | The palette refuses shell execution by default | `test_shell_commands_are_refused_by_default` |
+| A high-risk change is **armed**, and reverts if you never confirm it | `test_a_risky_change_is_armed_by_default`, `test_an_expired_window_reverts_on_its_own` |
+| A window that expired while the app was closed is *named*, not silently kept | `test_a_window_that_expired_while_offline_is_named_as_missed` |
+| Confirming keeps the change through its window | `test_confirming_keeps_the_change` |
+| Battery health is a percentage of design capacity, not a guess | `test_battery_health_is_reported_as_a_share_of_design` |
+| Drain shares are of the measured total, and the residual is last | `test_drain_shares_are_of_the_measured_total`, `test_bridge_power_reports_health_and_drain` |
+| Heat alone is never called throttling | `test_heat_alone_is_not_throttling` |
+| A charge limit the firmware does not expose says "unsupported" | `test_bridge_thermal_never_claims_throttling_from_heat_alone` |
+| Workspace restore **previews by default** | `test_restore_defaults_to_dry_run` |
+| A workspace entry survives a JSON round trip with its type intact | `test_round_trip_keeps_entry_details` |
+| With no launcher, every restore item says so instead of pretending | `test_bridge_workspace_capture_then_preview_then_restore` |
+| Drivers are graded only from this machine's crash history | `test_bridge_drivers_grade_from_local_history_only` |
+| No driver history is reported as **unknown**, never "good" | `test_inventory_scores_every_driver` |
+| A sentence is parsed into a preview and **never saves or runs** | `test_bridge_recipe_parse_never_saves_or_runs`, `test_parse_never_saves` |
+| An unparseable sentence is refused and says what it could not read | `test_unknown_sentence_is_refused_with_the_grammar` |
+| Panic reverts everything in effect and turns the blocker off | `test_bridge_boot_status_and_panic`, `test_panic_is_recorded_as_critical` |
+| A broken journal chain forces read-only, never a "repair" | `test_a_broken_journal_forces_read_only` |
 
 ## Architecture
 
@@ -170,6 +186,11 @@ catalog/tweaks.json ──► Catalog ──► Preflight ──► PLAN (read-o
 | `pco_engine/peripheral.py` | five hardware tests with evidence and advice |
 | `pco_engine/report.py` | the printable Health Report (Markdown + self-contained HTML) |
 | `pco_engine/ask.py` | local intent parsing over the journal |
+| `pco_engine/power.py` | battery health from design capacity, drain attribution, thermal verdicts |
+| `pco_engine/workspace.py` | named window sets, preview-first restore, capture hints |
+| `pco_engine/drivers.py` | driver inventory graded from local crash history, blocks, rollback |
+| `pco_engine/nlrecipe.py` | a narrow, honest natural-language grammar that always previews |
+| `pco_engine/guard.py` | boot chain verification, read-only mode, panic, boot events |
 | `pco_engine/address.py` | canonical addresses — one string per managed thing |
 | `pco_engine/catalog.py` | tweak documents, validation, index |
 | `pco_engine/backend.py` | the only I/O seam + `FakeBackend` (and policy `pin()`) |
@@ -209,6 +230,11 @@ Recorded because they are the argument for building the tests first:
 23. **Two different installers grouped as duplicates** — my fixture gave both 2 MB files identical bytes, and the finder correctly reported them as copies. The fixture was wrong, not the finder — but it proved the byte comparison is the only thing standing between this feature and deleting a user's file.
 24. **"Am I secure?" answered "0 findings" before any checkup had run** — which reads as "all clear". It now says there is no evidence yet.
 25. **Polling-rate advice was backwards** — it told you to check the USB port whether the rate was too low or too high. Now it branches.
+26. **The auto-revert safety net had no net** — `tick()` implemented the confirmation window, but `Engine.apply()` never resolved `require_confirm` from the plan, so `armed_until` was always `None` and every change committed outright. A feature that existed, was tested in isolation, and could never fire in the product. Found by asking the running service for `pending_confirmations()` and getting an empty list after a high-risk apply.
+27. **A catalog entry pointed at the wrong key** — `security.smb1.disable` read and wrote `HKLM\SOFTWARE\Acme\Telemetry`, a leftover from an example. The title, the knowledge article and the risk rating were all correct; only the thing it actually changed was wrong. Every earlier test passed because the *demo backend* had been given a matching invented address. Found by asserting the real registry address after an apply, then auditing every entry's `effects`/`reactions` against its own title.
+28. **Workspace restore was dangerous by default** — `restore()` took `dry_run=False` while its docstring promised a preview. Six programs would have launched on the first click. The default is now the safe direction, and the dangerous one has to be asked for.
+29. **Battery drain attribution dropped every process** — readings are negative while discharging, and the filter was `mw <= 0`, so the list was always just "(unattributed)". Then the residual bucket sorted *above* the real culprits. Both fixed; a named process now always outranks the remainder.
+30. **Backslashes in the console** — a JS string literal with `\` breaks the whole `<script>` block, which no Python test can see. Every console edit is followed by extracting the script and running `node --check`.
 
 ## Porting to Rust (the contract)
 

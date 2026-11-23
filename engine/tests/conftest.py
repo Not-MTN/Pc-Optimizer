@@ -20,6 +20,8 @@ BASE_STATE = {
     "service:diagtrack.exists": True,
     "power:active_scheme": "balanced",
     "registry:hklm\\software\\acme\\telemetry": 1,
+    # SMBv1 support flag, at the address Windows really uses
+    "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters": 1,
     # where Windows actually keeps the diagnostic-data level
     "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection": "full",
     "registry:hklm\\software\\acme\\updater": 1,

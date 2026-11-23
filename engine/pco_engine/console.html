@@ -200,6 +200,21 @@
     <button class="nav" data-view="power" title="Performance">
       <svg viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>
     </button>
+    <button class="nav" data-view="battery" title="Battery &amp; Heat">
+      <svg viewBox="0 0 24 24"><rect x="2" y="7" width="17" height="10" rx="2.5"/>
+        <path d="M21 10v4"/><path d="M6 10v4M10 10v4"/></svg>
+    </button>
+    <button class="nav" data-view="workspaces" title="Workspaces">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.6"/>
+        <rect x="3" y="14" width="11" height="6" rx="1.6"/><path d="M17 17h4"/></svg>
+    </button>
+    <button class="nav" data-view="drivers" title="Driver Manager">
+      <svg viewBox="0 0 24 24"><path d="M4 17h16"/><path d="M7 17V9a5 5 0 0110 0v8"/>
+        <circle cx="12" cy="9" r="2"/></svg>
+    </button>
+    <button class="nav" data-view="recipes" title="Recipes">
+      <svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/><path d="M9 8h6"/></svg>
+    </button>
     <div class="spacer"></div>
     <button class="nav" id="refresh" title="Refresh (R)">
       <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.3 5.7"/><path d="M20 5v6h-6"/></svg>
@@ -264,6 +279,7 @@
           <div class="row" style="margin-top:14px">
             <button class="btn ghost" id="verifyBtn">Verify journal</button>
             <button class="btn ghost" id="driftBtn">Check drift</button>
+            <button class="btn danger" id="panicBtn" title="Undo every active change (Ctrl+Alt+P)">Panic</button>
           </div>
         </div>
       </div>
@@ -584,6 +600,121 @@
       </div>
     </section>
 
+    <!-- ============ BATTERY & HEAT ============ -->
+    <section class="sect" id="view-battery">
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>Battery health</h2>
+          <div class="big" id="battHealth">—<small>%</small></div>
+          <div class="sub" id="battVerdict">Reading the battery…</div>
+          <div class="bar" style="margin:12px 0"><i id="battBar"></i></div>
+          <div class="kv" id="battKv"></div>
+        </div>
+        <div class="card">
+          <h2>Right now</h2>
+          <div class="kv" id="battNow"></div>
+          <div class="sub" id="drainSub" style="margin-top:12px"></div>
+          <div class="sub" id="chargeNote" style="margin-top:10px"></div>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="card">
+          <h2>Where the power goes</h2>
+          <div class="sub" style="margin-bottom:8px">Shares of what was actually measured.</div>
+          <div id="drainList"><div class="empty">No sample yet.</div></div>
+        </div>
+        <div class="card">
+          <h2>Heat</h2>
+          <div class="big" id="heatWord">—</div>
+          <div class="sub" id="heatVerdict">No throttling recorded.</div>
+          <div class="kv" id="heatKv" style="margin-top:12px"></div>
+          <div class="kv" id="bootKv" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ WORKSPACES ============ -->
+    <section class="sect" id="view-workspaces">
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>Save what is open</h2>
+          <label class="field" for="wsName">Name</label>
+          <input id="wsName" placeholder="Editing, Streaming, Study…" spellcheck="false">
+          <div class="row" style="margin-top:12px">
+            <button class="btn primary" id="wsCapture">Capture open windows</button>
+            <span class="sub" id="wsCaptureNote">Nothing is launched by saving.</span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Restore</h2>
+          <div class="kv" id="wsPreview"></div>
+          <div class="sub" style="margin-top:10px">
+            Restore always previews first. Nothing starts until you confirm.
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Saved workspaces</h2>
+        <div id="wsList"><div class="empty">None yet.</div></div>
+      </div>
+    </section>
+
+    <!-- ============ DRIVERS ============ -->
+    <section class="sect" id="view-drivers">
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>Grade from this machine's own history</h2>
+          <div class="big" id="drvSummary">—</div>
+          <div class="sub" id="drvVerdict">No evidence is not the same as good.</div>
+        </div>
+        <div class="card">
+          <h2>Blocked versions</h2>
+          <div class="kv" id="drvBlocks"></div>
+          <div class="sub" style="margin-top:10px">
+            A block is a tombstone Windows Update respects, not a file deletion.
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Installed</h2>
+        <table>
+          <thead><tr><th>Driver</th><th>Kind</th><th>Version</th><th>Grade</th>
+            <th>Evidence</th><th></th></tr></thead>
+          <tbody id="drvBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ RECIPES ============ -->
+    <section class="sect" id="view-recipes">
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>Say what you want</h2>
+          <label class="field" for="recipeText">One sentence</label>
+          <textarea id="recipeText" style="min-height:62px"
+            placeholder="clean downloads older than 30 days"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button class="btn primary" id="recipeParse">Read it back</button>
+            <button class="btn" id="recipeSave">Save recipe</button>
+          </div>
+          <div class="sub" id="recipeGrammar" style="margin-top:10px">
+            Four shapes are understood. Anything else is refused with the reason.
+          </div>
+        </div>
+        <div class="card">
+          <h2>What it will do</h2>
+          <div id="recipePreview"><div class="empty">Nothing parsed yet.</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Saved recipes</h2>
+        <table>
+          <thead><tr><th>Name</th><th>Trigger</th><th>Runs</th><th>Last</th><th></th></tr></thead>
+          <tbody id="recipeBody"></tbody>
+        </table>
+      </div>
+    </section>
+
     <div class="toast" id="toast"></div>
 
     <div class="scrim" id="palScrim">
@@ -640,7 +771,11 @@ const TITLES = { home: ["Overview", "Everything the Guardian engine knows, live.
   gaming: ["Gaming", "It watches real frames, then says the one useful thing."],
   autopsy: ["Installer Autopsy", "Every install leaves a receipt. Every line is erasable."],
   studio: ["Desktop Studio", "Beautiful is a feature. Over 3% idle GPU is a defect."],
-  power: ["Performance", "Measure, change one thing, measure again."] };
+  power: ["Performance", "Measure, change one thing, measure again."],
+  battery: ["Battery & Heat", "Percent of design capacity, attributed drain, real throttle events."],
+  workspaces: ["Workspaces", "Save what is open. Restore it later — preview first, always."],
+  drivers: ["Driver Manager", "Graded by this machine's crashes, never by a website's opinion."],
+  recipes: ["Recipes", "One sentence in, one preview out. Nothing runs until you save it."] };
 function show(view) {
   document.querySelectorAll(".sect").forEach((s) => s.classList.remove("on"));
   $("#view-" + view).classList.add("on");
@@ -655,6 +790,10 @@ function show(view) {
   if (view === "gaming") loadGaming();
   if (view === "autopsy") loadAutopsy();
   if (view === "studio") loadStudio();
+  if (view === "battery") loadBattery();
+  if (view === "workspaces") loadWorkspaces();
+  if (view === "drivers") loadDrivers();
+  if (view === "recipes") loadRecipes();
 }
 
 /* ---------------------------------------------------------------- render */
@@ -1532,6 +1671,380 @@ async function setConsent(body) {
   } catch (err) { toast(err.message, true); }
 }
 
+/* ---------------------------------------------------------------- battery */
+async function loadBattery() {
+  try {
+    const d = await api("/api/power");
+    const b = d.battery || {};
+    if (!b.available) {
+      $("#battHealth").replaceChildren(document.createTextNode("n/a"));
+      $("#battVerdict").textContent = b.reason || "No battery on this machine.";
+      $("#battKv").replaceChildren();
+      $("#battNow").replaceChildren(el("div", "empty", b.reason || "—"));
+      $("#drainList").replaceChildren(el("div", "empty", "Nothing to attribute."));
+      $("#chargeNote").textContent = "";
+    } else {
+      const r = b.reading, dg = b.diagnosis;
+      const pct = Math.round(dg.health_pct);
+      $("#battHealth").replaceChildren(document.createTextNode(String(pct)));
+      $("#battHealth").append(el("small", null, "% of design"));
+      $("#battHealth").className = "big " + (dg.level === "good" ? "ok" :
+        dg.level === "bad" ? "bad" : "warn");
+      $("#battVerdict").textContent = dg.verdict;
+      $("#battBar").style.width = Math.min(100, pct) + "%";
+      const kv = $("#battKv"); kv.replaceChildren();
+      const addkv = (k, v, cls) => { kv.append(el("b", null, k),
+        el("span", cls || null, v)); };
+      addkv("Design capacity", (r.design_mwh / 1000).toFixed(0) + " Wh");
+      addkv("Full charge now", (r.full_mwh / 1000).toFixed(1) + " Wh");
+      addkv("Cycles", String(r.cycles == null ? "not reported" : r.cycles));
+      if (dg.cycle_note) kv.append(el("span", "sub", dg.cycle_note));
+      const now = $("#battNow"); now.replaceChildren();
+      now.append(el("b", null, "Charge"), el("span", null, r.percent + "%"));
+      now.append(el("b", null, "Draw"),
+        el("span", "mono", Math.abs(r.rate_mw) > 0 ?
+           (Math.abs(r.rate_mw) / 1000).toFixed(1) + " W" : "—"));
+      now.append(el("b", null, "Plugged in"), el("span", null, r.plugged ? "yes" : "no"));
+      now.append(el("b", null, "Temperature"),
+        el("span", null, r.temp_c != null ? r.temp_c + " °C" : "not reported"));
+      now.append(el("b", null, "Time left"),
+        el("span", null, dg.minutes_left != null ?
+           Math.floor(dg.minutes_left / 60) + "h " + (dg.minutes_left % 60) + "m" :
+           "not discharging"));
+      $("#drainSub").textContent = dg.advice || "";
+      const cl = d.charge_limit || {};
+      $("#chargeNote").textContent = cl.supported
+        ? "Charge limit can be set to " + cl.current_limit + "%."
+        : (cl.reason || "") + " " + (cl.alternative || "");
+
+      const t = d.trend || {};
+      if (t.available) {
+        addkv("Trend", t.from_pct + "% → " + t.to_pct + "% over " + t.days +
+          " day(s), " + t.per_month + "%/month", t.per_month < 0 ? "warn" : null);
+      }
+    }
+
+    const dr = await api("/api/power/drains");
+    const box = $("#drainList");
+    if (!dr.available) {
+      box.replaceChildren(el("div", "empty", dr.reason || "No reading."));
+    } else {
+      box.replaceChildren();
+      dr.drains.forEach((x) => {
+        const row = el("div"); row.style.marginBottom = "10px";
+        const top = el("div", "row between");
+        top.append(el("span", x.process === "(unattributed)" ? "sub" : null, x.process),
+                   el("b", "mono", x.share_pct.toFixed(1) + "%"));
+        const bar = el("div", "bar"); const fill = el("i");
+        bar.append(fill); row.append(top, bar); box.append(row);
+        requestAnimationFrame(() => { fill.style.width = Math.min(100, x.share_pct) + "%"; });
+        if (x.note) row.append(el("div", "sub", x.note));
+      });
+      const meas = el("div", "sub");
+      meas.textContent = "Measured " + (dr.measured_mw / 1000).toFixed(1) + " W of " +
+        (dr.total_mw / 1000).toFixed(1) + " W total. The remainder is not one process.";
+      box.append(meas);
+    }
+
+    const th = d.thermal || {};
+    $("#heatWord").textContent = th.throttled ? "Throttling" : "Cool";
+    $("#heatWord").className = "big " + (th.throttled ? "bad" : "ok");
+    $("#heatVerdict").textContent = th.verdict || "—";
+    const hk = $("#heatKv"); hk.replaceChildren();
+    const thr = d.throttles || [];
+    hk.append(el("b", null, "Events"), el("span", null,
+      thr.length ? thr.length + " recorded" : "none recorded"));
+    hk.append(el("b", null, "Rule"), el("span", null,
+      "Throttling means hot *and* at least 15% slower — heat alone is not proof."));
+    thr.slice(0, 5).forEach((t) => {
+      hk.append(el("b", null, ago(t.at)), el("span", null,
+        t.temp_c + " °C · " + Math.round(t.before_clock) + "→" +
+        Math.round(t.after_clock) + " MHz"));
+    });
+
+    const boot = await api("/api/boot");
+    const bk = $("#bootKv"); bk.replaceChildren();
+    const modeSpan = el("span", null, boot.mode);
+    if (boot.mode !== "normal") modeSpan.className = "bad";
+    bk.append(el("b", null, "Boot guard"), modeSpan);
+    bk.append(el("b", null, "Last boot"),
+      el("span", null, boot.events.length ? boot.events[0].boot_guard_action : "—"));
+    const pend = (STATE.status && STATE.status.pending_confirmations) || [];
+    if (pend.length) {
+      const row = el("div", "finding");
+      row.style.marginTop = "10px";
+      const body = el("div"); body.style.flex = "1";
+      body.append(el("h3", null, pend.length + " change(s) waiting for a yes"));
+      body.append(el("p", null,
+        "If the machine does not confirm, the change reverts by itself."));
+      pend.forEach((c) => {
+        const b = el("button", "btn primary", "Keep " + (c.title || c.tx_id));
+        b.style.margin = "8px 8px 0 0";
+        b.onclick = async () => {
+          busy(b, true);
+          try {
+            await api("/api/safety/confirm", { tx_id: c.tx_id });
+            toast("Kept.");
+            await refreshAll(); await loadBattery();
+          } catch (err) { toast(err.message, true); }
+          busy(b, false);
+        };
+        body.append(b);
+      });
+      row.append(body);
+      bk.append(row);
+    }
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ------------------------------------------------------------- workspaces */
+async function loadWorkspaces() {
+  try {
+    const d = await api("/api/workspaces");
+    const box = $("#wsList"); box.replaceChildren();
+    if (!d.workspaces.length) {
+      box.append(el("div", "empty", "None yet — capture what is open."));
+      return;
+    }
+    d.workspaces.forEach((w) => {
+      const row = el("div", "finding");
+      row.style.animation = "none";
+      const body = el("div"); body.style.flex = "1";
+      const head = el("div", "row between");
+      head.append(el("h3", null, w.name));
+      head.append(el("span", "tag safe", w.entries.length + " item(s)"));
+      body.append(head);
+      body.append(el("p", null, w.entries.map((e) => e.app).join(" · ")));
+      const acts = el("div", "row");
+      acts.style.marginTop = "8px";
+      const prev = el("button", "btn ghost", "Preview");
+      prev.onclick = () => previewWorkspace(w.id);
+      const run = el("button", "btn primary", "Restore");
+      run.onclick = () => restoreWorkspace(w.id, run);
+      const del = el("button", "btn ghost", "Delete");
+      del.onclick = async () => {
+        try { await api("/api/workspace/delete", { id: w.id });
+          toast("Deleted " + w.name); await loadWorkspaces();
+        } catch (err) { toast(err.message, true); }
+      };
+      acts.append(prev, run, del);
+      body.append(acts);
+      row.append(body); box.append(row);
+    });
+  } catch (err) { toast(err.message, true); }
+}
+
+async function captureWorkspace() {
+  const name = $("#wsName").value.trim();
+  if (!name) { toast("Give it a name first.", true); return; }
+  const btn = $("#wsCapture");
+  busy(btn, true);
+  try {
+    const out = await api("/api/workspace/capture", { name: name });
+    if (!out.saved) { toast(out.reason, true); }
+    else {
+      toast("Saved " + out.name + " with " + out.entries.length + " item(s).");
+      $("#wsName").value = "";
+      await loadWorkspaces();
+    }
+  } catch (err) { toast(err.message, true); }
+  busy(btn, false);
+}
+
+async function previewWorkspace(id) {
+  try {
+    const out = await api("/api/workspace/restore", { id: id, dry_run: true });
+    const box = $("#wsPreview"); box.replaceChildren();
+    box.append(el("b", null, out.workspace), el("span", null, out.summary));
+    out.would_launch.forEach((e) => {
+      box.append(el("b", null, e.app), el("span", "mono",
+        (e.args || []).join(" ") + (e.monitor ? "  → monitor " + (e.monitor + 1) : "")));
+    });
+  } catch (err) { toast(err.message, true); }
+}
+
+async function restoreWorkspace(id, btn) {
+  busy(btn, true);
+  try {
+    const out = await api("/api/workspace/restore", { id: id, dry_run: false });
+    toast(out.summary, out.failed && out.failed.length > 0);
+  } catch (err) { toast(err.message, true); }
+  busy(btn, false);
+}
+
+/* ---------------------------------------------------------------- drivers */
+async function loadDrivers() {
+  try {
+    const d = await api("/api/drivers");
+    const tb = $("#drvBody"); tb.replaceChildren();
+    const grades = {};
+    d.drivers.forEach((x) => {
+      const sc = x.score || {};
+      grades[sc.grade] = (grades[sc.grade] || 0) + 1;
+      const tr = el("tr");
+      tr.append(el("td", null, x.name),
+                el("td", "sub", x.kind),
+                el("td", "mono", x.version || "—"),
+                el("td", "mono " + (sc.grade === "bad" ? "bad" :
+                            sc.grade === "good" ? "ok" : "warn"),
+                       sc.grade || "unknown"),
+                el("td", "sub", sc.verdict || "no evidence yet"),
+                el("td"));
+      const blk = el("button", "btn ghost", "Block");
+      blk.onclick = () => blockDriver(x);
+      tr.lastChild.append(blk);
+      tb.append(tr);
+    });
+    const bad = grades.bad || 0, good = grades.good || 0;
+    $("#drvSummary").textContent = bad + " bad · " + good + " good";
+    $("#drvVerdict").textContent = bad
+      ? "This machine has crashed on a driver version it can name. Blocking it stops Windows reinstalling it."
+      : "No version has crashed enough times to blame yet. Unknown is not a recommendation.";
+    const bk = $("#drvBlocks"); bk.replaceChildren();
+    const blocks = d.blocks || [];
+    if (!blocks.length) bk.append(el("div", "empty", "Nothing blocked."));
+    blocks.forEach((b) => {
+      bk.append(el("b", null, b.driver_id + " " + b.version), el("span", null, b.reason));
+    });
+  } catch (err) { toast(err.message, true); }
+}
+
+async function blockDriver(x) {
+  const reason = prompt("Why block " + x.name + " " + x.version + "?",
+                        "crashes in this machine's history");
+  if (!reason) return;
+  try {
+    const out = await api("/api/drivers/block", { driver_id: x.id,
+      version: x.version, reason: reason });
+    toast(out.blocked ? "Blocked — Windows Update will skip this version."
+                      : "Not blocked.", !out.blocked);
+    await loadDrivers();
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ---------------------------------------------------------------- recipes */
+async function loadRecipes() {
+  try {
+    const d = await api("/api/recipes");
+    const tb = $("#recipeBody"); tb.replaceChildren();
+    if (!d.recipes.length) {
+      tb.append(el("tr")).append(el("td", "empty",
+        "No recipes yet. Write a sentence on the left."));
+      tb.querySelector("td").colSpan = 5;
+      return;
+    }
+    d.recipes.forEach((r) => {
+      const tr = el("tr");
+      const trig = r.trigger || {};
+      tr.append(el("td", null, r.name),
+                el("td", "mono sub", trig.kind || JSON.stringify(trig)),
+                el("td", "mono", String(r.run_count || 0)),
+                el("td", "sub", r.last_run_at ? ago(r.last_run_at) : "never"),
+                el("td"));
+      const cell = tr.lastChild;
+      const tg = el("button", "btn ghost", r.enabled ? "On" : "Off");
+      tg.className = "btn " + (r.enabled ? "primary" : "ghost");
+      tg.onclick = async () => {
+        try {
+          await api("/api/recipe/toggle", { recipe_id: r.id, enabled: !r.enabled });
+          await loadRecipes();
+        } catch (err) { toast(err.message, true); }
+      };
+      const fire = el("button", "btn ghost", "Run now");
+      fire.style.marginLeft = "8px";
+      fire.onclick = async () => {
+        busy(fire, true);
+        try {
+          const out = await api("/api/recipe/fire",
+            { trigger: "manual", context: {} });
+          toast(out.runs && out.runs.length
+            ? out.runs.length + " recipe(s) ran" : "No recipe matched this trigger.");
+          await loadRecipes();
+        } catch (err) { toast(err.message, true); }
+        busy(fire, false);
+      };
+      const del = el("button", "btn ghost", "Delete");
+      del.style.marginLeft = "8px";
+      del.onclick = async () => {
+        if (!confirm("Delete \"" + r.name + "\"?")) return;
+        try {
+          await api("/api/recipe/delete", { recipe_id: r.id });
+          toast("Deleted " + r.name);
+          await loadRecipes();
+        } catch (err) { toast(err.message, true); }
+      };
+      cell.append(tg, fire, del);
+      tb.append(tr);
+    });
+  } catch (err) { toast(err.message, true); }
+}
+
+async function parseSentence() {
+  const text = $("#recipeText").value.trim();
+  if (!text) { toast("Type a sentence first.", true); return; }
+  const btn = $("#recipeParse");
+  busy(btn, true);
+  try {
+    const p = await api("/api/recipe/parse", { sentence: text });
+    const box = $("#recipePreview"); box.replaceChildren();
+    if (!p.understood) {
+      box.append(el("div", "tag review", "not understood"));
+      box.append(el("p", null, p.preview));
+      if (p.problems && p.problems.length) {
+        const ul = el("ul"); ul.style.cssText =
+          "margin:10px 0 0;padding-left:18px;color:var(--dim);font-size:12.5px";
+        p.problems.forEach((x) => ul.append(el("li", null, x)));
+        box.append(ul);
+      }
+    } else {
+      const head = el("div", "row between");
+      head.append(el("h3", null, p.recipe.name),
+                  el("span", "tag safe", Math.round(p.confidence * 100) + "% sure"));
+      box.append(head);
+      box.append(el("p", null, p.preview));
+      const kv = el("div", "kv"); kv.style.marginTop = "10px";
+      kv.append(el("b", null, "Trigger"),
+                el("span", "mono", JSON.stringify(p.recipe.trigger)));
+      kv.append(el("b", null, "Actions"),
+                el("span", "mono", JSON.stringify(p.recipe.actions)));
+      box.append(kv);
+      box.append(el("div", "sub", p.note || ""));
+    }
+  } catch (err) { toast(err.message, true); }
+  busy(btn, false);
+}
+
+async function saveSentence() {
+  const text = $("#recipeText").value.trim();
+  if (!text) { toast("Type a sentence first.", true); return; }
+  const btn = $("#recipeSave");
+  busy(btn, true);
+  try {
+    const out = await api("/api/recipe/create", { sentence: text });
+    if (!out.saved) { toast("Not saved — the sentence was not understood.", true); }
+    else {
+      toast("Saved \"" + out.recipe.name + "\". It runs on its trigger, not now.");
+      $("#recipeText").value = "";
+      await loadRecipes();
+    }
+  } catch (err) { toast(err.message, true); }
+  busy(btn, false);
+}
+
+/* ------------------------------------------------------------------ panic */
+async function panic() {
+  if (!confirm("Undo every active change, disable all recipes and turn blocking off?")) return;
+  const btn = $("#panicBtn");
+  busy(btn, true);
+  try {
+    const out = await api("/api/safety/panic", {});
+    toast(out.summary || "Everything reverted.");
+    await refreshAll();
+    if ($("#view-battery").classList.contains("on")) loadBattery();
+  } catch (err) { toast(err.message, true); }
+  busy(btn, false);
+}
+
 /* ---------------------------------------------------------------- wiring */
 document.querySelectorAll(".nav[data-view]").forEach((b) =>
   b.addEventListener("click", () => show(b.dataset.view)));
@@ -1605,6 +2118,10 @@ $("#palScrim").addEventListener("click", (e) => {
   if (e.target.id === "palScrim") closePalette();
 });
 $("#autopsyBegin").addEventListener("click", beginAutopsy);
+$("#panicBtn").addEventListener("click", panic);
+$("#wsCapture").addEventListener("click", captureWorkspace);
+$("#recipeParse").addEventListener("click", parseSentence);
+$("#recipeSave").addEventListener("click", saveSentence);
 $("#consentSafe").addEventListener("click", () => setConsent({ level: "safe" }));
 $("#consentTrusted").addEventListener("click", () => setConsent({ trust_everything: true }));
 $("#sensSave").addEventListener("click", sensConvert);

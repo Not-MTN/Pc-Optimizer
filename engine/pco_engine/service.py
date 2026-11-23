@@ -24,15 +24,20 @@ from .autopsy import AutopsyLab
 from .consent import Consent
 from .dns import DnsBlocker
 from .ids import new_id
+from .nlrecipe import parse as parse_recipe
 from .palette import Palette
 from .peripheral import PeripheralLab
+from .power import BatteryReading, Power
 from .report import Report, build as build_report, to_html, to_markdown
 from .space import Space
 from .startup import BootReport, StartupItem, StartupSurgeon
+from .workspace import Entry, Workspace, Workspaces
 from .address import values_equal
 from .engine import EngineError, PreflightBlocked
+from .drivers import Driver, DriverManager
 from .dupes import Duplicates
 from .gaming import Gaming
+from .guard import Guard
 from .recipes import Recipes, Spec
 from .sens import SensLab
 from .sentinel import Event, Sentinel
@@ -108,6 +113,15 @@ class Service:
         self.peripheral = PeripheralLab(self.conn, self.clock)
         self.dupes = Duplicates(self.conn, self.clock)
         self.ask = Ask(self)
+        self.guard = Guard(self)
+        self.power = Power(self.conn, self.clock, reader=DEMO_BATTERY if self._demo else None)
+        self.workspaces = Workspaces(self.conn, self.clock)
+        self.drivers = DriverManager(
+            self.conn, self.clock,
+            snapshots=lambda note: self.engine.snapshots.capture(
+                sorted(self.catalog.addresses()), kind="pre_risky", note=note).id)
+        if self._demo:
+            self._seed_demo_drivers()
         if self._demo:
             self._seed_demo_space()
         self.autopsy = AutopsyLab(
@@ -116,13 +130,97 @@ class Service:
                 sorted(self.catalog.addresses()), kind="pre_risky",
                 note="before installer autopsy").id)
 
-        self.recover_on_start()
+        self.boot = self.guard.boot()
+        self.recover_on_start(skip_recover=True)
 
     # ================================================================ lifecycle
-    def recover_on_start(self) -> dict[str, Any]:
+    def tick(self, *, now: int | None = None) -> dict[str, Any]:
+        """The heartbeat. Called by the UI on every refresh and by the CLI.
+
+        This is the only place an armed (risky) change is either confirmed by
+        silence or auto-reverted. It used to be nobody's job, which meant a
+        change marked 'auto-revert in 60s' would sit there forever.
+
+        Offline rule: if the process was not running across the whole window, the
+        elapsed time is not evidence that the user was happy. In that case the
+        change is reverted *and* the reason recorded as a missed window, so the
+        receipt is honest rather than flattering.
+        """
+        now = now if now is not None else self.clock()
+        out: dict[str, Any] = {"reverted": [], "confirmed": [], "pending": 0,
+                               "missed_windows": []}
+
+        rows = self.conn.execute(
+            "SELECT id,tx_id,armed_at,window_ms FROM armed_changes WHERE outcome='pending'"
+        ).fetchall()
+        for row in rows:
+            cid, tx_id, armed_at, window_ms = row[0], row[1], row[2], row[3]
+            due = armed_at + window_ms
+            if now < due:
+                out["pending"] += 1
+                continue
+            # was the app actually watching during the window?
+            beats = self.conn.execute(
+                "SELECT COUNT(*) FROM heartbeats WHERE at > ?", (armed_at,)).fetchone()[0]
+            if beats <= 1:
+                out["missed_windows"].append(tx_id)
+            try:
+                self.engine.revert(tx_id, reason="confirmation window expired")
+                with self.conn:
+                    self.conn.execute(
+                        "UPDATE armed_changes SET outcome='reverted', decided_at=? "
+                        "WHERE id=?", (now, cid))
+                out["reverted"].append(tx_id)
+                self.sentinel.record(Event(
+                    kind="safety", source="tick", severity="warning",
+                    narrative=("Auto-reverted an unconfirmed change" if beats > 1 else
+                               "Auto-reverted an unconfirmed change (the app was not "
+                               "running for most of the window — that is not consent)"),
+                    payload={"tx_id": tx_id}, tx_id=tx_id))
+            except Exception as exc:      # noqa: BLE001 - keep the loop alive
+                out.setdefault("errors", []).append({"tx_id": tx_id, "error": str(exc)})
+
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO heartbeats(id,at) VALUES(?,?)", (new_id(), now))
+            # keep the table small: it is only used to reason about short windows
+            self.conn.execute("DELETE FROM heartbeats WHERE at < ?", (now - 7 * 86_400_000,))
+        out["at"] = now
+        return out
+
+    def register_armed(self, tx_id: str, window_ms: int) -> str:
+        cid = new_id()
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO armed_changes(id,tx_id,armed_at,window_ms) VALUES(?,?,?,?)",
+                (cid, tx_id, self.clock(), window_ms))
+        return cid
+
+    def confirm(self, tx_id: str) -> dict[str, Any]:
+        """The user pressed 'keep it'. Disarms the auto-revert."""
+        self.engine.confirm(tx_id)
+        with self.conn:
+            self.conn.execute(
+                "UPDATE armed_changes SET outcome='confirmed', decided_at=? "
+                "WHERE tx_id=? AND outcome='pending'", (self.clock(), tx_id))
+        return {"tx_id": tx_id, "confirmed": True}
+
+    def pending_confirmations(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT id,tx_id,armed_at,window_ms FROM armed_changes "
+            "WHERE outcome='pending' ORDER BY armed_at").fetchall()
+        return [{"id": r[0], "tx_id": r[1], "armed_at": r[2], "window_ms": r[3],
+                 "seconds_left": max(0, (r[2] + r[3] - self.clock()) // 1000)}
+                for r in rows]
+
+    def recover_on_start(self, *, skip_recover: bool = False) -> dict[str, Any]:
         """Run before anything else: an interrupted transaction must be repaired
-        first, or every later decision is made on an unknown machine."""
-        fixed = self.engine.recover()
+        first, or every later decision is made on an unknown machine.
+
+        `skip_recover` is used when Guard.boot() has already done it — recovery is
+        idempotent, but running it twice would double-write the boot event.
+        """
+        fixed = [] if skip_recover else self.engine.recover()
         ok, rows, detail = self.engine.journal.verify_chain()
         if fixed:
             self.sentinel.record(Event(
@@ -251,6 +349,8 @@ class Service:
             return {"applied": False, "error": str(exc)}
         except PreflightBlocked as exc:
             return {"applied": False, "blocked": [i.as_dict() for i in exc.plan.errors]}
+        if getattr(res, "armed_until", None):
+            self.register_armed(res.tx_id, self.engine.confirm_window_ms)
         if finding_ids:
             self.checker.mark_fixed(finding_ids, res.tx_id)
         # Every applied batch belongs in History. Without this the most important
@@ -451,8 +551,150 @@ class Service:
             return to_html(rep)
         return rep.as_dict()
 
+    # ================================================================ power/batt
+    def battery(self) -> dict[str, Any]:
+        return self.power.sample() or {
+            "available": False,
+            "reason": "battery telemetry needs the Windows backend"}
+
+    def thermal(self) -> dict[str, Any]:
+        return self.power.thermal_verdict()
+
+    # =============================================================== workspaces
+    def save_workspace(self, name: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        from .workspace import Entry
+        es = [Entry(app=e["app"], args=tuple(e.get("args", [])),
+                    monitor=int(e.get("monitor", 0)), profile=e.get("profile"),
+                    title=e.get("title", "")) for e in entries]
+        return self.workspaces.save(name, es).as_dict()
+
+    def restore_workspace(self, workspace_id: str, *, dry_run: bool = True) -> dict[str, Any]:
+        return self.workspaces.restore(workspace_id, dry_run=dry_run)
+
+    # =================================================================== drivers
+    def driver_inventory(self) -> dict[str, Any]:
+        inv = self.drivers.inventory()
+        scored = []
+        for d in inv:
+            s = self.drivers.score(d["version"])
+            scored.append({**d, "score": s})
+        return {"drivers": scored, "blocks": self.drivers.blocks()}
+
+    def nl_recipe(self, sentence: str) -> dict[str, Any]:
+        return parse_recipe(sentence).as_dict()
+
+    def windows(self) -> list[dict[str, Any]]:
+        """Open windows, read through the backend like every other machine fact.
+
+        Addresses are `window:<pid>:<exe>` with {title, monitor} as the value — so
+        the Windows backend only has to implement `keys("window:")` and `read`.
+        """
+        out: list[dict[str, Any]] = []
+        for addr in sorted(self.backend.keys("window:")):
+            try:
+                info = self.backend.read(addr) or {}
+            except Exception:  # noqa: BLE001 - a window vanishing mid-read is normal
+                continue
+            parts = addr.split(":")
+            out.append({"app": parts[2] if len(parts) > 2 else addr,
+                        "title": info.get("title", ""),
+                        "monitor": int(info.get("monitor", 0))})
+        return out
+
+    def save_workspace_capture(self, name: str) -> dict[str, Any]:
+        """Snapshot what is open *right now* into a named workspace."""
+        entries = self.windows()
+        if not entries:
+            return {"saved": False, "reason": (
+                "No window history to capture yet — the console cannot see other "
+                "programs without the Windows backend, and guessing would be worse "
+                "than saying so.")}
+        return {"saved": True, **self.save_workspace(name, entries)}
+
+    def drains(self) -> dict[str, Any]:
+        """Per-process power draw, read from the backend at `power:drain:<exe>`.
+
+        On Windows this comes from the energy-estimation counters; here it comes
+        from the simulated machine. Nothing is invented: a process with no
+        reading is missing from the list, and the remainder is called
+        "(unattributed)" rather than silently folded into the top entry.
+        """
+        from .power import attribute_drain
+        readings: dict[str, float] = {}
+        for addr in sorted(self.backend.keys("power:drain:")):
+            try:
+                val = self.backend.read(addr)
+            except Exception:      # noqa: BLE001
+                continue
+            if isinstance(val, (int, float)):
+                readings[addr.rsplit(":", 1)[-1]] = float(val)
+        bat = self.battery()
+        total = None
+        if bat.get("available"):
+            rate = bat["reading"].get("rate_mw") or 0
+            total = abs(rate)
+        if total is None and readings:
+            total = sum(abs(v) for v in readings.values())
+        if not total:
+            return {"available": False,
+                    "reason": "no power draw measured — needs a battery or the Windows backend",
+                    "drains": []}
+        return {"available": True, "total_mw": total,
+                "measured_mw": sum(abs(v) for v in readings.values()),
+                "drains": [d.as_dict() for d in attribute_drain(readings, total_mw=total)]}
+
+    def power_summary(self) -> dict[str, Any]:
+        return {"battery": self.battery(), "thermal": self.thermal(),
+                "throttles": self.power.throttles(10),
+                "history": self.power.history(40),
+                "trend": self.power.health_trend(),
+                "charge_limit": self.power.charge_limit(supported=False),
+                "drains": self.drains()}
+
+    def boot_status(self) -> dict[str, Any]:
+        return {"events": self.guard.events(10),
+                "mode": "read_only" if not self.guard.safe_to_write() else "normal"}
+
+    def panic(self) -> dict[str, Any]:
+        return self.guard.panic()
+
+    def driver_before_install(self, driver_id: str) -> dict[str, Any]:
+        return self.drivers.before_install(driver_id)
+
+    def driver_report(self, version: str, outcome: str, note: str = "") -> dict[str, Any]:
+        return self.drivers.report_outcome(version, outcome=outcome, note=note)
+
+    def create_recipe_from_text(self, sentence: str) -> dict[str, Any]:
+        """Parse, then persist. Saving is a separate, explicit act."""
+        parsed = parse_recipe(sentence)
+        if not parsed.understood:
+            return {**parsed.as_dict(), "saved": False}
+        rec = parsed.recipe or {}
+        import uuid
+        rid = "nl-" + uuid.uuid4().hex[:10]
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO recipes(id,name,enabled,trigger_json,actions_json,created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (rid, rec["name"], 1, json.dumps(rec["trigger"]),
+                 json.dumps(rec["actions"]), self.clock()))
+        return {"saved": True, "recipe_id": rid, "recipe": rec,
+                "preview": parsed.preview}
+
+    def run_recipes(self, trigger: str, context: dict[str, Any] | None = None
+                    ) -> list[dict[str, Any]]:
+        return self.recipes.fire(trigger, context or {})
+
+    def recipes_list(self) -> list[dict[str, Any]]:
+        return self.recipes.list()
+
+    def toggle_recipe(self, recipe_id: str, enabled: bool) -> dict[str, Any]:
+        self.recipes.set_enabled(recipe_id, enabled)
+        return {"recipe_id": recipe_id, "enabled": enabled}
+
     # =================================================================== status
     def status(self) -> dict[str, Any]:
+        safety = self.tick()
         latest = self.checker.latest_run()
         ok, rows, detail = self.engine.journal.verify_chain()
         vault = self.cleaner.vault_summary()
@@ -482,6 +724,8 @@ class Service:
             "digest": self.sentinel.digest(),
             "receipts": self.receipts(10),
             "integrity": integrity(self.conn),
+            "safety": safety,
+            "pending_confirmations": self.pending_confirmations(),
         }
 
     def receipts(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -507,6 +751,26 @@ class Service:
         return {"Downloads": str(home / "Downloads"),
                 "Documents": str(home / "Documents"),
                 "AppData": str(home / "AppData" / "Local")}
+
+    def _seed_demo_drivers(self) -> None:
+        if self.conn.execute("SELECT COUNT(*) FROM drivers").fetchone()[0]:
+            return
+        self.drivers.record([
+            Driver("gpu:nvidia", "NVIDIA GeForce RTX 4070", "display", "566.36",
+                   1_732_000_000_000, "NVIDIA"),
+            Driver("gpu:nvidia:prev", "NVIDIA GeForce RTX 4070 (previous)", "display",
+                   "561.09", 1_727_000_000_000, "NVIDIA"),
+            Driver("audio:realtek", "Realtek High Definition Audio", "audio", "6.0.9",
+                   1_700_000_000_000, "Realtek"),
+            Driver("net:intel", "Intel Wi-Fi 6E AX211", "network", "23.40.0",
+                   1_720_000_000_000, "Intel"),
+            Driver("chipset:intel", "Intel Chipset Device", "chipset", "10.1.19",
+                   1_690_000_000_000, "Intel"),
+        ])
+        # a bad driver with history, so known-good scoring has evidence to show
+        self.drivers.report_outcome("566.36", outcome="crash", detail="game crash on launch")
+        self.drivers.report_outcome("566.36", outcome="crash", detail="driver timeout")
+        self.drivers.report_outcome("561.09", outcome="good", detail="stable week")
 
     def _seed_demo_space(self) -> None:
         """A simulated machine arrives with a week of history. A feature that only
@@ -618,8 +882,25 @@ DEMO_STATE = {
     "startup:steam.defer_seconds": 0,
     "task:\\microsoft\\office\\officebackgroundtaskhandler.state": "ready",
     "security:defender.realtime": True,
-    "security:smb1.enabled": True,
+    # SMBv1 support flag, exactly where Windows keeps it. This is what
+    # `security.smb1.disable` actually writes; an invented `security:smb1.enabled`
+    # address would have made the checkup's fix fail against a real machine.
+    "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters": 1,
     "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection": "full",
+    # open windows, so Workspaces can capture something on the demo machine.
+    # `window:<pid>:<exe>` -> {title, monitor}
+    "window:4120:Code.exe": {"title": "service.py — Pc-Optimizer", "monitor": 0},
+    "window:4121:Code.exe": {"title": "console.html — Pc-Optimizer", "monitor": 1},
+    "window:5310:chrome.exe": {"title": "PC Optimizer docs", "monitor": 0},
+    "window:5311:chrome.exe": {"title": "GitHub — Not-MTN/Pc-Optimizer", "monitor": 1},
+    "window:6204:Spotify.exe": {"title": "Spotify Premium", "monitor": 1},
+    "window:7020:Discord.exe": {"title": "Discord", "monitor": 1},
+    "window:8110:mspaint.exe": {"title": "concept.png", "monitor": 0},
+    # per-process power draw in mW while discharging (Windows: energy estimation)
+    "power:drain:chrome.exe": -4_100,
+    "power:drain:Code.exe": -1_800,
+    "power:drain:Spotify.exe": -900,
+    "power:drain:Discord.exe": -700,
     "startup:items": [
         {"name": "OneDrive", "enabled": True, "cost_ms": 900},
         {"name": "Steam", "enabled": True, "cost_ms": 1400},
@@ -636,6 +917,13 @@ DEMO_METRICS = {
     "storage.dup_bytes": 18_400_000_000,
     "reliability.crash_count_7d": 3,
 }
+
+def DEMO_BATTERY() -> BatteryReading:
+    """A laptop whose battery is worth mentioning: 78% health, ~106 cycles."""
+    return BatteryReading(design_mwh=70_000, full_mwh=54_600, now_mwh=41_000,
+                          rate_mw=-12_400, percent=75, plugged=False, cycles=106,
+                          temp_c=31.0)
+
 
 CLEAN_ROOTS = {
     "temp": "temp",
@@ -678,6 +966,37 @@ ACTIONS = {
     "report.html": lambda s, a: {"html": s.health_report("html")},
     "report.json": lambda s, a: s.health_report("json"),
     "peripheral.summary": lambda s, a: s.peripheral.summary(),
+    "battery.read": lambda s, a: s.battery(),
+    "thermal.status": lambda s, a: s.thermal(),
+    "workspace.list": lambda s, a: {"workspaces": [w.as_dict() for w in s.workspaces.list()]},
+    "workspace.restore": lambda s, a: s.restore_workspace(a["id"], dry_run=bool(a.get("dry_run", True))),
+    "drivers.list": lambda s, a: s.driver_inventory(),
+    "drivers.block": lambda s, a: s.drivers.block(a["driver_id"], a["version"], reason=a["reason"]),
+    "drivers.rollback": lambda s, a: s.drivers.rollback(a["install_id"]),
+    "recipe.parse": lambda s, a: s.nl_recipe(a["sentence"]),
+    "recipe.create": lambda s, a: s.create_recipe_from_text(a["sentence"]),
+    "recipe.list": lambda s, a: {"recipes": s.recipes_list()},
+    "recipe.toggle": lambda s, a: s.toggle_recipe(a["recipe_id"], bool(a["enabled"])),
+    "recipe.delete": lambda s, a: (s.recipes.delete(a["recipe_id"]),
+                                   {"deleted": a["recipe_id"]})[1],
+    "recipe.fire": lambda s, a: {"runs": s.run_recipes(a.get("trigger", "manual"), a.get("context"))},
+    "workspace.save": lambda s, a: s.save_workspace(a["name"], a.get("entries", [])),
+    "windows.list": lambda s, a: {"windows": s.windows()},
+    "workspace.capture": lambda s, a: s.save_workspace_capture(a["name"]),
+    "workspace.delete": lambda s, a: (s.workspaces.delete(a["id"]), {"deleted": a["id"]})[1],
+    "drivers.before_install": lambda s, a: s.driver_before_install(a["driver_id"]),
+    "drivers.report": lambda s, a: s.driver_report(a["version"], a["outcome"], a.get("note", "")),
+    "power.summary": lambda s, a: s.power_summary(),
+    "power.sample": lambda s, a: s.battery(),
+    "power.drains": lambda s, a: s.drains(),
+    "thermal.sample": lambda s, a: {"recorded": s.power.record_thermal(
+        float(a["before_hz"]), float(a["after_hz"]),
+        temp_c=float(a["temp_c"]) if a.get("temp_c") is not None else None)},
+    "boot.status": lambda s, a: s.boot_status(),
+    "safety.panic": lambda s, a: s.panic(),
+    "safety.tick": lambda s, a: s.tick(),
+    "safety.confirm": lambda s, a: s.confirm(a["tx_id"]),
+    "safety.pending": lambda s, a: {"pending": s.pending_confirmations()},
     "clean.scan": lambda s, a: s.clean_scan(),
     "clean.run": lambda s, a: s.clean_run(),
     "clean.restore": lambda s, a: s.clean_restore(a["run_id"]),

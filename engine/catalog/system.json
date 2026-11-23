@@ -111,14 +111,16 @@
       "knowledge_key": "smbv1",
       "preconditions": [
         {
-          "kind": "exists",
-          "what": "registry:hklm\\software\\acme\\telemetry"
+          "kind": "equals",
+          "what": "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters",
+          "value": 1
         }
       ],
       "effects": [
         {
           "kind": "registry_value",
-          "target": "HKLM\\SOFTWARE\\Acme\\Telemetry",
+          "target": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters",
+          "pre": "SMB1",
           "to": 0
         }
       ]

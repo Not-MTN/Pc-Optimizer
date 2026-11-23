@@ -156,6 +156,12 @@ class Engine:
                     "updated_at=excluded.updated_at",
                     (eff.address, _canon(eff.new), tx_id, self.clock()))
 
+        # A risky change is armed unless the caller overrides it. This default was
+        # never resolved before, so `require_confirm` was always None and nothing
+        # was ever armed — the auto-revert safety net had no net.
+        if require_confirm is None:
+            require_confirm = plan.requires_confirmation
+
         armed_until = None
         if require_confirm:
             armed_until = self.clock() + self.confirm_window_ms

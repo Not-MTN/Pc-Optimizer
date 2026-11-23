@@ -399,3 +399,109 @@ def test_bridge_peripheral_test_records_a_verdict(live_server):
     assert "hardware fault" in " ".join(out["advice"])
     hist = _get(live_server, "/api/peripheral")["history"]
     assert hist and hist[0]["verdict"] == "fail"
+
+
+# ------------------------------------------------- v0.5 over the real socket
+
+def test_bridge_power_reports_health_and_drain(live_server):
+    out = _get(live_server, "/api/power")
+    assert out["battery"]["available"] is True
+    diag = out["battery"]["diagnosis"]
+    assert diag["health_pct"] == pytest.approx(78.0)
+    assert diag["level"] == "warn"
+    dr = _get(live_server, "/api/power/drains")
+    names = [d["process"] for d in dr["drains"]]
+    # a named process always outranks the residual bucket
+    assert names[-1] == "(unattributed)"
+    assert "chrome.exe" in names
+    shares = sum(d["share_pct"] for d in dr["drains"])
+    assert 99.0 <= shares <= 101.0
+
+
+def test_bridge_thermal_never_claims_throttling_from_heat_alone(live_server):
+    out = _get(live_server, "/api/power")
+    assert out["thermal"]["throttled"] is False
+    assert "No throttling recorded" in out["thermal"]["verdict"]
+    assert out["charge_limit"]["supported"] is False
+
+
+def test_bridge_workspace_capture_then_preview_then_restore(live_server):
+    _, saved = _post(live_server, "/api/workspace/capture", {"name": "Bridge"})
+    assert saved["saved"] is True
+    assert len(saved["entries"]) >= 5
+
+    ws = _get(live_server, "/api/workspaces")["workspaces"]
+    assert ws and ws[0]["name"] == "Bridge"
+
+    dry = _post(live_server, "/api/workspace/restore",
+                {"id": ws[0]["id"], "dry_run": True})[1]
+    assert dry["dry_run"] is True and "Nothing started" in dry["summary"]
+
+    real = _post(live_server, "/api/workspace/restore",
+                 {"id": ws[0]["id"], "dry_run": False})[1]
+    # no launcher exists on this build: every item must say so, not pretend
+    assert real["started"] == 0
+    assert real["failed"] and "no launcher" in real["failed"][0]["error"]
+
+
+def test_bridge_drivers_grade_from_local_history_only(live_server):
+    out = _get(live_server, "/api/drivers")
+    by_version = {d["version"]: d["score"] for d in out["drivers"]}
+    assert by_version["566.36"]["grade"] == "bad"
+    assert by_version["561.09"]["grade"] == "good"
+    unknown = [s for v, s in by_version.items() if s["grade"] == "unknown"]
+    assert unknown, "silence must be reported as unknown, not assumed good"
+    assert all("not" in s["verdict"] or "no" in s["verdict"].lower() for s in unknown)
+
+
+def test_bridge_recipe_parse_never_saves_or_runs(live_server):
+    before = len(_get(live_server, "/api/recipes")["recipes"])
+    out = _post(live_server, "/api/recipe/parse",
+                {"sentence": "clean temp files older than 14 days"})[1]
+    assert out["understood"] is True
+    assert out["recipe"]["actions"]
+    assert len(_get(live_server, "/api/recipes")["recipes"]) == before
+
+    bad = _post(live_server, "/api/recipe/parse",
+                {"sentence": "make me a sandwich"})[1]
+    assert bad["understood"] is False
+    assert bad["problems"], "a refusal must name what it could not parse"
+    assert len(_get(live_server, "/api/recipes")["recipes"]) == before
+
+
+def test_bridge_recipe_save_toggle_fire(live_server):
+    created = _post(live_server, "/api/recipe/create",
+                    {"sentence": "every day at 03:00, run a checkup"})[1]
+    assert created["saved"] is True
+    rid = created["recipe_id"]
+
+    listed = _get(live_server, "/api/recipes")["recipes"]
+    assert rid in [r["id"] for r in listed]
+
+    off = _post(live_server, "/api/recipe/toggle",
+                {"recipe_id": rid, "enabled": False})[1]
+    assert off["enabled"] is False
+
+    runs = _post(live_server, "/api/recipe/fire",
+                 {"trigger": "manual", "context": {}})[1]["runs"]
+    assert runs == [] or rid not in [r.get("recipe_id") for r in runs]
+
+    _post(live_server, "/api/recipe/toggle", {"recipe_id": rid, "enabled": True})
+    _post(live_server, "/api/recipe/delete", {"recipe_id": rid})
+    assert rid not in [r["id"] for r in _get(live_server, "/api/recipes")["recipes"]]
+
+
+def test_bridge_boot_status_and_panic(live_server):
+    boot = _get(live_server, "/api/boot")
+    assert boot["mode"] in {"normal", "read_only"}
+    assert boot["events"], "the boot guard must have recorded a boot"
+
+    _post(live_server, "/api/checkup/fix", {})
+    out = _post(live_server, "/api/safety/panic", {})[1]
+    assert "Reverted" in out["summary"]
+    assert out["dns_mode"] == "off"
+
+
+def test_bridge_safety_pending_is_honest_when_empty(live_server):
+    out = _get(live_server, "/api/safety")
+    assert isinstance(out["pending"], list)

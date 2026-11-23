@@ -84,14 +84,14 @@ def test_high_risk_requires_confirmation_and_arms(engine):
 
 
 def test_armed_transaction_auto_reverts_when_expired(engine, clock, backend):
-    before = backend.read("registry:hklm\\software\\acme\\telemetry")
+    before = backend.read("registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters")
     res = engine.apply("security.smb1.disable", require_confirm=True)
-    assert backend.read("registry:hklm\\software\\acme\\telemetry") != before
+    assert backend.read("registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters") != before
 
     clock.tick(engine.confirm_window_ms + 1)
     expired = engine.expire_armed()
     assert expired == [res.tx_id]
-    assert backend.read("registry:hklm\\software\\acme\\telemetry") == before
+    assert backend.read("registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters") == before
 
 
 def test_confirm_disarms_autorevert(engine, clock):
