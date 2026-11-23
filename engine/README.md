@@ -1,6 +1,8 @@
 # Guardian engine — reference implementation
 
-The safety core of PC Optimizer, written in Python so it can be **run and tested on any OS**, then ported to Rust 1:1.
+The running app: a local server + dark console that drives the real engine over
+JSON, plus the safety core beneath it, written in Python so it can be **run and
+tested on any OS**, then ported to Rust 1:1.
 
 > Why Python first: the engine's logic (journal, preflight, snapshots, recovery) is the part that must never be wrong, and it is 100% testable without Windows. Writing it twice — once to discover the design, once for production — is cheaper than debugging a broken safety net in the field. The Rust port keeps the same module, class and method names.
 
@@ -9,6 +11,9 @@ The safety core of PC Optimizer, written in Python so it can be **run and tested
 ```bash
 cd engine
 python3 -m venv .venv && .venv/bin/pip install -q pytest
+
+# THE APP — console at http://localhost:7788
+.venv/bin/python -m pco_engine.server
 
 # the promise, demonstrated end to end
 .venv/bin/python -m pco_engine.cli --fresh crash
@@ -28,7 +33,30 @@ python3 -m venv .venv && .venv/bin/pip install -q pytest
 .venv/bin/python -m pytest tests -q
 ```
 
-## What works today (53 tests, all passing)
+## The app
+
+```
+.venv/bin/python -m pco_engine.server --port 7788
+```
+
+One stdlib HTTP server, no dependencies, no build step. It binds `0.0.0.0` and
+the UI uses **relative URLs only**, so it works on `127.0.0.1` and behind a
+proxy identically. `pco_data/` (db + vault + demo machine) is created on first
+run and git-ignored.
+
+| View | What it drives |
+|---|---|
+| Overview | health ring, tracker count, vault size, live event feed, journal verification |
+| Checkup | per-category scores, findings tagged auto-safe / review, one-click "fix everything safe", receipts with Undo |
+| Cleaner | scan by rule, move to vault, restore, 30-day retention |
+| Blocking | on / off / strict, pause 30 min, per-app rules, allow rules, counters |
+| Sens Lab | cm/360 ⇄ every game, eDPI, and the PSA two-candidate test (6 rounds to <1 cm) |
+| Performance | benchmark score vs baseline, weekly report, drift check |
+
+Every response is JSON with the exact keys the future WinUI shell consumes, so
+the console is a reference client, not a toy.
+
+## What works today (106 tests, all passing)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -42,6 +70,16 @@ python3 -m venv .venv && .venv/bin/pip install -q pytest
 | Risky changes auto-revert if not confirmed | `test_armed_transaction_auto_reverts_when_expired` |
 | Drift (Windows Update undoing us) is detected | `test_drift_detected_when_outside_world_changes_value` |
 | Snapshots are small, verifiable and diffable | `test_snapshots.py` |
+| Cleaning frees disk and is **restorable** (byte-verified) | `test_clean_moves_to_vault_and_preserves_file`, `test_restore_puts_everything_back` |
+| Storage findings never claim to be a speed win | `test_storage_findings_do_not_lower_speed_score` |
+| Policy-class junk is never auto-selected | `test_policy_class_is_never_auto_selected` |
+| The blocker's off switch actually allows traffic, instantly | `test_mode_off_allows_everything`, `test_toggle_is_instant` |
+| Pause expires on its own; allow rules beat lists | `test_pause_stops_blocking_then_expires`, `test_allow_rule_wins` |
+| Recipes can't loop and never exceed 10 actions | `test_recipe_rejects_loops`, `test_recipe_capped_at_ten_actions` |
+| cm/360 round-trips and CS2→VALORANT matches the ÷3.18 constant | `test_round_trip_is_exact`, `test_cs2_to_valorant_is_the_known_ratio` |
+| Non-linear-ADS games are flagged, not faked | `test_table_has_every_game_and_flags_non_linear` |
+| The PSA test converges to under 1 cm in 6 rounds | `test_psa_converges_below_one_centimetre` |
+| The HTTP bridge works over real sockets, incl. undo | `test_web.py` (10 socket-level tests) |
 
 ## Architecture
 
@@ -69,6 +107,16 @@ catalog/tweaks.json ──► Catalog ──► Preflight ──► PLAN (read-o
 
 | File | Responsibility |
 |---|---|
+| `pco_engine/service.py` | **the one object the UI talks to**; owns every module, one action catalog |
+| `pco_engine/server.py` | stdlib HTTP bridge + static console, binds 0.0.0.0, relative URLs |
+| `pco_engine/console.html` | the console UI — inline CSS/JS/SVG, no network, no build |
+| `pco_engine/checker.py` | 9 checks in 5 categories; scores that can't borrow credibility |
+| `pco_engine/cleaner.py` | rules-as-data, vault, sha256 verify, restore, retention |
+| `pco_engine/bench.py` | 5 metrics, median of 3, stability flag, "no measurable change" under 3% |
+| `pco_engine/dns.py` | matcher, modes, pause, per-app, allow rules, counters |
+| `pco_engine/sens.py` | yaw table, cm/360, eDPI, PSA binary search |
+| `pco_engine/recipes.py` | when-X-do-Y, capped, no loops, one receipt per run |
+| `pco_engine/sentinel.py` | event feed: nothing polls, plugins push |
 | `pco_engine/address.py` | canonical addresses — one string per managed thing |
 | `pco_engine/catalog.py` | tweak documents, validation, index |
 | `pco_engine/backend.py` | the only I/O seam + `FakeBackend` (and policy `pin()`) |
@@ -89,6 +137,13 @@ Recorded because they are the argument for building the tests first:
 4. **Unprovable preconditions passed** — `equals` on a missing address returned "ok". It now refuses.
 5. **False interruptions** — every *committed* transaction looked crashed on the next startup, so recovery would have silently reverted good changes on every boot. This one would have been a field disaster.
 6. **Stale reads hid policy overrides** — a value re-imposed by policy looked successfully applied.
+7. **A tweak whose goal was its own precondition** — `power.scheme.high` demanded `active_scheme == "high"` *before* applying it, so the single most common first fix could never be planned from Balanced. Added `not_equals`, which is the honest way to say "only offer this if we're not already there".
+8. **`os.path.exists()` on a glob** — every cleaner rule silently matched nothing, so the Cleaner would have shipped reporting "0 bytes" forever.
+9. **Cleaner left its journal transaction open** — the next boot would have "recovered" a clean run that finished perfectly, moving files back without being asked.
+10. **Cross-thread SQLite** — the bridge's worker threads all hit one connection; every request 500'd until `check_same_thread=False` + an explicit lock made the threading model explicit.
+11. **Sens profile saved under the wrong key** — "I play CS2 at 1.6" stored a per-game row the table never read, so the conversion page showed a stale 40 cm/360.
+12. **Double counting in the cleaner** — one temp file listed under two rules reported 14 files when there were 10.
+13. **PSA that couldn't converge** — the first binary search compared a value against itself, so the range never shrank.
 
 ## Porting to Rust (the contract)
 
@@ -104,8 +159,9 @@ The checksum formula and the JSON keys are the two things that must not drift.
 
 ## Not built yet (deliberately)
 
-- `WindowsBackend` (registry/services/tasks/display/power) — needs a Windows machine to test against.
-- Boot guard service, panic hotkey, Scheduler (`Sentinel`), Bench, Checkup scanner, Cleaner, DNS resolver.
-- All UI.
+- `WindowsBackend` (registry/services/tasks/display/power) — needs a Windows machine; the reference `Backend` is the whole seam, so this is one file.
+- The DNS resolver itself (this repo has the decision engine; the resolver needs Windows NRPT).
+- The Rust port and the WinUI 3 shell.
+- Desktop Studio, widgets, wallpaper engine, game-profile auto-detect (specified, not written).
 
-Each of those is specified already; this package is the foundation they all stand on.
+Each is specified; none of them needs the safety core to change.

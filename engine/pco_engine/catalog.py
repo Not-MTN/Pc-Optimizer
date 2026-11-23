@@ -22,7 +22,7 @@ VALID_EFFECTS = {
     "display_mode", "display_setting", "power_setting", "dns_policy",
     "file_write", "file_delete", "driver_action", "startup_defer", "app_setting",
 }
-VALID_PRECONDITIONS = {"exists", "absent", "equals", "gte", "lte", "true"}
+VALID_PRECONDITIONS = {"exists", "absent", "equals", "not_equals", "gte", "lte", "true"}
 
 
 class CatalogError(ValueError):

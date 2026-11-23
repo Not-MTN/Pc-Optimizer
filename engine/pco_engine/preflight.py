@@ -163,6 +163,15 @@ class Preflight:
                                      tweak.id, what))
             return
 
+        if kind == "not_equals":
+            # "only offer this if the machine is not already there" — without it a
+            # tweak whose goal is its own precondition can never be planned.
+            if values_equal(actual, want):
+                plan.issues.append(Issue("error", "precondition.already_present",
+                                         f"{tweak.title}: {what} is already {canon_value(want)}.",
+                                         tweak.id, what))
+            return
+
         if kind == "equals":
             if not values_equal(actual, want):
                 plan.issues.append(Issue("error", "precondition.mismatch",

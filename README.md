@@ -2,7 +2,15 @@
 
 > A Windows 11 optimizer with full access, honest receipts, and a beauty budget of 0% idle CPU.
 
-**Status: design complete, Guardian engine started.** Thirteen design documents, four clickable concept screens, a validated 67-table schema, and a working, tested reference implementation of the safety core at [`engine/`](engine) (53 tests, runs on any OS).
+**Status: runnable prototype.** Thirteen design documents, four clickable concept screens, a validated 67-table schema, and at [`engine/`](engine) a working app: the Guardian safety core plus checkup, cleaner, benchmark, blocker, recipes, event feed and Sens Lab — driven by a local console (106 tests, runs on any OS).
+
+```bash
+cd engine
+python3 -m venv .venv && .venv/bin/pip install -q pytest
+.venv/bin/python -m pco_engine.server      # console at http://localhost:7788
+```
+
+The console is a reference client for the same JSON the WinUI shell will consume: everything it shows comes from the real engine, and every change it makes is journaled, snapshotted and undoable in one click.
 
 ## Read in this order
 
@@ -24,13 +32,21 @@
 
 | Path | What it is |
 |---|---|
-| [`engine/`](engine) | **The Guardian engine** — journal, preflight, snapshots, recovery, CLI. Python reference (53 passing tests), written to be ported to Rust 1:1 |
+| [`engine/`](engine) | **The app + the Guardian engine** — safety core (journal, preflight, snapshots, recovery, drift), checkup, cleaner with restorable vault, benchmark, ad/tracker blocker, recipes, event feed, Sens Lab, and the stdlib HTTP bridge + dark console. Python reference (106 passing tests), written to be ported to Rust 1:1 |
 
 ```bash
 cd engine && python3 -m venv .venv && .venv/bin/pip install -q pytest
-.venv/bin/python -m pco_engine.cli --fresh crash   # the promise, demonstrated
-.venv/bin/python -m pytest tests -q                # 53 passed
+.venv/bin/python -m pco_engine.server                # the console, port 7788
+.venv/bin/python -m pco_engine.cli --fresh crash     # the promise, demonstrated
+.venv/bin/python -m pytest tests -q                  # 106 passed
 ```
+
+The console covers six views — Overview (health ring, live event feed, journal
+verification), Checkup (per-category scores, auto-safe vs review findings,
+one-click fix-all with Undo), Cleaner (scan → vault → restore), Blocking
+(on/off/pause/allow), Sens Lab (cm/360 ⇄ 14 games + the PSA test) and
+Performance (benchmark vs baseline, weekly report). `engine/README.md` documents
+the guarantees each test proves and the Rust port contract.
 
 ## Clickable concepts
 

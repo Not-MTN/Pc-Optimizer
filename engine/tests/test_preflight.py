@@ -51,11 +51,30 @@ def test_redundant_writes_are_a_warning_not_an_error(engine, catalog, backend):
 
 
 def test_precondition_failure_blocks(catalog, backend):
-    plan = Preflight(catalog, backend).simulate(["power.scheme.high"])
+    """`not_equals` is the honest way to gate a tweak on the *current* state, so
+    a plan is refused once the machine already matches the target."""
+    from pco_engine import parse_tweak
+    t = parse_tweak({"id": "z.power", "module": "power", "title": "High plan", "plain": "p",
+                     "tier": "T1", "risk": "low",
+                     "effects": [{"kind": "power_setting", "target": "active_scheme",
+                                  "to": "high"}],
+                     "preconditions": [{"kind": "not_equals", "what": "power:active_scheme",
+                                        "value": "high"}]})
+    cat = Catalog([*catalog.all(), t])
+    assert Preflight(cat, backend).simulate(["z.power"]).ok is True
+    backend.write("power:active_scheme", "high")
+    plan = Preflight(cat, backend).simulate(["z.power"])
     assert not plan.ok
     fails = [i for i in plan.errors
-             if i.code in {"precondition.failed", "precondition.mismatch"}]
+             if i.code in {"precondition.failed", "precondition.mismatch",
+                           "precondition.already_present"}]
     assert fails, [i.message for i in plan.errors]
+
+
+def test_tweak_whose_goal_is_its_precondition_is_still_plannable(catalog, backend):
+    """Regression: power.scheme.high used to demand scheme == 'high' *before*
+    applying it, so it could never be fixed from the Balanced state."""
+    assert Preflight(catalog, backend).simulate(["power.scheme.high"]).ok
 
 
 def test_tier_blocked_when_not_enabled(catalog, backend):

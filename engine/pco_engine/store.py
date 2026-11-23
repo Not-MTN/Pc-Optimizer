@@ -11,19 +11,20 @@ import sqlite3
 import time
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
-def _schema_sql() -> str:
+def _sql(name: str) -> str:
     here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(here, "..", "schema.sql")
+    path = os.path.join(here, "..", name)
     with open(path, "r", encoding="utf-8") as fh:
         return fh.read()
 
 
 # (version, sql). Forward-only; a version is never edited after release.
 MIGRATIONS: list[tuple[int, str]] = [
-    (1, _schema_sql()),
+    (1, _sql("schema.sql")),
+    (2, _sql("schema_2.sql")),
 ]
 
 
@@ -33,7 +34,11 @@ class StoreError(RuntimeError):
 
 def connect(path: str) -> sqlite3.Connection:
     """Open (or create) a database with the production pragmas."""
-    conn = sqlite3.connect(path, isolation_level=None, timeout=5.0)
+    # check_same_thread=False: the service is shared by the HTTP bridge's worker
+    # threads. Callers serialise access (server._LOCK); this is about keeping
+    # multi-statement transactions in one logical order, not memory safety.
+    conn = sqlite3.connect(path, isolation_level=None, timeout=5.0,
+                           check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")

@@ -4,3 +4,6 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+pco_data/
+demo_machine/
+*.egg-info/

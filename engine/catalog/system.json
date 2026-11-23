@@ -38,7 +38,7 @@
       "blast_radius": "low",
       "preconditions": [
         {
-          "kind": "equals",
+          "kind": "not_equals",
           "what": "power:active_scheme",
           "value": "high"
         }
