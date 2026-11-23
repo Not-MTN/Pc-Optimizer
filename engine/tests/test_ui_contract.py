@@ -179,6 +179,21 @@ def test_every_view_has_a_title_entry():
     assert views <= titled, f"views with no title entry: {sorted(views - titled)}"
 
 
+def test_every_hub_card_has_a_description():
+    """A hub card with no blurb is an unlabelled button.
+
+    Found the hard way: `home` was added to GROUPS after BLURB was written, and
+    the card rendered with a title and an empty line under it.
+    """
+    text = _console_text()
+    blurb = re.search(r"const BLURB = \{(.*?)\n\};", text, re.S)
+    assert blurb, "could not find the BLURB map"
+    described = set(re.findall(r"^\s*([a-z]+):\s*\"", blurb.group(1), re.M))
+    views = [v for views in _groups(text).values() for v in views]
+    assert not (set(views) - described), (
+        f"hub cards with no description: {sorted(set(views) - described)}")
+
+
 def test_console_is_self_contained():
     """The preview iframe has no network: any external fetch would render blank."""
     text = _console_text()
