@@ -174,20 +174,21 @@ Ok "dist\Keel.exe  ($mb MB)"
 # ------------------------------------------------------------------- smoke
 Step 5 'Smoke test (does it actually launch?)'
 
-# `--version` first, and it is not ceremony: this exercises the frozen entry
-# point's MAIN path with output, and it is what caught a shipped exe dying with
+# `--version` first, and it is not ceremony: it exercises the frozen entry point
+# end to end through main(), which is what caught a shipped exe dying with
 #   ImportError: attempted relative import with no known parent package
 # The old smoke test only ran `--no-window`, which takes an early branch, so it
-# went green while the double-clicked app was broken. Test the branch a user
-# actually hits.
-$verOut = & $exe --version 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Warn "stdout/stderr from --version:"
-    $verOut | ForEach-Object { Write-Host "      $_" }
-    Fail "Keel.exe --version exited $LASTEXITCODE. The frozen entry point cannot import its own package."
+# went green while the double-clicked app was broken.
+#
+# A windowed exe (console=False) has no stdout, so `--version` legitimately
+# prints nothing. The EXIT CODE is the signal: 0 only if the entry point
+# imported its own package, ran, and returned. Requiring output here would be a
+# test that no windowed build could ever pass.
+$verProc = Start-Process -FilePath $exe -ArgumentList '--version' -PassThru -Wait
+if ($verProc.ExitCode -ne 0) {
+    Fail "Keel.exe --version exited $($verProc.ExitCode). The frozen entry point cannot import its own package - see <data>\crash.log."
 }
-if (-not ($verOut -join ' ').Trim()) { Fail 'Keel.exe --version printed nothing.' }
-Ok "version: $(($verOut -join ' ').Trim())"
+Ok 'entry point imports and exits cleanly (--version, code 0)'
 
 $before = Get-Process -Name Keel -ErrorAction SilentlyContinue
 $proc = Start-Process -FilePath $exe -ArgumentList '--no-window' -PassThru -WindowStyle Hidden
