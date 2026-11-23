@@ -34,10 +34,15 @@ $Root   = Split-Path -Parent $PSScriptRoot
 $Engine = Join-Path $Root 'engine'
 $Dist   = Join-Path $Root 'dist'
 
-function Step($n, $msg) { Write-Host "`n[$n] $msg" -ForegroundColor Cyan }
+function Step($n, $msg) { Write-Host "`n[$n] $msg" -ForegroundColor Cyan; $script:CurrentStep = "$n · $msg" }
 function Ok($msg)       { Write-Host "    OK  $msg" -ForegroundColor Green }
 function Warn($msg)     { Write-Host "    !   $msg" -ForegroundColor Yellow }
-function Fail($msg)     { Write-Host "    X   $msg" -ForegroundColor Red; exit 1 }
+function Fail($msg) {
+    Write-Host "    X   $msg" -ForegroundColor Red
+    if ($script:CurrentStep) { Write-Host "    X   while in step: $script:CurrentStep" -ForegroundColor Red }
+    Write-Host "    X   (CI: the last 60 lines of this log are printed above the failure)"
+    exit 1
+}
 
 function Find-Python {
     foreach ($c in @('py -3', 'python')) {
@@ -102,14 +107,22 @@ if (-not $havePyInstaller) {
 Ok 'PyInstaller available'
 
 $iscc = $null
-foreach ($p in @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-                 "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
-                 "${env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe")) {
+# $env:X returns $null when unset; ${env:X} raises under StrictMode. This script
+# runs with StrictMode Latest, so the difference is a hard crash.
+$isccCandidates = @()
+if ($env:ProgramFiles) { $isccCandidates += "$env:ProgramFiles\Inno Setup 6\ISCC.exe" }
+$pf86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')   # safe under StrictMode
+if ($pf86) { $isccCandidates += "$pf86\Inno Setup 6\ISCC.exe" }
+if ($env:LOCALAPPDATA) { $isccCandidates += "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" }
+$isccCandidates += @(Get-ChildItem 'C:\Program Files*\Inno Setup 6\ISCC.exe' -ErrorAction SilentlyContinue |
+                     ForEach-Object { $_.FullName })
+foreach ($p in $isccCandidates) {
     if (Test-Path $p) { $iscc = $p; break }
 }
 if (-not $SkipInstaller -and -not $iscc) {
-    Warn 'Inno Setup 6 not found — Keel.exe will still be built.'
-    Warn 'Install it from jrsoftware.org/isdl.php to get the installer.'
+    Warn 'Inno Setup 6 not found — Keel.exe will still be built, without an installer.'
+    foreach ($c in $isccCandidates) { Warn "      looked in: $c" }
+    Warn 'Install it from jrsoftware.org/isdl.php (or `choco install innosetup`) to get the installer.'
     $SkipInstaller = $true
 }
 if ($iscc) { Ok "Inno Setup: $iscc" }

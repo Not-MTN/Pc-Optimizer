@@ -91,9 +91,15 @@ jobs:
           $ErrorActionPreference = 'Continue'
           ./packaging/build.ps1 -SkipTests *>&1 | Tee-Object -FilePath build.log
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::group::build.log tail"
-            Get-Content build.log -Tail 60
-            Write-Host "::endgroup::"
+            # The job log is only reachable through blob storage, which some
+            # clients cannot read. An ::error:: annotation is served by the API
+            # itself, so the reason travels even when the log does not.
+            $lines = @(Get-Content build.log)
+            $tail = ($lines | Select-Object -Last 10) -join " / "
+            if ($tail.Length -gt 850) { $tail = $tail.Substring(0, 850) }
+            Write-Output "::error title=build.ps1 failed::$tail"
+            Write-Output "---- last 60 lines ----"
+            $lines | Select-Object -Last 60 | ForEach-Object { Write-Output $_ }
             exit $LASTEXITCODE
           }
 
