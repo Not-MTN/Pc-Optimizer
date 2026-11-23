@@ -189,6 +189,26 @@ class Engine:
         self._close_tx(tx_id, "committed")
 
     # ================================================================== revert
+    @staticmethod
+    def _value_name_for(tweak_id: str) -> str | None:
+        """Recover the registry value name for a customization journal row.
+
+        The journal stores `address -> old value`, and the address is a *key*.
+        Ten Explorer settings share one key, so undoing without the value name
+        would restore the wrong one — or the right one only by luck. The tweak id
+        already records `shell:<option>`, so the answer is looked up from the one
+        table that defines it. No schema change, and no second copy of the data.
+        """
+        if not tweak_id.startswith("shell:"):
+            return None
+        key = tweak_id[len("shell:"):]
+        try:
+            from .shell_lab import SHELL, TASKBAR
+            spec = TASKBAR.get(key) or SHELL.get(key)
+        except Exception:                # noqa: BLE001 - never fail an undo on this
+            return None
+        return spec["value"] if spec else None
+
     def revert(self, tx_id: str, *, reason: str = "user") -> Reverted:
         rows = self.journal.entries(tx_id)
         if not rows:
@@ -200,16 +220,17 @@ class Engine:
         for entry in reversed(rows):
             if entry.phase not in {"begin", "applied", "verified"}:
                 continue
+            vname = self._value_name_for(entry.tweak_id)
             for address, old in entry.prestate.items():
                 try:
-                    current = self._read(address)
+                    current = self._read(address, value_name=vname)
                     if old is None:
                         if current is not None:
                             self._remove(address)
                             undone += 1
                     else:
                         if not values_equal(current, old):
-                            self.backend.write(address, old)
+                            self._write(address, old, value_name=vname)
                             undone += 1
                     with self.conn:
                         self.conn.execute("DELETE FROM managed WHERE address=?", (address,))
@@ -331,16 +352,29 @@ class Engine:
         return expired
 
     # ================================================================= helpers
-    def _read(self, address: str) -> Any:
+    def _read(self, address: str, *, value_name: str | None = None) -> Any:
         """Read the *effective* value. `settled_read` lets a backend model
         policy overrides (e.g. group policy re-imposing a value)."""
         settled = getattr(self.backend, "settled_read", None)
+        fn = settled if settled is not None else self.backend.read
+        if not hasattr(self, "_supports_value_names"):
+            self._supports_value_names = True
         try:
-            if settled is not None:
-                return settled(address)
-            return self.backend.read(address)
+            if self._supports_value_names:
+                try:
+                    return fn(address, value_name=value_name)
+                except TypeError:
+                    # A backend that does not model multi-value keys at all.
+                    self._supports_value_names = False
+            return fn(address)
         except BackendError:
             return None
+
+    def _write(self, address: str, value: Any, *, value_name: str | None = None) -> None:
+        try:
+            self.backend.write(address, value, value_name=value_name)
+        except TypeError:
+            self.backend.write(address, value)
 
     def _close_tx(self, tx_id: str, state: str, note: str | None = None) -> None:
         with self.conn:
@@ -361,6 +395,101 @@ class Engine:
             "dns_policy": 9, "app_setting": 10, "file_write": 11, "file_delete": 12,
         }
         return sorted(effects, key=lambda e: (order.get(e.kind, 99), e.address))
+
+    # ============================================================ customization
+    def apply_customization(self, changes: list[dict[str, Any]], *,
+                            source: str = "shell",
+                            note: str | None = None) -> Applied:
+        """Apply (address, value) pairs that have no catalog tweak behind them.
+
+        Desktop customization is a different shape of change from a curated tweak:
+        there is no preflight to run because there is nothing to conflict with —
+        each value governs one thing and one thing only. That does *not* mean it
+        skips the journal. It goes through the same begin → write → applied →
+        verified → managed path, so the same one-click undo works on a taskbar
+        alignment exactly as it does on a service start type.
+
+        `kind` is reported as "cosmetic" so History can show it honestly:
+        these change how the machine looks, never how fast it is.
+        """
+        if not changes:
+            raise EngineError("nothing to customize")
+
+        effects = [
+            PlannedEffect(
+                address=c["address"],
+                kind="registry_value",
+                target=c["address"].split(":", 1)[-1],
+                old=c.get("previous"),
+                new=c["value"],
+                tweak_id=f"shell:{c.get('key', c['address'])}")
+            for c in changes
+        ]
+        # The value name travels alongside the effect. Keyed by *tweak id*, not by
+        # address: ten Explorer settings share one address, so an address-keyed
+        # map would keep only the last one and silently write two settings to the
+        # same registry value.
+        value_names = {
+            f"shell:{c.get('key', c['address'])}": c.get("value_name")
+            for c in changes
+        }
+
+        tx_id = new_id()
+        self.journal.ensure_transaction(tx_id, kind="cosmetic",
+                                        source=source,
+                                        note=note or "desktop customization")
+        written = 0
+        for eff in effects:
+            pre = {eff.address: eff.old}
+            self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id,
+                                phase="begin", prestate=pre,
+                                poststate={eff.address: eff.new})
+            try:
+                self._write(eff.address, eff.new,
+                            value_name=value_names.get(eff.tweak_id))
+            except BackendError as exc:
+                self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id,
+                                    phase="failed", prestate=pre,
+                                    poststate={eff.address: eff.new},
+                                    error=str(exc))
+                self._close_tx(tx_id, "failed", note=str(exc))
+                if written:
+                    self._rollback(tx_id, [eff.address])
+                raise EngineError(
+                    f"{eff.tweak_id} failed: {exc}") from exc
+
+            self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id,
+                                phase="applied", prestate=pre,
+                                poststate={eff.address: eff.new})
+            actual = self._read(eff.address,
+                                value_name=value_names.get(eff.tweak_id))
+            if not values_equal(actual, eff.new):
+                # Some values (TaskbarGlomLevel on 24H2) are accepted and then
+                # ignored. Report that instead of pretending it stuck.
+                self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id,
+                                    phase="failed", prestate=pre,
+                                    poststate={eff.address: actual},
+                                    error="value did not stick")
+                continue
+            self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id,
+                                phase="verified", prestate=pre,
+                                poststate={eff.address: actual})
+            with self.conn:
+                self.conn.execute(
+                    "INSERT INTO managed(address,expected_json,applied_by,updated_at) "
+                    "VALUES(?,?,?,?) ON CONFLICT(address) DO UPDATE SET "
+                    "expected_json=excluded.expected_json, "
+                    "applied_by=excluded.applied_by, updated_at=excluded.updated_at",
+                    (eff.address, _canon(eff.new), tx_id, self.clock()))
+            written += 1
+
+        if written:
+            self._close_tx(tx_id, "committed")
+        else:
+            self._close_tx(tx_id, "failed", note="no value was accepted")
+        return Applied(tx_id=tx_id, tweak_ids=[e.tweak_id for e in effects],
+                       effects=effects if written else [], snapshot_id=None,
+                       needs_reboot=False, armed_until=None)
 
     # ---------------------------------------------------------------- factory
     @classmethod

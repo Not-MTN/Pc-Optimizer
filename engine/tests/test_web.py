@@ -510,3 +510,75 @@ def test_bridge_boot_status_and_panic(live_server):
 def test_bridge_safety_pending_is_honest_when_empty(live_server):
     out = _get(live_server, "/api/safety")
     assert isinstance(out["pending"], list)
+
+
+# --------------------------------------------------- desktop lab over the wire
+
+def test_bridge_shell_offers_only_what_windows_supports(live_server):
+    out = _get(live_server, "/api/shell")
+    assert out["supported"] >= 12
+    assert out["refused"] >= 4
+    refused = [o for o in out["options"] if not o["supported"]]
+    assert all(len(o["plain"]) > 60 for o in refused), (
+        "a refusal that does not explain itself is just a missing feature")
+    supported = [o for o in out["options"] if o["supported"]]
+    assert all(o["address"].startswith("registry:hkcu\\") for o in supported), (
+        "desktop preferences are per-user; writing HKLM would need elevation "
+        "for something that is a matter of taste")
+
+
+def test_bridge_shell_preview_writes_nothing(live_server):
+    before = _get(live_server, "/api/shell")
+    align = next(o for o in before["options"] if o["key"] == "taskbar.align")
+    out = _post(live_server, "/api/shell/preview",
+                {"settings": {"taskbar.align": "left"}})[1]
+    assert out["ok"] is True
+    assert out["changes"][0]["value"] == 0
+    after = _get(live_server, "/api/shell")
+    still = next(o for o in after["options"] if o["key"] == "taskbar.align")
+    assert still["current"] == align["current"], "preview must not write"
+
+
+def test_bridge_shell_apply_then_undo_round_trips(live_server):
+    out = _post(live_server, "/api/shell/apply",
+                {"settings": {"taskbar.align": "left"}})[1]
+    assert out["applied"] is True
+    current = [o for o in _get(live_server, "/api/shell")["options"]
+               if o["key"] == "taskbar.align"][0]["current"]
+    assert current == "left"
+
+    _post(live_server, "/api/undo", {"tx_id": out["tx_id"]})
+    back = [o for o in _get(live_server, "/api/shell")["options"]
+            if o["key"] == "taskbar.align"][0]["current"]
+    assert back == "center"
+
+
+def test_bridge_refuses_a_taskbar_position_change_with_a_reason(live_server):
+    out = _post(live_server, "/api/shell/apply",
+                {"settings": {"taskbar.position": "top"}})[1]
+    assert out["applied"] is False
+    assert "Windows 11" in out["refused"][0]["reason"]
+
+
+def test_bridge_shell_theme_save_and_import(live_server):
+    saved = _post(live_server, "/api/shell/theme/save",
+                  {"name": "Bridge Theme",
+                   "settings": {"taskbar.widgets": "off"}})[1]
+    assert saved["saved"] is True
+    names = [t["name"] for t in _get(live_server, "/api/shell/themes")["themes"]]
+    assert "Bridge Theme" in names
+
+    bad = _post(live_server, "/api/shell/theme/import",
+                {"doc": {"name": "nope", "settings": {"bogus.key": 1}}})[1]
+    assert bad["imported"] is False
+    assert bad["problems"]
+
+
+def test_bridge_prompt_identity_names_its_evidence(live_server):
+    out = _post(live_server, "/api/shell/prompt", {"command": "gh pr list"})[1]
+    assert out["key"] == "github"
+    assert out["glyph"], "the mark must be present when the provider is known"
+    assert out["evidence"]
+
+    vague = _get(live_server, "/api/shell/prompt")
+    assert vague["confidence"] in {"confirmed", "likely", "none"}

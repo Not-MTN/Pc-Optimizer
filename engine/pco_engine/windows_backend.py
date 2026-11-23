@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Protocol
 
 from .backend import BackendError
+from .windows_notes import FORCE_64BIT_VIEW
 
 # --------------------------------------------------------------------- status
 CERTIFIED_IN_CI = ("registry", "service", "task", "power", "file")
@@ -221,6 +222,62 @@ REGISTRY: dict[str, RegSpec] = {
         native={"required": 1, "basic": 1, "enhanced": 2, "full": 3}),
 }
 
+# ================================================== multi-value Explorer keys
+#
+# `HKCU\...\Explorer\Advanced` is one key holding ten unrelated settings:
+# TaskbarAl, TaskbarDa, HideFileExt, Hidden, ShowTaskViewButton... An address
+# names the *key*, but `write(address, value)` has nowhere to put the value name.
+#
+# The honest fix is not to invent one value name and hope. It is a small,
+# explicit table keyed by the (key, value) pair the desktop lab already knows —
+# so this file holds no duplicate copy of the option list, and the two can be
+# cross-checked by a test.
+MULTI_VALUE_KEYS: dict[str, dict[str, tuple[str, str]]] = {
+    # address -> {value name (lowercased): (canonical name, kind)}
+    "registry:hkcu\\software\\microsoft\\windows\\currentversion\\explorer\\advanced": {
+        "taskbaral": ("TaskbarAl", "dword"),
+        "taskbarda": ("TaskbarDa", "dword"),
+        "taskbarmn": ("TaskbarMn", "dword"),
+        "showtaskviewbutton": ("ShowTaskViewButton", "dword"),
+        "taskbarglomlevel": ("TaskbarGlomLevel", "dword"),
+        "taskbarsmallicons": ("TaskbarSmallIcons", "dword"),
+        "hidefileext": ("HideFileExt", "dword"),
+        "hidden": ("Hidden", "dword"),
+        "enablesnapassistflyout": ("EnableSnapAssistFlyout", "dword"),
+        "taskbaranimations": ("TaskbarAnimations", "dword"),
+    },
+    "registry:hkcu\\software\\microsoft\\windows\\currentversion\\search": {
+        "searchboxtaskbarmode": ("SearchboxTaskbarMode", "dword"),
+        "bingsearchenabled": ("BingSearchEnabled", "dword"),
+    },
+    "registry:hkcu\\software\\microsoft\\windows\\currentversion\\themes\\personalize": {
+        "enabletransparency": ("EnableTransparency", "dword"),
+        "colorprevalence": ("ColorPrevalence", "dword"),
+        "appsuselighttheme": ("AppsUseLightTheme", "dword"),
+        "systemuseslighttheme": ("SystemUsesLightTheme", "dword"),
+    },
+}
+
+# Which value inside a multi-value key a *bare* address means when the caller has
+# not named one. There has to be a defensible answer for `read()`, and there is:
+# the one setting the address is most often used for. The desktop lab always
+# names its value explicitly, so this default only affects ad-hoc reads.
+MULTI_VALUE_DEFAULT = {
+    "registry:hkcu\\software\\microsoft\\windows\\currentversion\\explorer\\advanced":
+        "TaskbarAl",
+    "registry:hkcu\\software\\microsoft\\windows\\currentversion\\search":
+        "SearchboxTaskbarMode",
+    "registry:hkcu\\software\\microsoft\\windows\\currentversion\\themes\\personalize":
+        "AppsUseLightTheme",
+}
+
+# The icon keys: same shape, but string values.
+ICON_VALUE_NAMES = {
+    "registry:hkcu\\software\\microsoft\\windows\\currentversion\\explorer\\clsid"
+    r"\{645ff040-5081-101b-9f08-00aa002f954e}\defaulticon": ("Full", "Empty"),
+}
+
+
 COMMANDS: dict[str, CmdSpec] = {
     "power:active_scheme": CmdSpec(_power_read, _power_write),
     "task:\\microsoft\\office\\officebackgroundtaskhandler.state": CmdSpec(
@@ -244,6 +301,45 @@ UNSERVICED: dict[str, str] = {
         "deferral needs the PCO launcher installed; this build will not rewrite "
         "a Run entry it cannot then honour",
 }
+
+
+_PATH_CACHE: dict[str, str] = {}
+
+
+def _real_path(address: str) -> str:
+    """The properly-cased path for a lowercased address.
+
+    Windows is case-insensitive, so this is cosmetic — but a path that appears in
+    an error message as `explorer\\advanced` reads like a typo, and this file's
+    whole job is being unambiguous.
+    """
+    if address in _PATH_CACHE:
+        return _PATH_CACHE[address]
+    body = address.split(":", 1)[-1]
+    _hive, _, path = body.partition("\\")
+    parts = {
+        "software": "SOFTWARE", "microsoft": "Microsoft", "windows": "Windows",
+        "currentversion": "CurrentVersion", "explorer": "Explorer",
+        "advanced": "Advanced", "search": "Search", "themes": "Themes",
+        "personalize": "Personalize", "system": "SYSTEM",
+        "currentcontrolset": "CurrentControlSet", "services": "Services",
+        "lanmanserver": "LanmanServer", "parameters": "Parameters",
+        "policies": "Policies", "datacollection": "DataCollection",
+        "acme": "Acme", "telemetry": "Telemetry", "clsid": "CLSID",
+        "defaulticon": "DefaultIcon",
+    }
+    out = []
+    for part in path.split("\\"):
+        lowered = part.lower()
+        if lowered in parts:
+            out.append(parts[lowered])
+        elif part.startswith("{") and part.endswith("}"):
+            out.append(part.upper())          # CLSIDs are conventionally upper
+        else:
+            out.append(part)
+    result = "\\".join(out)
+    _PATH_CACHE[address] = result
+    return result
 
 
 def parse_registry(address: str) -> tuple[RegSpec | None, str]:
@@ -286,8 +382,9 @@ class WinregRegistry:
     def _hive(self, hive: str) -> Any:
         return self._w.HKEY_LOCAL_MACHINE if hive == HKLM else self._w.HKEY_CURRENT_USER
 
-    # 64-bit view explicitly: a 32-bit Python would otherwise read the WOW6432Node
-    # copy of these policies and report values that do not govern anything.
+    # 64-bit view explicitly (windows_notes.FORCE_64BIT_VIEW): a 32-bit Python on
+    # 64-bit Windows otherwise reads the WOW6432Node copy of these policies — a
+    # different set of values that governs nothing.
     _ACCESS = 0x0100 | 0x0200 | 0x0001 | 0x0002 | 0x0004   # READ|WRITE|QUERY|SET|CREATE
 
     def get(self, hive: str, path: str, name: str) -> tuple[Any, int] | None:
@@ -408,10 +505,10 @@ class WindowsBackend:
         }
 
     # -- the protocol ------------------------------------------------------
-    def read(self, address: str) -> Any:
+    def read(self, address: str, *, value_name: str | None = None) -> Any:
         spec = REGISTRY.get(address)
         if spec is not None or address.startswith("registry:"):
-            return self._read_registry(address)
+            return self._read_registry(address, value_name)
         cmd = COMMANDS.get(address)
         if cmd is not None:
             return cmd.read(self._run, address)
@@ -434,9 +531,9 @@ class WindowsBackend:
         except BackendError:
             return False
 
-    def write(self, address: str, value: Any) -> None:
+    def write(self, address: str, value: Any, *, value_name: str | None = None) -> None:
         if address.startswith("registry:"):
-            self._write_registry(address, value)
+            self._write_registry(address, value, value_name=value_name)
         elif address in COMMANDS:
             COMMANDS[address].write(self._run, address, value)
         elif address.startswith("service:") and address.endswith(SERVICE_SUFFIX):
@@ -479,7 +576,10 @@ class WindowsBackend:
         return self.read(address)
 
     # -- registry ----------------------------------------------------------
-    def _read_registry(self, address: str) -> Any:
+    def _read_registry(self, address: str, value_name: str | None = None) -> Any:
+        multi = MULTI_VALUE_KEYS.get(address)
+        if multi is not None:
+            return self._read_multi(address, multi, value_name)
         spec, canonical = parse_registry(address)
         if spec is None:
             raise BackendError(
@@ -492,13 +592,65 @@ class WindowsBackend:
         raw, _kind = got
         return spec.to_app(raw)
 
-    def _write_registry(self, address: str, value: Any) -> None:
+    def _write_registry(self, address: str, value: Any, *, value_name: str | None = None) -> None:
+        multi = MULTI_VALUE_KEYS.get(address)
+        if multi is not None:
+            self._write_multi(address, multi, value, value_name)
+            return
         spec, canonical = parse_registry(address)
         if spec is None:
             raise BackendError(f"{canonical}: no mapping in this build")
         native = spec.to_native(value)
         kind = 4 if spec.kind == "dword" else 1          # 4 = REG_DWORD, 1 = REG_SZ
         self._reg.set(spec.hive, spec.path, spec.name, native, kind)
+
+    # -- multi-value keys --------------------------------------------------
+    @staticmethod
+    def _emit_value_name(address: str, value_name: str | None,
+                         multi: dict[str, tuple[str, str]]) -> str:
+        """Resolve which value inside a shared key is meant.
+
+        A bare address gets the documented default; a named one must exist in the
+        table, because writing a value name that Windows does not use would store
+        bytes that govern nothing and then read back as "applied".
+        """
+        if value_name is None:
+            default = MULTI_VALUE_DEFAULT.get(address)
+            if default is None:
+                raise BackendError(
+                    f"{address}: this key holds several values; name the one you "
+                    f"mean ({sorted(v[0] for v in multi.values())})")
+            return default
+        # The table is keyed by the lowercased value name (Windows names are
+        # case-insensitive); accept either spelling from the caller.
+        entry = multi.get(value_name.lower())
+        if entry is None:
+            entry = next((v for v in multi.values() if v[0] == value_name), None)
+        if entry is None:
+            raise BackendError(
+                f"{address}: {value_name!r} is not a value of this key "
+                f"(known: {sorted(v[0] for v in multi.values())})")
+        return entry[0]
+
+    def _read_multi(self, address: str, multi: dict[str, tuple[str, str]],
+                    value_name: str | None) -> Any:
+        name = self._emit_value_name(address, value_name, multi)
+        body = address[len("registry:"):]
+        hive, _, path = body.partition("\\")
+        if hive != HKCU:
+            raise BackendError(f"{address}: multi-value keys here are per-user only")
+        got = self._reg.get(HKCU, _real_path(address), name)
+        if got is None:
+            raise BackendError(f"address does not exist: {address}\\{name}")
+        return got[0]
+
+    def _write_multi(self, address: str, multi: dict[str, tuple[str, str]],
+                     value: Any, value_name: str | None) -> None:
+        name = self._emit_value_name(address, value_name, multi)
+        if not isinstance(value, int):
+            raise BackendError(
+                f"{address}\\{name}: expected a dword, got {value!r}")
+        self._reg.set(HKCU, _real_path(address), name, int(value), 4)
 
     def _service_name(self, address: str) -> str:
         body = address[len("service:"):]

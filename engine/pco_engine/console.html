@@ -215,6 +215,10 @@
     <button class="nav" data-view="recipes" title="Recipes">
       <svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/><path d="M9 8h6"/></svg>
     </button>
+    <button class="nav" data-view="shell" title="Desktop Lab">
+      <svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="12" rx="2"/>
+        <path d="M2.5 12.5h19"/><path d="M8 20h8"/><path d="M12 16v4"/></svg>
+    </button>
     <div class="spacer"></div>
     <button class="nav" id="refresh" title="Refresh (R)">
       <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.3 5.7"/><path d="M20 5v6h-6"/></svg>
@@ -715,6 +719,57 @@
       </div>
     </section>
 
+    <!-- ============ DESKTOP LAB ============ -->
+    <section class="sect" id="view-shell">
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>Change these</h2>
+          <div class="sub" style="margin-bottom:10px" id="shellIntro">Reading the taskbar…</div>
+          <div id="shellList"><div class="empty">Loading.</div></div>
+          <div class="row" style="margin-top:12px">
+            <button class="btn primary" id="shellApply">Apply changes</button>
+            <button class="btn ghost" id="shellReset">Reset to default</button>
+            <span class="sub" id="shellNote"></span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Windows says no</h2>
+          <div class="sub" style="margin-bottom:8px">
+            Refused on purpose, with the reason. A toggle that does nothing is worse than a no.
+          </div>
+          <div id="shellRefused"><div class="empty">—</div></div>
+        </div>
+      </div>
+      <div class="grid g2" style="margin-bottom:16px">
+        <div class="card">
+          <h2>Terminal look</h2>
+          <div class="sub" style="margin-bottom:10px">What Windows Terminal will be set to.</div>
+          <div class="kv" id="shellTerm"></div>
+          <div class="sub" id="shellTermNote" style="margin-top:10px"></div>
+        </div>
+        <div class="card">
+          <h2>Prompt identity</h2>
+          <div class="row" style="gap:12px;margin-bottom:10px">
+            <span id="promptGlyph" style="width:34px;height:34px;display:inline-block"></span>
+            <div>
+              <div class="big" id="promptName" style="font-size:20px;margin:0">—</div>
+              <div class="sub" id="promptEvidence">—</div>
+            </div>
+          </div>
+          <div class="sub" id="promptNote"></div>
+          <div id="promptList" class="kv" style="margin-top:10px"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Saved themes</h2>
+        <div class="row" style="margin-bottom:10px">
+          <input id="shellThemeName" placeholder="Name this theme" style="max-width:240px">
+          <button class="btn ghost" id="shellThemeSave">Save current</button>
+        </div>
+        <div id="shellThemes"><div class="empty">No themes saved.</div></div>
+      </div>
+    </section>
+
     <div class="toast" id="toast"></div>
 
     <div class="scrim" id="palScrim">
@@ -775,7 +830,8 @@ const TITLES = { home: ["Overview", "Everything the Guardian engine knows, live.
   battery: ["Battery & Heat", "Percent of design capacity, attributed drain, real throttle events."],
   workspaces: ["Workspaces", "Save what is open. Restore it later — preview first, always."],
   drivers: ["Driver Manager", "Graded by this machine's crashes, never by a website's opinion."],
-  recipes: ["Recipes", "One sentence in, one preview out. Nothing runs until you save it."] };
+  recipes: ["Recipes", "One sentence in, one preview out. Nothing runs until you save it."],
+  shell: ["Desktop Lab", "Taskbar, icons, theme and prompt — what Windows actually allows."] };
 function show(view) {
   document.querySelectorAll(".sect").forEach((s) => s.classList.remove("on"));
   $("#view-" + view).classList.add("on");
@@ -794,6 +850,7 @@ function show(view) {
   if (view === "workspaces") loadWorkspaces();
   if (view === "drivers") loadDrivers();
   if (view === "recipes") loadRecipes();
+  if (view === "shell") loadShell();
 }
 
 /* ---------------------------------------------------------------- render */
@@ -2031,6 +2088,193 @@ async function saveSentence() {
   busy(btn, false);
 }
 
+/* ------------------------------------------------------------- desktop lab */
+let SHELL_STATE = { options: [], choices: {} };
+
+const svgFor = (glyph, color, size) => {
+  const wrap = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  wrap.setAttribute("viewBox", "0 0 24 24");
+  wrap.setAttribute("width", size || 22);
+  wrap.setAttribute("height", size || 22);
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", glyph);
+  path.setAttribute("fill", color);
+  wrap.append(path);
+  return wrap;
+};
+
+async function loadShell() {
+  try {
+    const d = await api("/api/shell");
+    SHELL_STATE.options = d.options;
+    $("#shellIntro").textContent = d.supported + " supported on Windows 11 · " +
+      d.refused + " refused, with the reason below.";
+
+    const list = $("#shellList"); list.replaceChildren();
+    const supported = d.options.filter((o) => o.supported);
+    const groups = {};
+    supported.forEach((o) => { (groups[o.group] = groups[o.group] || []).push(o); });
+    Object.entries(groups).forEach(([group, items]) => {
+      list.append(el("h3", null, group === "taskbar" ? "Taskbar" : "Windows & Explorer"));
+      items.forEach((o) => {
+        const row = el("div", "row between");
+        row.style.padding = "7px 0";
+        row.style.borderBottom = "1px solid #1c222c";
+        const left = el("div");
+        left.style.flex = "1";
+        const label = el("div", null, o.label.replace(/^\w/, (c) => c.toUpperCase()));
+        label.style.fontWeight = "600";
+        left.append(label, el("div", "sub", o.plain));
+        if (o.caveat) {
+          const c = el("div", "sub warn", o.caveat);
+          left.append(c);
+        }
+        const sel = el("select");
+        sel.style.maxWidth = "150px";
+        o.options.forEach((opt) => {
+          const op = el("option", null, opt);
+          op.value = opt;
+          if (opt === (SHELL_STATE.choices[o.key] || o.current || o.default)) op.selected = true;
+          sel.append(op);
+        });
+        sel.onchange = () => { SHELL_STATE.choices[o.key] = sel.value; };
+        SHELL_STATE.choices[o.key] = SHELL_STATE.choices[o.key] || o.current ||
+          o.default || o.options[0];
+        row.append(left, sel);
+        list.append(row);
+      });
+    });
+
+    const refused = $("#shellRefused"); refused.replaceChildren();
+    d.options.filter((o) => !o.supported).forEach((o) => {
+      const row = el("div");
+      row.style.marginBottom = "10px";
+      row.append(el("div", "tag review", o.key));
+      const p = el("p", null, o.plain);
+      p.style.fontSize = "12px";
+      row.append(p);
+      refused.append(row);
+    });
+
+    const t = d.terminal || {};
+    const tk = $("#shellTerm"); tk.replaceChildren();
+    const defaults = (t["profiles.defaults"] || {});
+    tk.append(el("b", null, "Font"), el("span", null,
+      (defaults.font && defaults.font.face) + " " + (defaults.font && defaults.font.size) + "pt"));
+    tk.append(el("b", null, "Cursor"), el("span", null, defaults.cursorShape || "—"));
+    tk.append(el("b", null, "Opacity"), el("span", null, defaults.opacity + "%"));
+    tk.append(el("b", null, "Acrylic"), el("span", null, defaults.useAcrylic ? "on" : "off"));
+    $("#shellTermNote").textContent = t.note || "";
+
+    await loadShellThemes();
+    await loadPrompt();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function loadPrompt() {
+  try {
+    const p = await api("/api/shell/prompt");
+    const holder = $("#promptGlyph");
+    holder.replaceChildren();
+    if (p.glyph) holder.append(svgFor(p.glyph, p.color, 34));
+    $("#promptName").textContent = p.name;
+    $("#promptEvidence").textContent = p.confidence === "confirmed"
+      ? "Confirmed · " + p.evidence
+      : p.confidence === "likely" ? "Likely · " + p.evidence
+      : p.evidence;
+    $("#promptNote").textContent = p.key
+      ? "The mark appears only because a remote, a token or a CLI named this provider. " +
+        "A folder called github-tools with no remote would not light it up."
+      : "No provider detected. The prompt shows nothing rather than guessing.";
+    const list = $("#promptList");
+    list.replaceChildren();
+    const cat = await api("/api/shell/prompt", { command: "gh" });
+    if (cat && cat.key) {
+      list.append(el("b", null, "Running " + cat.name + " CLI"),
+                  el("span", null, "would switch the prompt to " + cat.name +
+                    " even without a remote"));
+    }
+  } catch (err) { /* non-fatal: the view still works */ }
+}
+
+async function applyShell() {
+  const btn = $("#shellApply");
+  busy(btn, true);
+  try {
+    const preview = await api("/api/shell/preview", { settings: SHELL_STATE.choices });
+    if (preview.problems && preview.problems.length) {
+      toast(preview.problems[0], true);
+      busy(btn, false);
+      return;
+    }
+    if (!preview.changes.length) {
+      toast(preview.summary || "Nothing to change.");
+      busy(btn, false);
+      return;
+    }
+    const out = await api("/api/shell/apply", { settings: SHELL_STATE.choices });
+    if (!out.applied) { toast((out.problems || ["Refused"])[0], true); busy(btn, false); return; }
+    toast(out.summary + " · undo is one click");
+    $("#shellNote").textContent = out.explorer && out.explorer.reason
+      ? out.explorer.reason : "";
+    await refreshAll();
+    await loadShell();
+  } catch (err) { toast(err.message, true); }
+  busy(btn, false);
+}
+
+function resetShell() {
+  SHELL_STATE.options.forEach((o) => {
+    if (o.supported && o.default) SHELL_STATE.choices[o.key] = o.default;
+  });
+  $("#shellNote").textContent = "Defaults selected — press Apply to write them.";
+  loadShell();
+}
+
+async function loadShellThemes() {
+  try {
+    const d = await api("/api/shell/themes");
+    const box = $("#shellThemes"); box.replaceChildren();
+    if (!d.themes.length) {
+      box.append(el("div", "empty", "No themes saved. Set things up, then name it."));
+      return;
+    }
+    d.themes.forEach((t) => {
+      const row = el("div", "finding");
+      row.style.animation = "none";
+      const body = el("div"); body.style.flex = "1";
+      body.append(el("h3", null, t.name));
+      body.append(el("p", null, Object.entries(t.settings)
+        .map(([k, v]) => k.split(".")[1] + " = " + v).join(" · ")));
+      const use = el("button", "btn primary", "Apply");
+      use.onclick = async () => {
+        busy(use, true);
+        try {
+          const out = await api("/api/shell/apply", { settings: t.settings });
+          toast(out.summary);
+          await loadShell();
+        } catch (err) { toast(err.message, true); }
+        busy(use, false);
+      };
+      row.append(body, use);
+      box.append(row);
+    });
+  } catch (err) { toast(err.message, true); }
+}
+
+async function saveShellTheme() {
+  const name = $("#shellThemeName").value.trim();
+  if (!name) { toast("Give the theme a name first.", true); return; }
+  try {
+    const out = await api("/api/shell/theme/save",
+      { name: name, settings: SHELL_STATE.choices });
+    if (!out.saved) { toast((out.problems || [])[0] || "Not saved", true); return; }
+    toast(out.summary);
+    $("#shellThemeName").value = "";
+    await loadShellThemes();
+  } catch (err) { toast(err.message, true); }
+}
+
 /* ------------------------------------------------------------------ panic */
 async function panic() {
   if (!confirm("Undo every active change, disable all recipes and turn blocking off?")) return;
@@ -2119,6 +2363,9 @@ $("#palScrim").addEventListener("click", (e) => {
 });
 $("#autopsyBegin").addEventListener("click", beginAutopsy);
 $("#panicBtn").addEventListener("click", panic);
+$("#shellApply").addEventListener("click", applyShell);
+$("#shellReset").addEventListener("click", resetShell);
+$("#shellThemeSave").addEventListener("click", saveShellTheme);
 $("#wsCapture").addEventListener("click", captureWorkspace);
 $("#recipeParse").addEventListener("click", parseSentence);
 $("#recipeSave").addEventListener("click", saveSentence);

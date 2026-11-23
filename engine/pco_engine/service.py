@@ -28,6 +28,8 @@ from .nlrecipe import parse as parse_recipe
 from .palette import Palette
 from .peripheral import PeripheralLab
 from .power import BatteryReading, Power
+from .providers import Identity, detect as detect_provider
+from .shell_lab import ShellLab
 from .report import Report, build as build_report, to_html, to_markdown
 from .space import Space
 from .startup import BootReport, StartupItem, StartupSurgeon
@@ -121,6 +123,7 @@ class Service:
         self.ask = Ask(self)
         self.guard = Guard(self)
         self.power = Power(self.conn, self.clock, reader=DEMO_BATTERY if self._demo else None)
+        self.shell = ShellLab(self.backend, self.clock)
         self.workspaces = Workspaces(self.conn, self.clock)
         self.drivers = DriverManager(
             self.conn, self.clock,
@@ -586,6 +589,116 @@ class Service:
             scored.append({**d, "score": s})
         return {"drivers": scored, "blocks": self.drivers.blocks()}
 
+    # ================================================================ shell lab
+    def shell_options(self) -> dict[str, Any]:
+        opts = self.shell.options()
+        return {"options": opts,
+                "supported": sum(1 for o in opts if o["supported"]),
+                "refused": sum(1 for o in opts if not o["supported"]),
+                "terminal": self.shell.terminal_settings(),
+                "icons": sorted(__import__("pco_engine.shell_lab", fromlist=["ICON_KEYS"]).ICON_KEYS)}
+
+    def shell_preview(self, desired: dict[str, str]) -> dict[str, Any]:
+        """What a set of choices would write. Writes nothing."""
+        return self.shell.plan(desired)
+
+    def shell_apply(self, desired: dict[str, str], *, restart_explorer: bool = False
+                    ) -> dict[str, Any]:
+        """Journal and apply desktop customization through the Engine.
+
+        Deliberately does *not* restart Explorer: that closes every folder the
+        user has open. It reports whether a restart is needed and leaves the
+        decision where it belongs.
+        """
+        plan = self.shell.plan(desired)
+        if plan["problems"]:
+            return {"applied": False, "problems": plan["problems"],
+                    "refused": plan["refused"],
+                    "summary": "Refused — nothing was written."}
+        if not plan["changes"]:
+            if plan["refused"]:
+                # Nothing was applied. Saying "already" here would let a user
+                # believe a transparent taskbar had been switched on.
+                return {"applied": False, "already": False, "changes": [],
+                        "refused": plan["refused"],
+                        "summary": plan["summary"]}
+            return {"applied": True, "already": True, "changes": [],
+                    "refused": [], "summary": plan["summary"]}
+        tx = self.engine.apply_customization(plan["changes"], source="shell")
+        if restart_explorer and plan["explorer_restart_needed"]:
+            restarted = self.restart_explorer()
+        else:
+            restarted = {"restarted": False,
+                         "reason": ("Explorer will pick this up on its next restart. "
+                                    "Restarting it now would close your open folders.")
+                         if plan["explorer_restart_needed"] else "not needed"}
+        return {"applied": True, "tx_id": tx.tx_id, "changes": plan["changes"],
+                "refused": plan["refused"], "explorer": restarted,
+                "summary": plan["summary"]}
+
+    def restart_explorer(self) -> dict[str, Any]:
+        """Restart Explorer *safely*: kill, wait, and let Windows restart it.
+
+        Refused on the simulated machine, because killing an explorer.exe that
+        does not exist would report success for something that never happened.
+        """
+        if self._demo:
+            return {"restarted": False,
+                    "reason": "the simulated machine has no Explorer to restart"}
+        return {"restarted": False,
+                "reason": ("Explorer restart is wired in the WinUI build. The "
+                           "console will not kill a shell process it cannot "
+                           "re-launch reliably.")}
+
+    def shell_themes(self) -> dict[str, Any]:
+        rows = self.conn.execute(
+            "SELECT id,name,doc_json,applied_at FROM shell_themes "
+            "ORDER BY applied_at DESC, name").fetchall()
+        return {"themes": [{"id": r[0], "name": r[1],
+                            "settings": json.loads(r[2]),
+                            "applied_at": r[3]} for r in rows]}
+
+    def save_shell_theme(self, name: str, desired: dict[str, str]) -> dict[str, Any]:
+        doc = self.shell.theme_document(name, desired)
+        problems = self.shell.validate_theme(doc)
+        if problems:
+            return {"saved": False, "problems": problems}
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO shell_themes(id,name,doc_json,created_at,"
+                "applied_at) VALUES(?,?,?,?,NULL)",
+                (new_id(), name, json.dumps(desired), self.clock()))
+        return {"saved": True, "name": name,
+                "summary": f"Saved \"{name}\" with {len(desired)} setting(s)."}
+
+    def import_shell_theme(self, doc: Any) -> dict[str, Any]:
+        """Validate and store, never apply. Import is not consent."""
+        problems = self.shell.validate_theme(doc)
+        if problems:
+            return {"imported": False, "problems": problems}
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO shell_themes(id,name,doc_json,created_at,"
+                "applied_at) VALUES(?,?,?,?,NULL)",
+                (new_id(), doc["name"], json.dumps(doc.get("settings", {})),
+                 self.clock()))
+        return {"imported": True, "name": doc["name"],
+                "settings": len(doc.get("settings", {})),
+                "note": "Imported, not applied. Preview it before you apply it."}
+
+    # ------------------------------------------------------------------ prompt
+    def prompt_identity(self, *, command: str | None = None) -> dict[str, Any]:
+        """Which provider the prompt should show, and why."""
+        remotes: list[str] = []
+        try:
+            for row in self.conn.execute(
+                    "SELECT url FROM git_remotes").fetchall():
+                remotes.append(row[0])
+        except Exception:                 # noqa: BLE001 - table may not exist yet
+            pass
+        ident = detect_provider(remotes=remotes, command=command)
+        return ident.as_dict()
+
     def nl_recipe(self, sentence: str) -> dict[str, Any]:
         return parse_recipe(sentence).as_dict()
 
@@ -887,6 +1000,22 @@ DEMO_STATE = {
     "startup:onedrive.defer_seconds": 0,
     "startup:steam.defer_seconds": 0,
     "task:\\microsoft\\office\\officebackgroundtaskhandler.state": "ready",
+    # Current-user Explorer preferences, so Desktop Lab has something to show and
+    # can round-trip a real read → write → verify on the simulated machine.
+    # Seeded per *value name*, exactly as Windows stores them: one key, many
+    # values. A bare key here would make the demo disagree with a real machine.
+    ("registry:hkcu\\software\\microsoft\\windows\\currentversion\\explorer\\advanced"
+     "\\TaskbarAl"): 1,
+    ("registry:hkcu\\software\\microsoft\\windows\\currentversion\\explorer\\advanced"
+     "\\TaskbarDa"): 1,
+    ("registry:hkcu\\software\\microsoft\\windows\\currentversion\\explorer\\advanced"
+     "\\HideFileExt"): 1,
+    ("registry:hkcu\\software\\microsoft\\windows\\currentversion\\search"
+     "\\SearchboxTaskbarMode"): 2,
+    ("registry:hkcu\\software\\microsoft\\windows\\currentversion\\themes\\personalize"
+     "\\AppsUseLightTheme"): 1,
+    ("registry:hkcu\\software\\microsoft\\windows\\currentversion\\themes\\personalize"
+     "\\EnableTransparency"): 1,
     "security:defender.realtime": True,
     # SMBv1 support flag, exactly where Windows keeps it. This is what
     # `security.smb1.disable` actually writes; an invented `security:smb1.enabled`
@@ -995,6 +1124,15 @@ ACTIONS = {
     "power.summary": lambda s, a: s.power_summary(),
     "power.sample": lambda s, a: s.battery(),
     "power.drains": lambda s, a: s.drains(),
+    "shell.options": lambda s, a: s.shell_options(),
+    "shell.preview": lambda s, a: s.shell_preview(a.get("settings", {})),
+    "shell.apply": lambda s, a: s.shell_apply(a["settings"],
+                                              restart_explorer=bool(a.get("restart_explorer"))),
+    "shell.themes": lambda s, a: s.shell_themes(),
+    "shell.theme.save": lambda s, a: s.save_shell_theme(a["name"], a["settings"]),
+    "shell.theme.import": lambda s, a: s.import_shell_theme(a["doc"]),
+    "shell.icons": lambda s, a: {"icons": s.shell_options()["icons"]},
+    "shell.prompt": lambda s, a: s.prompt_identity(command=a.get("command")),
     "thermal.sample": lambda s, a: {"recorded": s.power.record_thermal(
         float(a["before_hz"]), float(a["after_hz"]),
         temp_c=float(a["temp_c"]) if a.get("temp_c") is not None else None)},

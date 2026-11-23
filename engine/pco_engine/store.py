@@ -11,7 +11,7 @@ import sqlite3
 import time
 from typing import Any
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def _sql(name: str) -> str:
@@ -28,6 +28,7 @@ MIGRATIONS: list[tuple[int, str]] = [
     (3, _sql("schema_3.sql")),
     (4, _sql("schema_4.sql")),
     (5, _sql("schema_5.sql")),
+    (6, _sql("schema_6.sql")),
 ]
 
 

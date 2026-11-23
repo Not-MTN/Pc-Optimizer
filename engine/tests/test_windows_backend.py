@@ -470,3 +470,67 @@ def test_cli_output_survives_a_console_that_cannot_encode_it(monkeypatch):
     cli._print_safely("plain ascii is unchanged")
     narrow.seek(0)
     assert "plain ascii is unchanged" in narrow.read()
+
+
+# ================================== multi-value keys (the 10-in-one-key problem)
+
+def test_one_key_can_hold_many_settings_without_colliding():
+    """`Explorer\\Advanced` holds TaskbarAl, TaskbarDa, HideFileExt and seven
+    more. Writing one must not overwrite another — the first implementation
+    did exactly that, silently, because write() never forwarded the value name."""
+    reg = FakeRegistry()
+    be = WindowsBackend(registry=reg, runner=FakeRunner())
+    addr = ("registry:hkcu\\software\\microsoft\\windows\\currentversion"
+            "\\explorer\\advanced")
+
+    be.write(addr, 0, value_name="TaskbarAl")
+    be.write(addr, 1, value_name="TaskbarDa")
+
+    assert be.read(addr, value_name="TaskbarAl") == 0
+    assert be.read(addr, value_name="TaskbarDa") == 1
+    names = sorted(n for (_h, _p, n) in reg.data)
+    assert names == ["TaskbarAl", "TaskbarDa"]
+
+
+def test_a_value_name_the_key_does_not_have_is_refused():
+    be = WindowsBackend(registry=FakeRegistry(), runner=FakeRunner())
+    addr = ("registry:hkcu\\software\\microsoft\\windows\\currentversion"
+            "\\explorer\\advanced")
+    with pytest.raises(BackendError) as exc:
+        be.write(addr, 1, value_name="TaskbarMagic")
+    assert "not a value of this key" in str(exc.value)
+    assert "TaskbarAl" in str(exc.value), "the error must list what is accepted"
+
+
+def test_a_bare_read_of_a_multi_value_key_uses_the_documented_default():
+    from pco_engine.windows_backend import MULTI_VALUE_DEFAULT
+    reg = FakeRegistry()
+    be = WindowsBackend(registry=reg, runner=FakeRunner())
+    addr = ("registry:hkcu\\software\\microsoft\\windows\\currentversion"
+            "\\explorer\\advanced")
+    default = MULTI_VALUE_DEFAULT[addr]
+    be.write(addr, 0, value_name=default)
+    assert be.read(addr) == 0
+
+
+def test_the_desktop_lab_table_and_the_backend_table_agree():
+    """Two tables describe the same keys. If they drift, a setting is written
+    under one name and read back under another — which reads as 'did not stick'
+    and would look like a Windows problem rather than ours."""
+    from pco_engine.shell_lab import SHELL, TASKBAR
+    from pco_engine.windows_backend import MULTI_VALUE_KEYS
+
+    backend_names: dict[str, set[str]] = {}
+    for address, values in MULTI_VALUE_KEYS.items():
+        backend_names[address] = {v[0] for v in values.values()}
+
+    missing = []
+    for spec in list(TASKBAR.values()) + list(SHELL.values()):
+        address = "registry:hkcu\\" + spec["path"].lower()
+        if address not in MULTI_VALUE_KEYS:
+            continue                     # single-value key, handled by REGISTRY
+        if spec["value"] not in backend_names[address]:
+            missing.append((spec["value"], address))
+    assert not missing, (
+        "desktop lab offers a value the backend cannot write: "
+        f"{missing}")

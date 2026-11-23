@@ -22,7 +22,7 @@ class BackendError(RuntimeError):
 class Backend(Protocol):
     def read(self, address: str) -> Any: ...
     def exists(self, address: str) -> bool: ...
-    def write(self, address: str, value: Any) -> None: ...
+    def write(self, address: str, value: Any, *, value_name: str | None = None) -> None: ...
     def keys(self, prefix: str = "") -> Iterable[str]: ...
 
 
@@ -42,39 +42,51 @@ class FakeBackend:
         self._pinned: dict[str, Any] = {}          # values an external authority enforces
 
     # -- read -------------------------------------------------------------
-    def read(self, address: str) -> Any:
-        if address not in self._state:
-            raise BackendError(f"address does not exist: {address}")
-        return copy.deepcopy(self._state[address])
+    @staticmethod
+    def _key(address: str, value_name: str | None) -> str:
+        """`address` alone is a key; `address\\value` is a value inside it.
 
-    def exists(self, address: str) -> bool:
-        return address in self._state
+        This is how Windows actually stores Explorer preferences, so modelling it
+        is what lets the demo machine prove the same behaviour the real one has.
+        """
+        return address if value_name is None else f"{address}\\{value_name}"
+
+    def read(self, address: str, *, value_name: str | None = None) -> Any:
+        key = self._key(address, value_name)
+        if key not in self._state:
+            raise BackendError(f"address does not exist: {key}")
+        return copy.deepcopy(self._state[key])
+
+    def exists(self, address: str, *, value_name: str | None = None) -> bool:
+        return self._key(address, value_name) in self._state
 
     def keys(self, prefix: str = "") -> list[str]:
         return sorted(k for k in self._state if k.startswith(prefix))
 
     # -- write ------------------------------------------------------------
-    def write(self, address: str, value: Any) -> None:
+    def write(self, address: str, value: Any, *, value_name: str | None = None) -> None:
         if address in self.fail_on_write:
             raise BackendError(self.fail_on_write[address])
         if self.on_write is not None:
             self.on_write(self, address)
-        self._state[address] = copy.deepcopy(value)
-        self.writes.append((address, copy.deepcopy(value)))
+        key = self._key(address, value_name)
+        self._state[key] = copy.deepcopy(value)
+        self.writes.append((key, copy.deepcopy(value)))
 
-    def settled_read(self, address: str) -> Any:
+    def settled_read(self, address: str, *, value_name: str | None = None) -> Any:
         """The value *after* policy has had its say. Tests use `pin()` to model
         a group policy / vendor agent re-imposing a value after our write."""
-        if address in self._pinned:
-            return copy.deepcopy(self._pinned[address])
-        return self.read(address)
+        key = self._key(address, value_name)
+        if key in self._pinned:
+            return copy.deepcopy(self._pinned[key])
+        return self.read(address, value_name=value_name)
 
-    def pin(self, address: str, value: Any) -> None:
+    def pin(self, address: str, value: Any, *, value_name: str | None = None) -> None:
         """Model an external authority that always wins."""
-        self._pinned[address] = copy.deepcopy(value)
+        self._pinned[self._key(address, value_name)] = copy.deepcopy(value)
 
-    def unpin(self, address: str) -> None:
-        self._pinned.pop(address, None)
+    def unpin(self, address: str, *, value_name: str | None = None) -> None:
+        self._pinned.pop(self._key(address, value_name), None)
 
     # -- helpers for tests -------------------------------------------------
     def snapshot(self) -> str:
