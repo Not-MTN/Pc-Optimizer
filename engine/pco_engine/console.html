@@ -123,6 +123,9 @@
               letter-spacing:.07em;margin-bottom:5px;font-weight:600}
   input,select{width:100%;background:#0f1319;border:1px solid var(--line);color:var(--ink);
                border-radius:9px;padding:9px 11px;font:inherit;font-size:13px}
+  textarea{width:100%;min-height:96px;background:#0f1319;border:1px solid var(--line);color:var(--ink);
+    border-radius:9px;padding:10px 12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;resize:vertical}
+  textarea:focus{outline:none;border-color:rgba(182,242,74,.5);box-shadow:0 0 0 3px rgba(182,242,74,.08)}
   input:focus,select:focus{outline:none;border-color:rgba(182,242,74,.5);box-shadow:0 0 0 3px rgba(182,242,74,.08)}
   .empty{color:var(--faint);font-size:12.5px;padding:14px 2px}
   .spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.25);border-top-color:var(--ink);
@@ -285,6 +288,12 @@
             <tbody id="rules"></tbody></table>
         </div>
       </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Restorable runs</h2>
+        <p class="sub">Anything you moved is still on the same drive for 30 days.</p>
+        <table><thead><tr><th>When</th><th>Files</th><th>Size</th><th></th></tr></thead>
+          <tbody id="vaultRuns"></tbody></table>
+      </div>
     </section>
 
     <!-- ============ DNS ============ -->
@@ -409,6 +418,15 @@
           <div class="sub" id="budgetSub">—</div>
           <div class="bar" style="margin:14px 0"><i id="budgetBar"></i></div>
           <div class="kv" id="budgetKv"></div>
+          <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+          <h2>Import a theme file</h2>
+          <p class="sub">Shared themes are files, not links — nothing is uploaded anywhere.</p>
+          <label class="field" style="margin-top:10px">Theme JSON</label>
+          <textarea id="importDoc" spellcheck="false"></textarea>
+          <div class="row" style="margin-top:10px">
+            <button class="btn" id="importCheck">Check it</button>
+            <span class="sub" id="importVerdict"></span>
+          </div>
         </div>
       </div>
     </section>
@@ -517,6 +535,7 @@ function renderStatus(st) {
     " patterns · " + st.dns.blocked_total.toLocaleString() + " blocked total";
 
   const vault = st.cleaner;
+  renderVaultRuns(vault.runs);
   $("#vaultSize").innerHTML = fmtGB(vault.bytes) + " <small>in vault</small>";
   $("#vaultBar").style.width = Math.min(100, (vault.bytes / 5e10) * 100) + "%";
   $("#cleanTotal").textContent = fmtGB(vault.bytes);
@@ -661,18 +680,67 @@ async function runCheckup() {
 async function fixSafe() {
   busy($("#quickFix"), true);
   try {
-    const data = await api("/api/checkup/fix", {});
-    if (data.consent) loadConsent();
-    if (data.fix && data.fix.applied) {
-      toast("Fixed " + (data.fix.effects ? data.fix.effects.length : 0) +
-            " thing(s). One click undoes it.");
-    } else if (data.fix && data.fix.blocked) {
-      toast("Refused by preflight: " + data.fix.blocked[0].message, true);
-    } else { toast("Nothing safe to apply."); }
-    if (data.findings) renderFindings(data);
+    // /api/checkup/apply uses the *last* checkup and the consent gate, so this
+    // never re-scans and never applies more than the chosen level permits.
+    const data = await api("/api/checkup/apply", {});
+    if (data.applied) {
+      const n = (data.effects || []).length;
+      toast(data.already ? "Already applied — nothing to change."
+                         : "Fixed " + n + " thing(s). One click undoes it.");
+    } else if (data.blocked && data.blocked.length) {
+      toast("Refused by preflight: " + data.blocked[0].message, true);
+    } else {
+      toast(data.reason || "Nothing to apply at this consent level.");
+    }
+    const withheld = (data.withheld || []).filter((w) => w.why !== "no declared fix");
+    if (withheld.length) {
+      $("#consentDetail").textContent = withheld.length + " finding(s) left because of " +
+        "your consent level — raise it above if you want them fixed.";
+    }
     await refreshAll();
+    await loadConsent();
   } catch (err) { toast(err.message, true); }
   busy($("#quickFix"), false);
+}
+
+function renderVaultRuns(runs) {
+  const tb = $("#vaultRuns"); tb.replaceChildren();
+  if (!runs || !runs.length) {
+    tb.append(el("tr")).append(el("td", "empty", "Nothing in the vault."));
+    return;
+  }
+  runs.forEach((r) => {
+    const tr = el("tr");
+    tr.append(el("td", "sub", ago(r.at)), el("td", "mono", r.files + " files"),
+              el("td", "mono", fmtGB(r.bytes)));
+    const td = el("td");
+    const b = el("button", "btn ghost", "Restore");
+    b.style.padding = "4px 10px";
+    b.onclick = async () => {
+      busy(b, true);
+      try {
+        const out = await api("/api/clean/restore", { run_id: r.run_id });
+        toast("Restored " + out.restored + " item(s)");
+        await refreshAll();
+      } catch (err) { toast(err.message, true); }
+      busy(b, false);
+    };
+    td.append(b); tr.append(td); tb.append(tr);
+  });
+}
+
+async function checkImport() {
+  const raw = $("#importDoc").value.trim();
+  if (!raw) { $("#importVerdict").textContent = "Paste a theme first."; return; }
+  let doc;
+  try { doc = JSON.parse(raw); }
+  catch (err) { $("#importVerdict").textContent = "Not valid JSON."; return; }
+  try {
+    const out = await api("/api/studio/import", { doc: doc });
+    $("#importVerdict").textContent = out.governor.ok
+      ? "Valid — " + out.cost_pct + "% idle GPU, within budget."
+      : "Valid but refused: " + out.governor.message;
+  } catch (err) { $("#importVerdict").textContent = err.message; }
 }
 
 async function scanClean(run) {
@@ -977,6 +1045,12 @@ async function simulateAutopsyItems(id) {
       row.append(cat, body, tag);
       box.append(row);
       if (i === items.length - 1) {
+        // send the discovery to the server, exactly as the real watcher would
+        api("/api/autopsy/note", {
+          autopsy_id: id,
+          items: items.map((x) => ({ class: x.cls, locator: x.locator,
+                                     size: x.size || 0, critical: !!x.critical })),
+        }).catch((err) => toast(err.message, true));
         const b = el("button", "btn primary", "Erase every non-critical trace");
         b.style.marginTop = "12px";
         b.onclick = () => eraseAutopsy(id, b);
@@ -989,6 +1063,8 @@ async function simulateAutopsyItems(id) {
 async function eraseAutopsy(id, btn) {
   busy(btn, true);
   try {
+    // close the watch window before erasing, so the receipt is complete
+    await api("/api/autopsy/finish", { autopsy_id: id }).catch(() => null);
     const res = await api("/api/autopsy/erase", { autopsy_id: id });
     toast(res.summary);
     await loadAutopsy();
@@ -1076,6 +1152,7 @@ $("#runCheckup").addEventListener("click", runCheckup);
 $("#scanBtn").addEventListener("click", () => scanClean(false));
 $("#cleanBtn").addEventListener("click", () => scanClean(true));
 $("#cleanNow").addEventListener("click", () => { show("clean"); scanClean(false); });
+$("#importCheck").addEventListener("click", checkImport);
 $("#dnsToggle").addEventListener("click", () => dns(
   (STATE.status && STATE.status.dns.mode !== "off") ? "off" : "on"));
 $("#dnsOn").addEventListener("click", () => dns("on"));

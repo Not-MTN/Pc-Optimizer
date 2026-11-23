@@ -63,7 +63,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (164 tests, all passing)
+## What works today (177 tests, all passing)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -86,7 +86,10 @@ the console is a reference client, not a toy.
 | cm/360 round-trips and CS2→VALORANT matches the ÷3.18 constant | `test_round_trip_is_exact`, `test_cs2_to_valorant_is_the_known_ratio` |
 | Non-linear-ADS games are flagged, not faked | `test_table_has_every_game_and_flags_non_linear` |
 | The PSA test converges to under 1 cm in 6 rounds | `test_psa_converges_below_one_centimetre` |
-| The HTTP bridge works over real sockets, incl. undo | `test_web.py` (17 socket-level tests) |
+| The HTTP bridge works over real sockets, incl. undo | `test_web.py` (23 socket-level tests) |
+| **Every button in the console has a route behind it** | `test_ui_contract.py` (10 contract tests) |
+| Bad client input is a 400 with a reason, never a 500 with a traceback | `test_bridge_rejects_bad_theme_json_with_400_not_500` |
+| Autopsy survives the full HTTP round trip and still spares the runtime | `test_bridge_autopsy_records_erases_and_keeps_critical` |
 | Average fps never hides bad frame pacing | `test_average_fps_is_not_the_whole_story` |
 | A CPU limit is found from the busiest thread, not the average | `test_cpu_limit_is_named_by_the_busiest_thread_not_the_average` |
 | Thermal and VRAM limits are named *before* the naive "GPU is full" | `test_thermal_masquerading_as_gpu_is_caught_first`, `test_vram_exhaustion_beats_the_naive_gpu_reading` |
@@ -171,6 +174,9 @@ Recorded because they are the argument for building the tests first:
 15. **Fix-all failed on a healthy machine** — one already-correct item aborted the whole batch, so a second click reported a red error on a machine with nothing wrong. Batch application now filters satisfied tweaks first.
 16. **An unfixable privacy finding** — "telemetry at the full level" had no catalog tweak, so the trusted tier legitimately did nothing. The privacy fix now exists and targets the real Windows policy key.
 17. **No receipt for applies** — the engine wrote journal rows but no receipt, so History was empty after the most important action in the product.
+18. **A dead button shipped unnoticed** — the console posted to `/api/autopsy/erase`, which had no route. JS syntax checks and Python tests both passed. Fixed by writing `test_ui_contract.py`, which parses the console and asserts every URL it calls exists in the router (and vice versa). It immediately found a second one: the fix-all button was bypassing the new consent path.
+19. **Autopsy erased nothing** — `/api/autopsy/begin` never recorded items, so "erase every trace" erased an empty list and reported success. The bridge can now record what a watcher found (note/finish), and the flow is tested over HTTP with a real critical file in the list.
+20. **Validation errors were 500s** — an invalid theme returned a Python traceback to the browser. Bad input is now a 400 with the reason.
 
 ## Porting to Rust (the contract)
 

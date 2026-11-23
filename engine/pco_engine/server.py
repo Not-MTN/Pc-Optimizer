@@ -230,6 +230,22 @@ class Handler(BaseHTTPRequestHandler):
                 with _LOCK:
                     self._json(200, svc.studio.import_doc(args["doc"]))
                 return
+            if path == "/api/autopsy/note":
+                with _LOCK:
+                    items = svc.autopsy.note(args["autopsy_id"], args.get("items", []))
+                self._json(200, {"recorded": len(items),
+                                 "autopsy": svc.autopsy.get(args["autopsy_id"]).as_dict()})
+                return
+            if path == "/api/autopsy/finish":
+                with _LOCK:
+                    au = svc.autopsy.finish(args["autopsy_id"])
+                self._json(200, au.as_dict())
+                return
+            if path == "/api/autopsy/erase":
+                with _LOCK:
+                    out = svc.autopsy.erase(args["autopsy_id"])
+                self._json(200, out)
+                return
             if path == "/api/autopsy/begin":
                 with _LOCK:
                     self._json(200, {"autopsy_id": svc.autopsy.begin(
@@ -242,6 +258,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
         except KeyError as exc:
             self._json(400, {"error": f"missing field {exc}"})
+            return
+        except ValueError as exc:
+            # bad input from the client (invalid theme, bad level, bad maths) is a
+            # 400 with the reason, never a 500 with a traceback.
+            self._json(400, {"error": str(exc)})
             return
         except Exception:  # noqa: BLE001
             self._json(500, {"error": traceback.format_exc(limit=3)})

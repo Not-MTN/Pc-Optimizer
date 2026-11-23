@@ -295,3 +295,46 @@ def test_bridge_autopsy_flow_over_http(live_server):
     assert aid
     listed = _get(live_server, "/api/autopsy")["autopsies"]
     assert any(a["id"] == aid for a in listed)
+
+
+# ----------------------------------------- autopsy over the bridge, end to end
+
+def test_bridge_autopsy_records_erases_and_keeps_critical(live_server):
+    """The demo watcher's findings must survive the round trip over HTTP: the
+    console posts what it discovered, then erases exactly that."""
+    _, begun = _post(live_server, "/api/autopsy/begin", {"installer": "nonsense.exe"})
+    aid = begun["autopsy_id"]
+
+    items = [
+        {"class": "service", "locator": "NonsenseAgent"},
+        {"class": "registry", "locator": "HKLM\\SOFTWARE\\Nonsense"},
+        {"class": "file", "locator": "C:\\Program Files\\Nonsense\\app.exe", "size": 84_000_000},
+        {"class": "file", "locator": "C:\\Windows\\System32\\vcruntime140.dll",
+         "size": 420_000, "critical": True},
+    ]
+    _, noted = _post(live_server, "/api/autopsy/note", {"autopsy_id": aid, "items": items})
+    assert noted["recorded"] == 4
+    assert noted["autopsy"]["total_items"] == 4
+    assert len(noted["autopsy"]["critical_items"]) == 1
+
+    _, finished = _post(live_server, "/api/autopsy/finish", {"autopsy_id": aid})
+    assert finished["total_items"] == 4
+
+    _, erased = _post(live_server, "/api/autopsy/erase", {"autopsy_id": aid})
+    assert erased["erased"] == 3, erased
+    assert erased["kept"] == 1          # the runtime is immune
+    assert erased["snapshot_id"]
+
+
+def test_bridge_rejects_bad_theme_json_with_400_not_500(live_server):
+    code, body = _post(live_server, "/api/studio/import",
+                       {"doc": {"name": "bad", "features": {"hologram": True}}})
+    assert code == 400
+    assert "hologram" in body["error"]
+    assert "Traceback" not in body["error"]
+
+
+def test_bridge_rejects_bad_consent_level_with_400(live_server):
+    code, body = _post(live_server, "/api/consent/set", {"level": "godmode"})
+    assert code == 400
+    assert "level must be one of" in body["error"]
