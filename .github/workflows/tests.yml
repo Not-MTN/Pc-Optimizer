@@ -61,3 +61,46 @@ jobs:
           python -m pco_engine.cli --backend windows doctor
           # PowerShell's `>` writes UTF-16, so hand Python the redirect instead:
           python -c "import sys,json,subprocess;r=subprocess.run([sys.executable,'-m','pco_engine.cli','--json','--backend','windows','doctor'],capture_output=True,text=True,encoding='utf-8');d=json.loads(r.stdout);print(json.dumps(d['backend'],indent=1));print('catalog addresses:',d['catalog_addresses'],'readable now:',d['readable_now'])"
+
+  # Builds the actual .exe and installer. Separate job so a packaging problem
+  # never masks a test failure, and so the artefacts are downloadable from the
+  # run page even on a pull request.
+  build:
+    name: package · Windows exe + installer
+    runs-on: windows-latest
+    needs: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyinstaller pywebview
+
+      - name: install Inno Setup
+        run: |
+          choco install innosetup --no-progress -y
+          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+
+      - name: build
+        run: .\packaging\build.ps1 -SkipTests
+
+      - name: verify the exe is a real PE32+ binary
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes("dist\Keel.exe")
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "not an MZ executable" }
+          $size = [math]::Round((Get-Item dist\Keel.exe).Length / 1MB, 1)
+          Write-Host "Keel.exe is a valid PE, $size MB"
+          if ($size -gt 40) { throw "exe is $size MB - something huge got bundled" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Keel-windows
+          path: |
+            dist/Keel.exe
+            dist/installer/*.exe
+          if-no-files-found: error
+          retention-days: 30

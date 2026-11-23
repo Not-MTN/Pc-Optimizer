@@ -730,6 +730,54 @@ class Service:
                 "than saying so.")}
         return {"saved": True, **self.save_workspace(name, entries)}
 
+    # ----------------------------------------------------------------- display
+    def display_mode(self) -> dict[str, Any]:
+        """Current mode, and whether this build may change it.
+
+        Read-only on purpose. Changing a mode is a separate, guarded action
+        because it is the one thing here that can leave a screen black.
+        """
+        try:
+            mode = self.backend.read("display:primary.mode")
+        except Exception as exc:                  # noqa: BLE001 - guarded family
+            return {"available": False, "reason": str(exc),
+                    "writable": False,
+                    "note": ("Display control is off unless PCO_WINDOWS_DISPLAY=1. "
+                             "A wrong mode can black the screen that would undo it.")}
+        return {"available": True, "mode": mode, "writable": True}
+
+    def display_set(self, hz: int, *, width: int | None = None,
+                    height: int | None = None) -> dict[str, Any]:
+        """Apply a mode through the watchdog. Never unconditional."""
+        if not self.backend.__class__.__name__.endswith("WindowsBackend"):
+            return {"applied": False,
+                    "reason": ("The simulated machine has no display to change. "
+                               "On Windows this arms a 12-second watchdog that "
+                               "restores the previous mode unless you confirm.")}
+        current = self.backend.read("display:primary.mode")
+        value = {"hz": int(hz),
+                 "width": int(width or current.get("width", 1920)),
+                 "height": int(height or current.get("height", 1080))}
+        try:
+            self.backend.write("display:primary.mode", value)
+        except Exception as exc:                  # noqa: BLE001
+            return {"applied": False, "reason": str(exc)}
+        return {"applied": True, **self.backend.display_status(),
+                "message": ("Applied. Confirm within 12 seconds or the previous "
+                            "mode is restored automatically.")}
+
+    def display_confirm(self) -> dict[str, Any]:
+        fn = getattr(self.backend, "display_confirm", None)
+        if fn is None:
+            return {"confirmed": False, "reason": "no display on this backend"}
+        return fn()
+
+    def display_revert(self) -> dict[str, Any]:
+        fn = getattr(self.backend, "display_revert", None)
+        if fn is None:
+            return {"reverted": False, "reason": "no display on this backend"}
+        return fn()
+
     def drains(self) -> dict[str, Any]:
         """Per-process power draw, read from the backend at `power:drain:<exe>`.
 
@@ -1124,6 +1172,11 @@ ACTIONS = {
     "power.summary": lambda s, a: s.power_summary(),
     "power.sample": lambda s, a: s.battery(),
     "power.drains": lambda s, a: s.drains(),
+    "display.mode": lambda s, a: s.display_mode(),
+    "display.set": lambda s, a: s.display_set(
+        int(a["hz"]), width=a.get("width"), height=a.get("height")),
+    "display.confirm": lambda s, a: s.display_confirm(),
+    "display.revert": lambda s, a: s.display_revert(),
     "shell.options": lambda s, a: s.shell_options(),
     "shell.preview": lambda s, a: s.shell_preview(a.get("settings", {})),
     "shell.apply": lambda s, a: s.shell_apply(a["settings"],

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PC Optimizer — Console</title>
+<title>Keel — PC Optimizer</title>
 <style>
   :root{
     --bg:#0b0d10; --panel:#12151b; --panel-2:#171b23; --line:#232935;
@@ -35,6 +35,30 @@
   .nav svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.7;
            stroke-linecap:round;stroke-linejoin:round}
   .rail .spacer{flex:1}
+  .railSep{width:26px;height:1px;background:var(--line);margin:8px 0}
+  .logoMark{width:26px;height:26px;display:block;border-radius:7px;
+    background:var(--lime);clip-path:polygon(38% 0,58% 0,86% 100%,66% 100%);}
+  .nav.more{color:var(--dim)}
+  .flyout{position:absolute;left:74px;top:50%;transform:translateY(-50%);z-index:60;
+    display:none;flex-direction:column;gap:2px;min-width:210px;max-height:70vh;overflow:auto;
+    background:#11151b;border:1px solid #2b3342;border-radius:13px;padding:8px;
+    box-shadow:0 30px 70px -30px #000}
+  .flyout.on{display:flex}
+  .flyHead{font-size:9.5px;letter-spacing:.14em;color:var(--faint);
+    padding:9px 10px 4px;font-weight:700}
+  .flyItem{display:block;width:100%;text-align:left;background:none;border:0;color:var(--ink);
+    font:inherit;font-size:13px;padding:7px 10px;border-radius:8px;cursor:pointer}
+  .flyItem:hover{background:rgba(182,242,74,.1);color:var(--lime)}
+  .hubIntro{padding:6px 2px 20px;max-width:62ch}
+  .hubIntro h2{margin:0 0 6px;font-size:24px;letter-spacing:-.02em}
+  .hubIntro p{margin:0;color:var(--dim);font-size:13.5px;line-height:1.6}
+  .hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  .hubCard{text-align:left;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;padding:16px 16px 15px;cursor:pointer;font:inherit;color:var(--ink);
+    transition:border-color .15s,transform .15s}
+  .hubCard:hover{border-color:rgba(182,242,74,.5);transform:translateY(-1px)}
+  .hubTitle{font-weight:650;font-size:14.5px;margin-bottom:5px}
+  .hubBlurb{color:var(--dim);font-size:12.5px;line-height:1.55}
   /* ---------------- shell ---------------- */
   main{padding:26px 30px 70px;max-width:1240px}
   header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:22px}
@@ -163,62 +187,34 @@
 <body>
 <div class="app">
   <aside class="rail">
-    <div class="logo" title="PC Optimizer">P</div>
-    <button class="nav" data-view="home" aria-current="page" title="Overview">
+    <div class="logo" title="Keel — a PC optimizer with an undo button">
+      <span class="logoMark"></span>
+    </div>
+
+    <!-- Four places to be. Everything else is one click deeper, or Ctrl+K.
+         A rail of sixteen icons is the problem this app exists to avoid. -->
+    <button class="nav primary" data-view="home" aria-current="page" title="Home — is anything wrong?">
       <svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
     </button>
-    <button class="nav" data-view="checkup" title="Checkup">
-      <svg viewBox="0 0 24 24"><path d="M12 3l7 4v6c0 4-3 7-7 8-4-1-7-4-7-8V7z"/><path d="M9 12l2 2 4-4"/></svg>
+    <button class="nav primary" data-view="look" title="Look — make it mine">
+      <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18c1.5 0 2-1 2-2s-1-2 0-3 4-.5 4-3a9 9 0 00-6-10z"/>
+        <circle cx="8.5" cy="10" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="15.5" cy="10" r="1"/></svg>
     </button>
-    <button class="nav" data-view="clean" title="Cleaner">
-      <svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/></svg>
-    </button>
-    <button class="nav" data-view="dns" title="Blocking">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5 5l14 14"/></svg>
-    </button>
-    <button class="nav" data-view="sens" title="Sens Lab">
-      <svg viewBox="0 0 24 24"><path d="M12 3v4"/><rect x="7" y="8" width="10" height="13" rx="5"/><path d="M12 12v3"/></svg>
-    </button>
-    <button class="nav" data-view="space" title="Storage &amp; Duplicates">
-      <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
-    </button>
-    <button class="nav" data-view="startup" title="Startup Surgeon">
-      <svg viewBox="0 0 24 24"><path d="M12 3v6"/><path d="M5 12h14l-2 8H7z"/><path d="M9 12V9h6v3"/></svg>
-    </button>
-    <button class="nav" data-view="lab" title="Hardware Lab">
-      <svg viewBox="0 0 24 24"><path d="M9 3h6v5l4 10a2 2 0 01-2 3H7a2 2 0 01-2-3l4-10z"/><path d="M9 3h6M7.5 15h9"/></svg>
-    </button>
-    <button class="nav" data-view="gaming" title="Gaming">
-      <svg viewBox="0 0 24 24"><path d="M6 12h4M8 10v4"/><circle cx="16" cy="11" r="1"/><circle cx="18.5" cy="13.5" r="1"/><path d="M3 14l2-6a3 3 0 013-2h8a3 3 0 013 2l2 6a2 2 0 01-3.6 1.6L16 14H8l-1.4 1.6A2 2 0 013 14z"/></svg>
-    </button>
-    <button class="nav" data-view="autopsy" title="Installer Autopsy">
-      <svg viewBox="0 0 24 24"><path d="M12 3v10"/><path d="M8 9l4 4 4-4"/><path d="M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4"/></svg>
-    </button>
-    <button class="nav" data-view="studio" title="Desktop Studio">
-      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/></svg>
-    </button>
-    <button class="nav" data-view="power" title="Performance">
+    <button class="nav primary" data-view="speed" title="Speed — make it faster">
       <svg viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>
     </button>
-    <button class="nav" data-view="battery" title="Battery &amp; Heat">
-      <svg viewBox="0 0 24 24"><rect x="2" y="7" width="17" height="10" rx="2.5"/>
-        <path d="M21 10v4"/><path d="M6 10v4M10 10v4"/></svg>
+    <button class="nav primary" data-view="fix" title="Fix — something broke">
+      <svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 105.3 5.3l-1.8-1.8-3.5 3.5"/>
+        <path d="M11 13l-7 7"/><path d="M4 4l16 16"/></svg>
     </button>
-    <button class="nav" data-view="workspaces" title="Workspaces">
-      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.6"/>
-        <rect x="3" y="14" width="11" height="6" rx="1.6"/><path d="M17 17h4"/></svg>
+
+    <div class="railSep"></div>
+
+    <button class="nav more" id="moreBtn" title="Everything else">
+      <svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/>
+        <circle cx="18" cy="12" r="1.4"/></svg>
     </button>
-    <button class="nav" data-view="drivers" title="Driver Manager">
-      <svg viewBox="0 0 24 24"><path d="M4 17h16"/><path d="M7 17V9a5 5 0 0110 0v8"/>
-        <circle cx="12" cy="9" r="2"/></svg>
-    </button>
-    <button class="nav" data-view="recipes" title="Recipes">
-      <svg viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/><path d="M9 8h6"/></svg>
-    </button>
-    <button class="nav" data-view="shell" title="Desktop Lab">
-      <svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="12" rx="2"/>
-        <path d="M2.5 12.5h19"/><path d="M8 20h8"/><path d="M12 16v4"/></svg>
-    </button>
+    <div class="flyout" id="moreMenu" role="menu" aria-label="Everything else"></div>
     <div class="spacer"></div>
     <button class="nav" id="refresh" title="Refresh (R)">
       <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.3 5.7"/><path d="M20 5v6h-6"/></svg>
@@ -242,6 +238,31 @@
     </header>
 
     <!-- ============ OVERVIEW ============ -->
+    <section class="sect" id="view-look">
+      <div class="hubIntro">
+        <h2>Make it yours</h2>
+        <p>Taskbar, Explorer, icons, colours and the prompt. Every switch names what it
+           changes and what Windows 11 will refuse.</p>
+      </div>
+      <div class="hub" id="hub-look"></div>
+    </section>
+
+    <section class="sect" id="view-speed">
+      <div class="hubIntro">
+        <h2>Make it faster</h2>
+        <p>Measure first, change one thing, measure again. Nothing here runs on a timer.</p>
+      </div>
+      <div class="hub" id="hub-speed"></div>
+    </section>
+
+    <section class="sect" id="view-fix">
+      <div class="hubIntro">
+        <h2>When something breaks</h2>
+        <p>Drivers, battery, hardware surprises and recovery. Read-only until you ask.</p>
+      </div>
+      <div class="hub" id="hub-fix"></div>
+    </section>
+
     <section class="sect on" id="view-home">
       <div class="grid g3" style="margin-bottom:16px">
         <div class="card">
@@ -589,6 +610,22 @@
 
     <!-- ============ POWER ============ -->
     <section class="sect" id="view-power">
+      <div class="card" id="displayCard" style="margin-bottom:14px">
+        <h2>Display</h2>
+        <div class="sub" id="displayNote">Reading the current mode…</div>
+        <div class="row" style="margin-top:12px;flex-wrap:wrap">
+          <span class="pill" id="displayMode">—</span>
+          <input id="displayHz" type="number" min="30" max="500" step="1"
+                 style="width:96px;padding:8px 10px" aria-label="Refresh rate in Hz">
+          <button class="btn" id="displayApply">Set refresh rate</button>
+          <button class="btn primary" id="displayConfirm" style="display:none">Keep it</button>
+          <button class="btn ghost" id="displayUndo" style="display:none">Put it back</button>
+        </div>
+        <!-- The countdown is not decoration. If the user cannot see the screen,
+             the watchdog restores the mode on its own; this is for the case
+             where they can see it and want to keep it. -->
+        <div class="sub" id="displayCountdown" style="margin-top:10px"></div>
+      </div>
       <div class="grid g2">
         <div class="card">
           <h2>Speed score</h2>
@@ -815,7 +852,10 @@ async function api(path, body) {
 }
 
 /* ---------------------------------------------------------------- views */
-const TITLES = { home: ["Overview", "Everything the Guardian engine knows, live."],
+const TITLES = { home: ["Home", "Is anything wrong? Everything the engine knows, live."],
+  look: ["Look", "Taskbar, Explorer, icons, themes."],
+  speed: ["Speed", "Measure, change one thing, measure again."],
+  fix: ["Fix", "Drivers, battery, hardware, recovery."],
   checkup: ["Checkup", "Findings are split by what they actually affect."],
   clean: ["Cleaner", "Space is not speed. This page is honest about that."],
   dns: ["Blocking", "Off means off — the toggle is real, not a marketing one."],
@@ -835,8 +875,9 @@ const TITLES = { home: ["Overview", "Everything the Guardian engine knows, live.
 function show(view) {
   document.querySelectorAll(".sect").forEach((s) => s.classList.remove("on"));
   $("#view-" + view).classList.add("on");
+  const parent = Object.entries(GROUPS).find(([, vs]) => vs.includes(view))?.[0] || view;
   document.querySelectorAll(".nav[data-view]").forEach((b) =>
-    b.setAttribute("aria-current", b.dataset.view === view ? "page" : "false"));
+    b.setAttribute("aria-current", b.dataset.view === parent ? "page" : "false"));
   $("#title").textContent = TITLES[view][0];
   $("#subtitle").textContent = TITLES[view][1];
   if (view === "sens") loadSens();
@@ -851,6 +892,25 @@ function show(view) {
   if (view === "drivers") loadDrivers();
   if (view === "recipes") loadRecipes();
   if (view === "shell") loadShell();
+  if (view === "power") loadDisplay();
+}
+
+function renderHub(which) {
+  const box = $("#hub-" + which);
+  if (!box) return;
+  box.replaceChildren();
+  (GROUPS[which] || []).forEach((v) => {
+    const card = el("button", "hubCard");
+    card.append(el("div", "hubTitle", (TITLES[v] || [v])[0]));
+    card.append(el("div", "hubBlurb", BLURB[v] || ""));
+    card.onclick = () => show(v);
+    box.append(card);
+  });
+}
+
+function openPrimary(which) {
+  show(which);
+  renderHub(which);
 }
 
 /* ---------------------------------------------------------------- render */
@@ -2289,9 +2349,130 @@ async function panic() {
   busy(btn, false);
 }
 
+/* ---------------------------------------------------------------- the rail */
+// The four primary destinations are real views. Everything else is discoverable
+// through More — and every one of them still exists, because a view you cannot
+// reach is the same as a feature you did not build.
+const BLURB = {
+  shell: "Taskbar, Explorer, folder icons, terminal look and prompt identity.",
+  studio: "Wallpaper-grade colour themes built from your own palette.",
+  workspaces: "Save groups of windows and reopen them in one click.",
+  recipes: "Multi-step jobs: apply many changes, undo as one.",
+  checkup: "A scored sweep that names the three things worth fixing.",
+  clean: "Preview every deletable byte before anything is deleted.",
+  dns: "Compare resolvers on real queries, then pin the winner.",
+  power: "Plans, sleep timers and what is holding the machine awake.",
+  space: "What is eating the disk, by folder, without guessing.",
+  startup: "Boot cost per item, attributed or honestly unattributed.",
+  gaming: "Per-game profiles, and a one-key way back to normal.",
+  drivers: "Crashes and resets per driver, from the event log.",
+  battery: "Health, cycle load and charge behaviour from the firmware.",
+  lab: "Sandboxed experiments with automatic rollback.",
+  autopsy: "A post-mortem of the last crash, in plain language.",
+  sens: "Mouse and keyboard feel, nothing that changes your files.",
+};
+
+const GROUPS = {
+  home: ["home"],
+  look: ["shell", "studio", "workspaces", "recipes"],
+  speed: ["checkup", "clean", "dns", "power", "space", "startup", "gaming"],
+  fix: ["drivers", "battery", "lab", "autopsy", "sens"],
+};
+
+function buildMoreMenu() {
+  const box = $("#moreMenu");
+  box.replaceChildren();
+  Object.entries(GROUPS).forEach(([group, views]) => {
+    box.append(el("div", "flyHead", group.toUpperCase()));
+    views.forEach((v) => {
+      const b = el("button", "flyItem", (TITLES[v] || [v])[0]);
+      b.onclick = () => { show(v); box.classList.remove("on"); };
+      box.append(b);
+    });
+  });
+}
+
+$("#moreBtn")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const box = $("#moreMenu");
+  box.classList.toggle("on");
+  if (box.classList.contains("on")) buildMoreMenu();
+});
+document.addEventListener("click", () => $("#moreMenu")?.classList.remove("on"));
+
+/* ------------------------------------------------------------- display */
+let displayTimer = null;
+
+async function loadDisplay() {
+  const box = $("#displayCard");
+  if (!box) return;
+  try {
+    const d = await api("/api/display");
+    if (!d.available) {
+      $("#displayMode").textContent = "read-only";
+      $("#displayNote").textContent = d.reason || "Display control is off in this build.";
+      $("#displayApply").disabled = true;
+      return;
+    }
+    $("#displayMode").textContent =
+      `${d.mode.width}×${d.mode.height} @ ${d.mode.hz}Hz`;
+    $("#displayNote").textContent =
+      "Changing this arms a 12-second watchdog: if you cannot see the screen, the old mode comes back by itself.";
+    $("#displayApply").disabled = !d.writable;
+  } catch (e) {
+    $("#displayNote").textContent = String(e.message || e);
+  }
+}
+
+function startCountdown(seconds) {
+  clearInterval(displayTimer);
+  let left = seconds;
+  $("#displayConfirm").style.display = "";
+  $("#displayUndo").style.display = "";
+  const tick = () => {
+    $("#displayCountdown").textContent =
+      left > 0 ? `Keeping this mode for ${left}s… press "Keep it" to stay.`
+               : "Watchdog fired — the previous mode was restored.";
+    if (left-- <= 0) {
+      clearInterval(displayTimer);
+      $("#displayConfirm").style.display = "none";
+      $("#displayUndo").style.display = "none";
+      loadDisplay();
+    }
+  };
+  tick();
+  displayTimer = setInterval(tick, 1000);
+}
+
+$("#displayApply")?.addEventListener("click", async () => {
+  const hz = parseInt($("#displayHz").value || "0", 10);
+  if (!hz) return;
+  const r = await api("/api/display/set", { hz });
+  if (!r.applied) { $("#displayNote").textContent = r.reason || "Windows refused it."; return; }
+  startCountdown(r.confirm_within || 12);
+});
+
+$("#displayConfirm")?.addEventListener("click", async () => {
+  clearInterval(displayTimer);
+  $("#displayConfirm").style.display = "none";
+  $("#displayUndo").style.display = "none";
+  $("#displayCountdown").textContent = "Kept.";
+  await api("/api/display/confirm", {});
+  loadDisplay();
+});
+
+$("#displayUndo")?.addEventListener("click", async () => {
+  clearInterval(displayTimer);
+  $("#displayConfirm").style.display = "none";
+  $("#displayUndo").style.display = "none";
+  const r = await api("/api/display/revert", {});
+  $("#displayCountdown").textContent = r.reverted ? "Restored." : (r.reason || "");
+  loadDisplay();
+});
+
 /* ---------------------------------------------------------------- wiring */
 document.querySelectorAll(".nav[data-view]").forEach((b) =>
-  b.addEventListener("click", () => show(b.dataset.view)));
+  b.addEventListener("click", () => openPrimary(b.dataset.view)));
 $("#refresh").addEventListener("click", refreshAll);
 $("#quickFix").addEventListener("click", fixSafe);
 $("#runCheckup").addEventListener("click", runCheckup);

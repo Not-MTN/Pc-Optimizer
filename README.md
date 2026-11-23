@@ -1,8 +1,29 @@
-# PC Optimizer
+# Keel
 
-> A Windows 11 optimizer with full access, honest receipts, and a beauty budget of 0% idle CPU.
+> A Windows 11 PC optimizer with an undo button for everything.
 
-**Status: runnable prototype.** Thirteen design documents, four clickable concept screens, a validated 67-table schema, and at [`engine/`](engine) a working app: the Guardian safety core plus checkup, cleaner, benchmark, blocker, gaming session analysis, installer autopsy, desktop-studio governor, consent tiers, event feed and Sens Lab — driven by a local console (400 tests, runs on any OS; the Windows-only ones run in CI).
+![Keel](assets/keel-256.png)
+
+**Status: packaged, not yet signed.** An installable Windows app — `Keel.exe`
+(one file, ~12 MB) plus a per-user installer that needs no administrator rights.
+Under it: sixteen feature screens collapsed into **four tabs**, a journal that
+undoes every change, and a local console with 437 tests (the Windows-only ones
+run in CI). No cloud, no account, no telemetry, no network connection at all.
+
+**Why "Keel"?** The fin under a hull you never see from the deck, and the only
+reason the boat does not capsize. That is where the work is here: the switches
+are small, the journal and the watchdog are the product. See
+[`IDENTITY.md`](IDENTITY.md).
+
+## Build the installer
+
+```powershell
+.\packaging\build.ps1          # Keel.exe + Keel-0.5.0-Setup.exe, then smoke-tests the exe
+```
+
+PyInstaller cannot cross-compile — a Linux build produces a Linux binary with a
+`.exe` name — so this runs on Windows. The CI `package` job builds both artefacts
+on every push and attaches them to the run.
 
 ```bash
 cd engine
@@ -42,8 +63,11 @@ cd engine && python3 -m venv .venv && .venv/bin/pip install -q pytest
 .venv/bin/python -m pytest tests -q                  # 400 passed
 ```
 
-The console covers seventeen views — Overview (health ring, live event feed, journal
-verification), Checkup (per-category scores, consent tiers, fix-all with Undo),
+The console covers sixteen feature screens under **four tabs** — Home (health ring,
+live event feed, journal verification), Look (Desktop Lab, Studio themes,
+Workspaces, Recipes), Speed (Checkup, Cleaner, Storage, Startup, Blocking,
+Performance, Gaming) and Fix (Drivers, Battery & Heat, Hardware Lab, Autopsy,
+Sens Lab). The full list: Checkup (per-category scores, consent tiers, fix-all with Undo),
 Cleaner (scan → vault → restore), Storage (growth, forecast, hash-confirmed
 duplicates), Startup (what boots, what to defer, what is refused), Hardware Lab
 (five peripheral tests + the printable Health Report), Blocking
@@ -55,7 +79,10 @@ events, boot guard, panic), Workspaces (capture what is open, preview-first
 restore), Drivers (graded only by this machine's crashes) and Recipes (one
 sentence → a preview you have to save) and Desktop Lab (taskbar, Explorer, icon
 and theme customization — the 16 things Windows 11 allows, and the 5 it
-refuses, each with the reason). The command palette shows the provider's mark
+refuses, each with the reason). Display control exists and is guarded by a
+12-second watchdog that restores the previous mode unless you confirm — but it is
+**off by default**, because a wrong mode can black the screen that would undo it.
+The command palette shows the provider's mark
 — GitHub, GitLab, Vercel, npm, PyPI — only when a remote, a token or a CLI
 actually names that provider.
 

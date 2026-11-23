@@ -1,0 +1,27 @@
+# Build output. Keel.exe and the installer are ~12 MB binaries produced by
+# `packaging/build.ps1`; committing them would bloat every clone and go stale.
+# They belong on a release, not in the tree.
+dist/
+build/
+*.spec.bak
+.venv-build/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Runtime store — a machine's journal and settings, never source
+engine/pco_data/
+pco_data/
+*.db
+*.db-journal
+*.db-wal
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

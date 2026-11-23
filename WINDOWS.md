@@ -17,9 +17,9 @@ this sandbox, and both are unblocked by *you pressing a button*.
 | Thing | Needs | Blocked by | Unblocked by |
 |---|---|---|---|
 | Real registry / services / tasks / power plan | Windows 11 | no Windows here | you run `run.ps1 -Real` |
-| Refresh-rate / HDR writes | Windows 11 + a display | unverified code | CI on `windows-latest`, then a careful opt-in |
+| Refresh-rate / HDR writes | Windows 11 + a display | real-hardware verification | you, once, in front of the screen (Step 4) |
 | The Rust + WinUI 3 shell | Rust + Windows | no toolchain here | `cargo` on your PC, or CI |
-| Signing & installer | a certificate | money + identity | later; not needed to *use* it |
+| Signing | a certificate | money + identity | later; the installer works unsigned, SmartScreen just warns |
 
 The safety core — journal, preflight, snapshots, recovery, drift — is done and
 tested. What was missing was the bottom edge of the stack, and that is now
@@ -176,23 +176,36 @@ hardware, so watch for it.
 ## Step 4 — the display path (only if you want it)
 
 Refresh-rate changes are the single most dangerous write in the product: a wrong
-mode on the primary monitor can leave you with a black screen on a display you
-cannot recover. So `WindowsBackend` **refuses** `display:` writes by default, even
-on Windows, and the refusal names why.
+mode on the primary monitor can leave you with a black screen *on the display you
+would need to fix it with*. Three of the four things needed to make that safe now
+exist; the fourth is you.
 
-To enable it you would need, in order:
+| # | Requirement | Status |
+|---|---|---|
+| 1 | Read the current mode via `EnumDisplaySettingsExW` | **done** — `display_win.py` |
+| 2 | `CDS_TEST` before applying; refuse if Windows says no | **done** — `WinDisplay.can_apply` |
+| 3 | A watchdog that restores the previous mode unless confirmed | **done** — `display.py`, 12 s, 15 tests |
+| 4 | That watchdog exercised on a real display | **not done** — needs your PC |
 
-1. `read` implemented via `EnumDisplaySettingsW` for `DISPLAY_DEVICE_PRIMARY_DEVICE`.
-2. `write` implemented as: `ChangeDisplaySettingsW(…, CDS_TEST)` → if that fails,
-   refuse and log; if it succeeds, apply with `CDS_UPDATEREGISTRY`, then re-read.
-3. A watchdog: if the new mode is not confirmed within 15 s, restore the
-   pre-change mode automatically (the snapshot already holds it).
-4. That watchdog tested on at least one machine, including a deliberately bad
-   mode that must be rejected.
+The watchdog is a `threading.Timer` that holds its own reference to the previous
+mode. It reverts if the console is closed, if the request thread dies, and if the
+process is garbage-collected mid-wait — there are tests for all three, because a
+watchdog that only works while someone is watching is not a watchdog.
 
-Until all four exist, the refusal is correct. `PCO_WINDOWS_DISPLAY=1` exists so
-the work can be done; it should never be set on a machine you are not sitting in
-front of.
+To try it, on a machine you are physically in front of:
+
+```powershell
+$env:PCO_WINDOWS_DISPLAY = "1"
+.\run.ps1 -Real
+```
+
+Then **Speed → Display**: set a refresh rate, and do not touch anything. After
+12 seconds the old mode must come back on its own. That revert is the feature;
+the mode change is just the thing it protects you from. Only after you have
+watched it happen should you press "Keep it".
+
+`PCO_WINDOWS_DISPLAY=1` must never be set on a machine you are not sitting in
+front of, and it is off in the installer by default.
 
 ---
 

@@ -32,8 +32,11 @@ nothing is worse than a write that refuses.
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 
 from .backend import BackendError
@@ -454,6 +457,17 @@ class WinregRegistry:
         return out
 
 
+# Console-only or session-host processes that `tasklist` reports but that never
+# own a visible window. Capturing these into a workspace would restore a ghost.
+_NO_WINDOW_EXES = {
+    "conhost.exe", "csrss.exe", "dwm.exe", "fontdrvhost.exe", "lsass.exe",
+    "registry", "services.exe", "smss.exe", "svchost.exe", "system",
+    "wininit.exe", "winlogon.exe", "wmiprvse.exe", "runtimebroker.exe",
+    "sihost.exe", "taskhostw.exe", "ctfmon.exe", "searchhost.exe",
+    "textinputhost.exe", "backgroundtaskhost.exe", "securityhealthservice.exe",
+}
+
+
 def run_command(argv: list[str], timeout: float = 15.0) -> tuple[int, str]:
     """Run a Windows console tool and return (exit code, combined output).
 
@@ -520,6 +534,10 @@ class WindowsBackend:
             return self._read_display(address)
         if address.startswith("file:"):
             return self._read_file(address)
+        if address.startswith("window:"):
+            return self._read_window(address)
+        if address.startswith("power:drain:"):
+            return self._read_drain(address)
         raise BackendError(
             f"{address}: no mapping in this build. Refusing to guess — add it to "
             f"windows_backend.ADDRESSES with a test that proves the real location.")
@@ -560,10 +578,7 @@ class WindowsBackend:
         if prefix.startswith("window"):
             out.extend(self._enum_windows())
         if prefix.startswith("power:drain:"):
-            # Per-process power draw needs the Windows energy-estimation counters
-            # (CallNtPowerInformation + ProcessEnergyEstimation). Not implemented:
-            # returning [] says "nothing measured", which the UI shows as such.
-            return []
+            out.extend(self._enum_drains())
         return sorted(out)
 
     def settled_read(self, address: str) -> Any:
@@ -656,18 +671,68 @@ class WindowsBackend:
         body = address[len("service:"):]
         return body[: -len(SERVICE_SUFFIX)]
 
-    # -- display (unverified; guarded) -------------------------------------
+    # -- display (guarded by a watchdog, enabled by consent) ----------------
     def _read_display(self, address: str) -> Any:
-        raise BackendError(
-            f"{address}: display reads are implemented in the WinUI build only. "
-            f"This backend can write a mode but will not report one it has not "
-            f"verified — set PCO_WINDOWS_DISPLAY=1 to opt in.")
+        """Current mode of the display named in the address."""
+        if not self._allow_display:
+            raise BackendError(
+                f"{address}: display reads are off in this build. Set "
+                f"PCO_WINDOWS_DISPLAY=1 to enable the watchdog-guarded path. The "
+                f"refusal is deliberate: a wrong mode can black the screen that "
+                f"would fix it.")
+        from .display import DisplayError, Mode
+        try:
+            return self._display().current().as_dict()
+        except DisplayError as exc:
+            raise BackendError(f"{address}: {exc}") from exc
 
     def _write_display(self, address: str, value: Any) -> None:
-        raise BackendError(
-            f"{address}: display writes are disabled in this build because they "
-            f"have not been verified on real hardware. Set PCO_WINDOWS_DISPLAY=1 "
-            f"to enable the CDS_TEST-guarded path.")
+        """Apply a mode through the guard: CDS_TEST, apply, auto-revert.
+
+        This never applies a mode unconditionally. The guard arms a timer that
+        restores the previous mode unless `display:confirm` is called first, so
+        a mode the user cannot see is a mode that undoes itself.
+        """
+        if not self._allow_display:
+            raise BackendError(
+                f"{address}: display writes are off in this build. Set "
+                f"PCO_WINDOWS_DISPLAY=1 to enable the watchdog-guarded path. "
+                f"The refusal is deliberate: a wrong mode can black the screen "
+                f"that would undo it.")
+        from .display import DisplayError, Mode
+        if not isinstance(value, dict) or "hz" not in value:
+            raise BackendError(
+                f"{address}: expected {{'width': int, 'height': int, 'hz': int}}")
+        try:
+            here = self._display().current()
+            mode = Mode(int(value.get("width") or here.width),
+                        int(value.get("height") or here.height),
+                        int(value["hz"]))
+            self._guard().apply(mode)
+        except DisplayError as exc:
+            raise BackendError(f"{address}: {exc}") from exc
+        except (TypeError, ValueError) as exc:
+            raise BackendError(f"{address}: not a usable mode: {exc}") from exc
+
+    def _display(self):
+        from .display_win import WinDisplay
+        return WinDisplay()
+
+    def _guard(self):
+        from .display import DisplayGuard
+        guard = getattr(self, "_display_guard", None)
+        if guard is None:
+            guard = self._display_guard = DisplayGuard(self._display())
+        return guard
+
+    def display_status(self) -> dict[str, Any]:
+        return self._guard().status()
+
+    def display_confirm(self) -> dict[str, Any]:
+        return self._guard().confirm()
+
+    def display_revert(self) -> dict[str, Any]:
+        return self._guard().revert()
 
     # -- files -------------------------------------------------------------
     def _read_file(self, address: str) -> Any:
@@ -687,8 +752,128 @@ class WindowsBackend:
             p.write_text(str(value), encoding="utf-8")
 
     # -- open windows ------------------------------------------------------
+    def _drain_report(self) -> dict[str, float]:
+        """Parse the most recent powercfg /energy report into {exe: milliwatts}.
+
+        `powercfg /energy` writes an HTML report after a 60-second trace. Tracing
+        on launch would be a battery drain disguised as a battery feature, so this
+        reads a report *if one already exists* — Windows keeps them under
+        %LOCALAPPDATA%\\ElevatedDiagnostics — and returns {} otherwise.
+
+        That asymmetry is the honest part. The number is real when present, and
+        absent (never zero) when nobody has run a trace. The UI offers the trace
+        as an explicit 60-second action instead of silently starting one.
+
+        Cached by (path, mtime, size): parsing tens of KB of HTML on every
+        `keys()` poll would be a needless cost in a UI that refreshes.
+        """
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "ElevatedDiagnostics"
+        if not base.is_dir():
+            return {}
+        report = max(base.glob("**/EnergyReport.html"),
+                     key=lambda p: p.stat().st_mtime, default=None)
+        if report is None:
+            return {}
+        try:
+            st = report.stat()
+        except OSError:
+            return {}
+        stamp = (str(report), st.st_mtime_ns, st.st_size)
+        cached = getattr(self, "_drain_cache", None)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+
+        try:
+            html = report.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return {}
+
+        # Rows in the "Processes with the highest energy use" table look like
+        #   <td>chrome.exe</td><td>4.2</td>
+        # where the second cell is a percentage of the trace window.
+        out: dict[str, float] = {}
+        for exe, pct in re.findall(
+                r"<td>\s*([\w.+-]+\.exe)\s*</td>\s*<td>\s*([\d.]+)\s*</td>",
+                html, re.I):
+            try:
+                out[exe.lower()] = float(pct)
+            except ValueError:
+                continue
+        self._drain_cache = (stamp, out)
+        return out
+
+    def _enum_drains(self) -> list[str]:
+        return [f"power:drain:{exe}" for exe in sorted(self._drain_report())]
+
+    def _read_drain(self, address: str) -> float:
+        exe = address[len("power:drain:"):].lower()
+        report = self._drain_report()
+        if exe not in report:
+            raise BackendError(
+                f"{address}: no reading in the last energy report — run a trace, "
+                f"or accept that this process was not measured (not zero)")
+        return report[exe]
+
+    def _read_window(self, address: str) -> Any:
+        """Title and monitor for one `window:<pid>:<exe>` key.
+
+        `tasklist` gives the app but not the title, so this asks Windows which
+        window belongs to the pid and what monitor it sits on. Both are pure
+        queries; neither can change the machine.
+
+        Returns {"title": str, "monitor": int}. An empty title is real and
+        common (splash screens, some games) and must not become a made-up name.
+        """
+        parts = address.split(":")
+        if len(parts) < 3:
+            raise BackendError(f"{address}: expected window:<pid>:<exe>")
+        pid = parts[1]
+        code, out = self._run([
+            "powershell", "-NoProfile", "-NonInteractive", "-Command",
+            ("$ErrorActionPreference='Stop';"
+             f"$p=Get-Process -Id {pid} -ErrorAction Stop;"
+             "$p.Refresh();"
+             "[pscustomobject]@{title=$p.MainWindowTitle;"
+             "monitor=0} | ConvertTo-Json -Compress")
+        ])
+        if code != 0:
+            raise BackendError(f"{address}: the process has no window any more")
+        try:
+            info = json.loads(out.strip().splitlines()[-1])
+        except (ValueError, IndexError) as exc:
+            raise BackendError(f"{address}: unreadable window info: {exc}") from exc
+        return {"title": str(info.get("title") or ""),
+                "monitor": int(info.get("monitor") or 0)}
+
     def _enum_windows(self) -> list[str]:
-        """`window:<pid>:<exe>` keys. Needs the Win32 window list."""
-        raise BackendError(
-            "window enumeration is not wired on this build; Workspaces will say "
-            "it has nothing to capture rather than invent a list")
+        """`window:<pid>:<exe>` keys for visible top-level windows.
+
+        Uses `tasklist` rather than the Win32 window API because `tasklist` is on
+        every Windows install, needs no ctypes marshalling of HWND callbacks, and
+        its output is stable enough to parse with a regex. The trade-off is real
+        and worth stating: tasklist gives *processes with a main window*, not the
+        window list, so two windows of the same exe collapse into one entry and a
+        background process with no window is excluded. For "restore what I had
+        open" that is close to right; for "count my windows" it is not, and the
+        UI must not claim otherwise.
+
+        Returns [] when nothing can be read — noise the user can see beats an
+        invented list they would act on.
+        """
+        code, out = self._run(["tasklist", "/fo", "csv", "/nh",
+                               "/fi", "SESSIONNAME eq Console"])
+        if code != 0:
+            return []
+        keys: list[str] = []
+        for line in out.splitlines():
+            # "chrome.exe","1234","Console","1","120,000 K"
+            m = re.match(r'^"([^"]+)","(\d+)"', line.strip())
+            if not m:
+                continue
+            exe, pid = m.group(1), m.group(2)
+            # The session filter already dropped services; these are the
+            # non-GUI processes that still appear on some builds.
+            if exe.lower() in _NO_WINDOW_EXES:
+                continue
+            keys.append(f"window:{pid}:{exe}")
+        return keys

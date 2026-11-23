@@ -291,18 +291,28 @@ def test_power_scheme_write_uses_the_guid():
 
 
 # ------------------------------------------------------- what must not happen
-def test_display_writes_are_refused_until_verified():
+def test_display_writes_are_off_unless_explicitly_enabled():
     """A refresh-rate change that is wrong can leave a screen black with no way
-    back. Until this path is verified on hardware it refuses, loudly."""
+    back. The path exists and is watchdog-guarded, but it is *off* by default:
+    enabling it is an explicit act (PCO_WINDOWS_DISPLAY=1), not an accident."""
     with pytest.raises(BackendError) as exc:
         backend().write("display:primary.mode", {"hz": 165})
-    assert "not been verified" in str(exc.value)
+    assert "PCO_WINDOWS_DISPLAY=1" in str(exc.value)
+    assert "black the screen" in str(exc.value)
+
+
+def test_display_read_is_off_by_the_same_switch():
+    """Reading is harmless on its own, but shipping a half-on family is worse
+    than shipping it consistently off."""
+    with pytest.raises(BackendError) as exc:
+        backend().read("display:primary.mode")
+    assert "PCO_WINDOWS_DISPLAY=1" in str(exc.value)
 
 
 def test_window_enumeration_does_not_invent_a_list():
-    with pytest.raises(BackendError) as exc:
-        backend().keys("window:")
-    assert "nothing to capture" in str(exc.value)
+    """The list is now real (tasklist), so the guarantee changes shape: when the
+    source fails, the answer is still "nothing", never a plausible-looking guess."""
+    assert backend(runner=_runner(tasklist=(1, "ERROR"))).keys("window:") == []
 
 
 def test_drain_counters_return_nothing_rather_than_a_guess():
@@ -534,3 +544,104 @@ def test_the_desktop_lab_table_and_the_backend_table_agree():
     assert not missing, (
         "desktop lab offers a value the backend cannot write: "
         f"{missing}")
+
+
+# =========================================================== window enumeration
+def _runner(tasklist=None, window=None):
+    r = FakeRunner()
+    if tasklist is not None:
+        r.responses["tasklist /fo"] = tasklist
+    if window is not None:
+        r.responses["powershell -NoProfile"] = window
+    return r
+
+
+def test_window_keys_come_from_the_process_list():
+    """Workspaces needs a real list, not an apology. tasklist is the source."""
+    r = _runner(tasklist=(0, '"chrome.exe","1234","Console","1","120,000 K"\n'
+                             '"Discord.exe","5678","Console","1","80,000 K"\n'))
+    be = backend(runner=r)
+    assert be.keys("window:") == ["window:1234:chrome.exe", "window:5678:Discord.exe"]
+
+
+def test_window_keys_exclude_processes_that_never_own_a_window():
+    """Capturing conhost or svchost into a workspace restores a ghost."""
+    r = _runner(tasklist=(0, '"chrome.exe","1","Console","1","1 K"\n'
+                             '"conhost.exe","2","Console","1","1 K"\n'
+                             '"svchost.exe","3","Console","1","1 K"\n'
+                             '"dwm.exe","4","Console","1","1 K"\n'))
+    assert backend(runner=r).keys("window:") == ["window:1:chrome.exe"]
+
+
+def test_window_keys_are_empty_when_tasklist_fails():
+    """[] says "nothing measured"; an invented list would be acted on."""
+    assert backend(runner=_runner(tasklist=(1, "ERROR: no"))).keys("window:") == []
+
+
+def test_window_read_returns_title_and_monitor():
+    r = _runner(window=(0, '{"title": "Inbox - Gmail", "monitor": 1}'))
+    assert backend(runner=r).read("window:1234:chrome.exe") == {
+        "title": "Inbox - Gmail", "monitor": 1}
+
+
+def test_window_read_tolerates_an_empty_title():
+    """Splash screens and some games have no title. That is real, not an error."""
+    r = _runner(window=(0, '{"title": "", "monitor": 0}'))
+    assert backend(runner=r).read("window:1234:game.exe")["title"] == ""
+
+
+def test_window_read_rejects_a_malformed_address():
+    with pytest.raises(BackendError, match="window:<pid>:<exe>"):
+        backend().read("window:oops")
+
+
+# ================================================================ power drains
+def test_drains_are_empty_when_no_energy_report_exists(tmp_path, monkeypatch):
+    """Absent must never become zero — that is the whole point."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    be = backend()
+    assert be.keys("power:drain:") == []
+    with pytest.raises(BackendError, match="not measured"):
+        be.read("power:drain:chrome.exe")
+
+
+def test_drains_parse_the_latest_energy_report(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    d = tmp_path / "ElevatedDiagnostics" / "20261123"
+    d.mkdir(parents=True)
+    (d / "EnergyReport.html").write_text(
+        "<table><tr><td>chrome.exe</td><td>4.2</td></tr>"
+        "<tr><td>Discord.exe</td><td>1.5</td></tr></table>", encoding="utf-8")
+    be = backend()
+    assert be.keys("power:drain:") == [
+        "power:drain:chrome.exe", "power:drain:discord.exe"]
+    assert be.read("power:drain:chrome.exe") == 4.2
+
+
+def test_the_energy_report_is_parsed_once_per_file_version(tmp_path, monkeypatch):
+    """The console polls; re-parsing tens of KB of HTML each time is waste."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    d = tmp_path / "ElevatedDiagnostics"
+    d.mkdir(parents=True)
+    (d / "EnergyReport.html").write_text("<td>chrome.exe</td><td>4.2</td>",
+                                         encoding="utf-8")
+    be = backend()
+    be.keys("power:drain:")
+    stamp = be._drain_cache[0]
+    be.keys("power:drain:")
+    assert be._drain_cache[0] == stamp
+
+
+def test_a_replaced_report_is_re_read(tmp_path, monkeypatch):
+    """Caching must not pin a stale measurement forever."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    d = tmp_path / "ElevatedDiagnostics"
+    d.mkdir(parents=True)
+    report = d / "EnergyReport.html"
+    report.write_text("<td>chrome.exe</td><td>4.2</td>", encoding="utf-8")
+    be = backend()
+    assert be.keys("power:drain:") == ["power:drain:chrome.exe"]
+    report.write_text("<td>firefox.exe</td><td>9.9</td>", encoding="utf-8")
+    import os
+    os.utime(report, (2000000000, 2000000000))
+    assert be.keys("power:drain:") == ["power:drain:firefox.exe"]

@@ -69,6 +69,10 @@ def _service() -> Service:
 
 ROUTES: dict[str, str] = {
     "/api/status": "status",
+    "/api/display": "display.mode",
+    "/api/display/set": "display.set",
+    "/api/display/confirm": "display.confirm",
+    "/api/display/revert": "display.revert",
     "/api/checkup": "checkup.run",
     "/api/checkup/fix": "checkup.fix_safe",
     "/api/clean/scan": "clean.scan",

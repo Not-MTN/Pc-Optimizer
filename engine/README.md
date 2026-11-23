@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (400 tests: 389 here, 11 that only a real Windows machine can run)
+## What works today (437 tests: 426 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -271,6 +271,14 @@ Then `windows-latest` started running, and found four more that Linux could not:
 39. **`plan_icon` rejected `imageres.dll,-54`** — the comma and index are part of a Windows icon reference, not decoration. Anchoring the regex on `$` rejected every library icon, which is how most system icons are actually specified.
 40. **A plan of only-refusals reported `applied: True`** — asking for a transparent taskbar would have shown a success toast for something the app explicitly refuses to do.
 
+Then the app got a name, an installer and four tabs, which found five more:
+
+41. **The navigation was the problem it was meant to solve** — seventeen icon buttons in one rail, each one an equal-priority destination. Nothing is more confusing than a UI that refuses to rank itself. Replaced with four primary tabs (Home / Look / Speed / Fix), a More flyout for the rest, and a test (`test_the_rail_stays_small`) that fails if a fifth primary tab ever appears. Every one of the seventeen views is still reachable; a view you cannot reach is a feature you did not build.
+42. **`GROUPS` named a view that does not exist** — `bench` was listed under Speed; the benchmark lives inside `power`. Nothing would have crashed: the flyout would have offered a button that silently did nothing, which is precisely the failure mode the contract test exists to catch. It compares every name in `GROUPS` against every `id="view-…"` in both directions.
+43. **The hub screens were reachable but empty** — the primary buttons opened a group, and the group had no content because only leaf views had bodies. A blank screen behind a tab is worse than a hidden one. The primary tabs are now real hub screens with a card per destination.
+44. **`app.py` set the wrong environment variable** — it wrote `PCO_DATA_DIR` while `server.py` reads `PCO_DATA`, so the packaged app would have written its database to the *current working directory*. That works when launched from the project folder and fails the moment it is installed, which is the definition of a bug that ships. Caught by reading the reader instead of trusting the writer.
+45. **The display refusal and the display feature disagreed** — the module docstring promised a `CDS_TEST`-guarded write with automatic revert; the code raised `BackendError` unconditionally. A comment describing a safety feature that does not exist is worse than no comment, because it is the thing the next person trusts. The guard now exists (`display.py`, 15 tests) and the switch that enables it is explicit.
+
 ## Porting to Rust (the contract)
 
 | Python | Rust |
@@ -285,13 +293,27 @@ The checksum formula and the JSON keys are the two things that must not drift.
 
 ## Not built yet (deliberately)
 
+- **The installer** — `packaging/` builds `Keel.exe` (PyInstaller, one file, no
+  console) and `Keel-0.5.0-Setup.exe` (Inno Setup 6, per-user, no UAC). The CI
+  `package` job produces both as downloadable artefacts. It cannot be built off
+  Windows: PyInstaller bundles the interpreter it runs under.
+- **The app shell** — `pco_engine/app.py` picks a free loopback port, migrates the
+  store on a thread, waits for `/api/health`, then opens a window through pywebview
+  (WebView2, already present on Windows 11) or the default browser. Single-instance
+  via a named mutex, because two copies migrating one database is a corruption path.
 - ~~`WindowsBackend`~~ — **now written** (`pco_engine/windows_backend.py`): registry,
   services, tasks, power plans and files, with an explicit address table instead of
   guessing. Its mapping logic is tested on every OS; the real calls are tested by
-  CI on `windows-latest`. The display family stays refused until it is verified on
-  hardware. See `WINDOWS.md`.
+  CI on `windows-latest`. The display family exists and is watchdog-guarded, but is
+  **off by default** (`PCO_WINDOWS_DISPLAY=1` to enable): a wrong mode can black the
+  screen that would undo it. See `WINDOWS.md`.
 - The DNS resolver itself (this repo has the decision engine; the resolver needs Windows NRPT).
 - The Rust port and the WinUI 3 shell.
+- Window enumeration now uses `tasklist` (processes with a main window) rather than
+  the Win32 window list, so two windows of one exe collapse into one workspace entry.
+  Right for "restore what I had open", wrong for counting windows.
+- Per-process battery drain reads a `powercfg /energy` report **if one exists**; it
+  never starts a 60-second trace on its own. Absent stays absent, never zero.
 - Widgets, wallpaper renderer, theme application to the real shell (the governor and
   document format exist; the WinUI renderer needs Windows).
 - Game auto-detect via process watcher (the library, classifier and plan are done;

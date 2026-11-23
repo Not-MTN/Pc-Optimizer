@@ -118,18 +118,61 @@ def test_every_element_the_script_touches_exists_in_the_markup():
         f"the script reads elements that do not exist in the markup: {missing}")
 
 
+def _groups(text: str) -> dict[str, list[str]]:
+    block = re.search(r"const GROUPS = \{(.*?)\n\};", text, re.S)
+    assert block, "could not find the GROUPS map"
+    out = {}
+    for name, views in re.findall(r"(\w+):\s*\[([^\]]*)\]", block.group(1)):
+        out[name] = re.findall(r'"([a-z]+)"', views)
+    return out
+
+
 def test_every_view_button_has_a_section():
+    """The four primary buttons must each open a view that exists."""
     text = _console_text()
-    views = set(re.findall(r'data-view="([a-z]+)"', text))
+    buttons = set(re.findall(r'class="nav primary" data-view="([a-z]+)"', text))
     sections = set(re.findall(r'id="view-([a-z]+)"', text))
-    assert views == sections, (
-        f"nav and sections disagree — nav: {sorted(views)}, sections: {sorted(sections)}")
+    assert buttons, "could not find the primary nav buttons"
+    assert buttons <= sections, f"nav buttons with no section: {sorted(buttons - sections)}"
+
+
+def test_every_section_is_reachable():
+    """A view you cannot reach is a feature you did not build.
+
+    This is the inverse of the old assertion. The rail no longer shows every
+    view — that was the problem — so the guarantee moves to reachability: the
+    union of the four primary views and the More menu must cover every section,
+    with nothing listed that does not exist.
+    """
+    text = _console_text()
+    sections = set(re.findall(r'id="view-([a-z]+)"', text))
+    primaries = set(re.findall(r'class="nav primary" data-view="([a-z]+)"', text))
+    groups = _groups(text)
+    listed = [v for views in groups.values() for v in views]
+
+    assert sorted(listed) == sorted(set(listed)), "a view is listed twice in GROUPS"
+    # A group's own screen is reached by its primary button, not from the menu.
+    reachable = primaries | set(listed)
+    assert not (sections - reachable), f"unreachable views: {sorted(sections - reachable)}"
+    assert not (reachable - sections), f"nav names missing sections: {sorted(reachable - sections)}"
+
+
+def test_the_rail_stays_small():
+    """Four destinations, not fourteen.
+
+    The whole product premise is that a settings app with a hundred buttons is
+    a settings app nobody opens. This pins the number so it cannot creep back.
+    """
+    text = _console_text()
+    primaries = re.findall(r'class="nav primary" data-view="([a-z]+)"', text)
+    assert len(primaries) == 4, f"expected exactly 4 primary tabs, found {primaries}"
+    assert len(_groups(text)) == 4, "GROUPS must define exactly four groups"
 
 
 def test_every_view_has_a_title_entry():
     """Clicking a nav button whose view has no TITLES entry throws immediately."""
     text = _console_text()
-    views = set(re.findall(r'data-view="([a-z]+)"', text))
+    views = set(re.findall(r'id="view-([a-z]+)"', text)) | set(_groups(text))
     titles_block = re.search(r"const TITLES = \{(.*?)\};\n", text, re.S)
     assert titles_block, "could not find the TITLES map"
     titled = set(re.findall(r"([a-z]+):\s*\[", titles_block.group(1)))
