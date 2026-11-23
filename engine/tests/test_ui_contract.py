@@ -297,20 +297,52 @@ def test_the_frozen_entry_point_has_no_relative_imports():
 
 
 def test_the_entry_point_actually_runs_as_a_script():
-    """The real check: run app.py the way the freeze does, not the way -m does."""
+    """The real check: run app.py the way the freeze does, not the way -m does.
+
+    Hermetic on purpose. PYTHONPATH is *appended* rather than replaced — the
+    Windows runner already has entries there, and discarding them made this test
+    fail on Windows while passing on Linux. PCO_DATA goes to a temporary
+    directory so a test run never writes into the working tree.
+    """
+    import os
     import subprocess
     import sys
+    import tempfile
     from pathlib import Path
     engine = Path(__file__).resolve().parent.parent
     app = engine / "pco_engine" / "app.py"
-    env = dict(**__import__("os").environ)
-    env["PYTHONPATH"] = str(engine)
-    env["PCO_DATA"] = str(Path(__file__).resolve().parent / ".no-write")
-    r = subprocess.run([sys.executable, str(app), "--version"],
-                       capture_output=True, text=True, env=env, timeout=120)
+
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (str(engine) + os.pathsep + existing).rstrip(os.pathsep)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        env["PCO_DATA"] = tmp
+        r = subprocess.run([sys.executable, str(app), "--version"],
+                           capture_output=True, text=True, env=env,
+                           cwd=tmp, timeout=180)
     assert r.returncode == 0, (
         f"app.py failed as a top-level script:\n{r.stderr[-1500:]}")
     assert "Keel" in r.stdout
+
+
+def _import_app():
+    """Import pco_engine.app without leaving the engine root on sys.path."""
+    import sys
+    from pathlib import Path
+    engine = Path(__file__).resolve().parent.parent
+    inserted = str(engine) not in sys.path
+    if inserted:
+        sys.path.insert(0, str(engine))
+    try:
+        import pco_engine.app as app
+        return app
+    finally:
+        if inserted:
+            try:
+                sys.path.remove(str(engine))
+            except ValueError:
+                pass
 
 
 def test_the_data_dir_honours_pco_data():
@@ -318,57 +350,41 @@ def test_the_data_dir_honours_pco_data():
     data_dir() has to read it back or the two disagree. They did: an explicitly
     set PCO_DATA was ignored, and the crash log went to the platform default
     instead of the directory the user had been pointed at."""
-    import importlib
     import os
-    from pathlib import Path
-    engine = Path(__file__).resolve().parent.parent
-    import sys
-    sys.path.insert(0, str(engine))
+    app = _import_app()
+    old = os.environ.get("PCO_DATA")
+    os.environ["PCO_DATA"] = os.path.join(os.sep, "tmp", "keel-pco-data-check")
     try:
-        import pco_engine.app as app
-        old = os.environ.get("PCO_DATA")
-        os.environ["PCO_DATA"] = "/tmp/keel-pco-data-check"
-        try:
-            assert str(app.data_dir()) == "/tmp/keel-pco-data-check"
-        finally:
-            if old is None:
-                os.environ.pop("PCO_DATA", None)
-            else:
-                os.environ["PCO_DATA"] = old
+        assert str(app.data_dir()) == os.environ["PCO_DATA"]
     finally:
-        if str(engine) in sys.path:
-            sys.path.remove(str(engine))
+        if old is None:
+            os.environ.pop("PCO_DATA", None)
+        else:
+            os.environ["PCO_DATA"] = old
 
 
 def test_a_frozen_crash_writes_a_traceback_before_dying():
     """console=False means a frozen crash writes nowhere. The dialog vanishes on
     Close and the details with it. This is the file that survives."""
     import os
-    import sys
     import tempfile
     from pathlib import Path
-    engine = Path(__file__).resolve().parent.parent
-    sys.path.insert(0, str(engine))
-    try:
-        import pco_engine.app as app
-        old = os.environ.get("PCO_DATA")
-        with tempfile.TemporaryDirectory() as d:
-            os.environ["PCO_DATA"] = d
+    app = _import_app()
+    old = os.environ.get("PCO_DATA")
+    with tempfile.TemporaryDirectory() as d:
+        os.environ["PCO_DATA"] = d
+        try:
             try:
-                try:
-                    raise RuntimeError("deliberate test crash")
-                except BaseException as exc:
-                    app._crash_log(exc)
-                log = Path(d) / "crash.log"
-                assert log.exists(), "no crash.log was written"
-                text = log.read_text(encoding="utf-8")
-                assert "deliberate test crash" in text
-                assert "Traceback" in text
-            finally:
-                if old is None:
-                    os.environ.pop("PCO_DATA", None)
-                else:
-                    os.environ["PCO_DATA"] = old
-    finally:
-        if str(engine) in sys.path:
-            sys.path.remove(str(engine))
+                raise RuntimeError("deliberate test crash")
+            except BaseException as exc:
+                app._crash_log(exc)
+            log = Path(d) / "crash.log"
+            assert log.exists(), "no crash.log was written"
+            text = log.read_text(encoding="utf-8")
+            assert "deliberate test crash" in text
+            assert "Traceback" in text
+        finally:
+            if old is None:
+                os.environ.pop("PCO_DATA", None)
+            else:
+                os.environ["PCO_DATA"] = old

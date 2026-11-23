@@ -57,7 +57,31 @@ jobs:
           python -m pip install pytest
       - name: unit tests (mapping logic, same as Linux)
         working-directory: engine
-        run: python -m pytest -q
+        shell: pwsh
+        run: |
+          # Report which tests failed as an ::error:: annotation. The job log
+          # lives in blob storage and is not always reachable; annotations are
+          # served by the API. Without this a failure here is just "exit code 1".
+          python -m pytest -q --tb=line 2>&1 | Tee-Object -FilePath pytest-win.log
+          if ($LASTEXITCODE -ne 0) {
+            $bad = @(Get-Content pytest-win.log | Select-String -Pattern '^(FAILED|ERROR)' | Select-Object -First 8)
+            $msg = ($bad | ForEach-Object { $_.Line }) -join ' | '
+            if (-not $msg) { $msg = 'pytest failed; see artifact' }
+            if ($msg.Length -gt 850) { $msg = $msg.Substring(0, 850) }
+            Write-Output "::error title=Windows tests failed::$msg"
+            Write-Output "---- last 40 lines ----"
+            Get-Content pytest-win.log -Tail 40
+            exit 1
+          }
+
+      - name: keep the windows test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-log
+          path: engine/pytest-win.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: real-backend contract (the part Linux cannot run)
         working-directory: engine
         env:
