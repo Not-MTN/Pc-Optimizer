@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (543 tests: 532 here, 11 that only a real Windows machine can run)
+## What works today (546 tests: 535 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -359,6 +359,16 @@ Then the app got a name, an installer and four tabs, which found five more:
     what the suite is for. There is now a test that fetches every parameterless
     GET route and asserts 200, and another that asserts query parameters reach
     the action.
+
+63. **State changes were reachable by GET.** Twenty verbs — `theme.apply`,
+    `drivers.block`, `workspace.capture`, `safety.confirm` — answered to a GET.
+    Any page on the internet can point an `<img>` at `localhost:7788` with no
+    CORS preflight and no cookie, and this app's whole purpose is changing system
+    state on request. Those verbs now answer 405 over GET and name the POST.
+
+64. **A missing parameter was a 500 traceback** on every GET route that needs one.
+    `do_GET` had no `KeyError` handler; `do_POST` always did. It now answers 400
+    with `missing query parameter 'theme_id'`, which is a thing a user can act on.
 
 ## The wallpaper engine
 

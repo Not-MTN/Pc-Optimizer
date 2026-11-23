@@ -230,6 +230,10 @@ class Handler(BaseHTTPRequestHandler):
                 # parameterised GET router ("theme.get": theme_id) raised a
                 # KeyError and returned 500 — the console asked, the server had
                 # the answer, and the wire between them dropped the argument.
+                if ROUTES[path] in self.MUTATING:
+                    self._json(405, {"error": f"{ROUTES[path]} changes state; "
+                                              "POST it to this same path"})
+                    return
                 from urllib.parse import parse_qs
                 query = {k: v[0] for k, v in parse_qs(parsed.query).items() if v}
                 with _LOCK:
@@ -286,10 +290,32 @@ class Handler(BaseHTTPRequestHandler):
                          "plain": t.plain, "tier": t.tier, "risk": t.risk}
                         for t in svc.catalog.all()]})
                 return
+        except KeyError as exc:
+            # A GET route needs a parameter the caller did not send. That is the
+            # caller's mistake, and naming the missing field is the whole fix:
+            # before this, every such request was a 500 with a traceback.
+            self._json(400, {"error": f"missing query parameter {exc}"})
+            return
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
         except Exception:  # noqa: BLE001 - the UI must show the failure, not crash
             self._json(500, {"error": traceback.format_exc(limit=3)})
             return
         self._json(404, {"error": f"no route {path}"})
+
+    # Verbs that change something. Reaching them over GET would let any web page
+    # fire them at localhost with an <img> tag: no CORS, no preflight, and the
+    # cookie-less request still arrives. They are POST-only.
+    MUTATING = {
+        "workspace.restore", "workspace.capture", "workspace.delete",
+        "drivers.block", "drivers.rollback",
+        "recipe.parse", "recipe.create", "recipe.toggle", "recipe.delete",
+        "theme.apply", "theme.save", "theme.import",
+        "wallpaper.save", "wallpaper.apply",
+        "shell.apply", "shell.theme.save", "shell.theme.import",
+        "safety.confirm",
+    }
 
     # -------------------------------------------------------------------- POST
     def do_POST(self) -> None:  # noqa: N802

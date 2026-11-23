@@ -632,3 +632,46 @@ def test_the_export_route_answers_over_http(live_server):
     r = _get(live_server, "/api/themes/export?theme_id=dusk")
     assert r["ok"] is True
     assert '"name": "Dusk"' in r["text"]
+
+
+def test_a_state_change_is_refused_over_get(live_server):
+    """Any page on the internet can point an <img> at localhost:7788 — no CORS
+    preflight, no cookie needed. A GET that changes system state is therefore a
+    cross-site request forgery with extra steps, and this app changes system
+    state for a living. State changes are POST-only."""
+    import urllib.error
+    import urllib.request
+    for path in ("/api/themes/apply?theme_id=keel",
+                 "/api/workspace/capture?name=x",
+                 "/api/drivers/block?x=1",
+                 "/api/safety/confirm?x=1"):
+        try:
+            urllib.request.urlopen(live_server + path, timeout=10)
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 405, f"{path} -> {exc.code}, expected 405"
+        else:
+            raise AssertionError(f"{path} changed state over GET")
+
+
+def test_the_refusal_says_what_to_do_instead(live_server):
+    import urllib.error
+    import urllib.request
+    try:
+        urllib.request.urlopen(
+            live_server + "/api/themes/apply?theme_id=keel", timeout=10)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode()
+    assert "changes state" in body and "POST" in body
+
+
+def test_a_missing_parameter_is_a_400_that_names_it(live_server):
+    """Not a 500. 'missing query parameter theme_id' is a fixable error;
+    a traceback in a JSON blob is not."""
+    import urllib.error
+    import urllib.request
+    try:
+        urllib.request.urlopen(live_server + "/api/themes/get", timeout=10)
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400
+        body = exc.read().decode()
+    assert "theme_id" in body
