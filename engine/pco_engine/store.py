@@ -36,8 +36,61 @@ class StoreError(RuntimeError):
     pass
 
 
+class StoreUnusable(RuntimeError):
+    """The database file exists but cannot be used.
+
+    Distinct from a *missing* database, which is a first run and is normal. This
+    is the power-loss case: a file that is present, non-empty, and not a
+    database. SQLite reports it as `DatabaseError: file is not a database` from
+    somewhere deep in the first pragma, which reaches the user as a traceback
+    with no explanation and no way forward.
+    """
+
+
+def _looks_like_sqlite(path: str) -> bool:
+    """A zero-length file is a fresh database, not a corrupt one."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(16)
+    except OSError:
+        return True          # let sqlite produce its own error for that case
+    if not head:
+        return True          # empty == new
+    if not head.startswith(b"SQLite format 3\x00"):
+        return False
+    # A valid magic is not a valid database. A file truncated mid-header has the
+    # magic and nothing else, and SQLite fails later with the same unhelpful
+    # "file is not a database". Real databases have a page size and a non-zero
+    # page count in the header; require both.
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return True
+    if size < 512:           # smaller than one page: cannot be a database
+        return False
+    header = head.ljust(64, b"\x00")
+    page_size = int.from_bytes(header[16:18], "big")
+    if page_size == 0:
+        page_size = 65536
+    if page_size < 512 or (page_size & (page_size - 1)):
+        return False         # must be a power of two >= 512
+    return True
+
+
 def connect(path: str) -> sqlite3.Connection:
-    """Open (or create) a database with the production pragmas."""
+    """Open (or create) a database with the production pragmas.
+
+    A corrupt store is reported before SQLite's first pragma, because after that
+    point the message belongs to SQLite and nobody can act on it.
+    """
+    if not _looks_like_sqlite(path):
+        raise StoreUnusable(
+            f"{path} exists but is not a SQLite database.\n"
+            "This usually means a write was interrupted (a crash or power loss).\n"
+            "Keel will not touch it. Move it aside and start again:\n"
+            f"  rename \"{path}\" \"{path}.damaged\"\n"
+            "Your journal is in the same folder if SQLite can still read it; "
+            "nothing here is deleted automatically.")
     # check_same_thread=False: the service is shared by the HTTP bridge's worker
     # threads. Callers serialise access (server._LOCK); this is about keeping
     # multi-statement transactions in one logical order, not memory safety.

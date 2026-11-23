@@ -212,7 +212,15 @@ def test_the_service_renders_previews(svc):
 
 
 def test_an_unknown_look_raises_rather_than_returning_nothing(svc):
-    with pytest.raises(KeyError):
-        svc.spotify_preview_png("no-such-look")
-    with pytest.raises(ValueError):
-        svc.run_action("spotify.export", {"look": "no-such-look"})
+    """It must raise, and it must raise something the server maps to a 400.
+
+    Not KeyError specifically: the service validates types itself now, so an
+    unknown id and a malformed id take the same path and both raise ValueError.
+    Pinning the exception class made this fail when the handling improved.
+    """
+    for call in (lambda: svc.spotify_preview_png("no-such-look"),
+                 lambda: svc.run_action("spotify.export", {"look": "no-such-look"}),
+                 lambda: svc.run_action("spotify.write", {"look": ["list"]})):
+        with pytest.raises((KeyError, ValueError)) as exc:
+            call()
+        assert "look" in str(exc.value).lower()

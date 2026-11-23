@@ -216,15 +216,41 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/spotify/preview/"):
             look_id = path[len("/api/spotify/preview/"):]
-            q = {k: v[0] for k, v in urlparse_qs(parsed.query).items() if v}
+            # keep_blank_values matters: `?w=` is a caller who passed an empty
+            # width, and parse_qs drops it by default, which made it
+            # indistinguishable from "no w at all" and quietly used the default.
+            # No `if v` filter: that dropped the blank value this whole change
+            # is about, so keep_blank_values had no effect at all.
+            q = {k: v[0] for k, v in
+                 urlparse_qs(parsed.query, keep_blank_values=True).items()}
+            # A width that is not a number is a caller mistake, and bad input is
+            # reported, not silently replaced. The old code fell back to 720 for
+            # `w=abc` *and* quietly clamped `w=0` to 240, so a caller who asked
+            # for something impossible got a plausible-looking answer instead of
+            # a correction — the same class of bug as silently returning nothing.
+            raw_w = q.get("w", "720").strip()
+            if not raw_w:
+                # `?w=` and `?w=%20` mean "I passed a width and it is empty",
+                # which is a mistake. Falling back to 720 here is the same
+                # silent-substitution bug the clamp used to be.
+                self._json(400, {"error": "w was given but is empty"})
+                return
             try:
-                width = max(240, min(1440, int(q.get("w", 720))))
-            except ValueError:
-                width = 720
+                width = int(raw_w)
+            except (TypeError, ValueError):
+                self._json(400, {"error": f"w must be a whole number, got {raw_w[:20]!r}"})
+                return
+            if not (240 <= width <= 1440):
+                self._json(400, {"error": f"w must be between 240 and 1440, got {width}"})
+                return
             try:
                 png = _service().spotify_preview_png(look_id, width)
-            except KeyError:
-                self._json(404, {"error": f"no look {look_id!r}"})
+            except ValueError as exc:
+                # Unknown look *and* a malformed id both arrive here now that the
+                # service validates types. This used to catch KeyError only, so
+                # tightening the validation turned a clean 404 into a 500 — which
+                # is exactly the kind of regression a fuzz test is for.
+                self._json(404, {"error": str(exc)})
                 return
             self.send_response(200)
             self.send_header("Content-Type", "image/png")

@@ -388,3 +388,24 @@ def test_a_frozen_crash_writes_a_traceback_before_dying():
                 os.environ.pop("PCO_DATA", None)
             else:
                 os.environ["PCO_DATA"] = old
+
+
+def test_an_unwritable_data_folder_explains_itself_and_exits_clean():
+    """The worst failure a windowed app has: console=False means a traceback goes
+    nowhere. This used to die with a raw FileNotFoundError inside mkdir, so a
+    double-click produced no window and no message at all."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    engine = Path(__file__).resolve().parent.parent
+    app = engine / "pco_engine" / "app.py"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(engine)
+    env["PCO_DATA"] = "/proc/does-not-exist-and-cannot-be-created"
+    r = subprocess.run([sys.executable, str(app), "--no-window"],
+                       capture_output=True, text=True, env=env, timeout=120)
+    assert r.returncode == 3, f"expected the documented exit code 3, got {r.returncode}"
+    assert "cannot use its data folder" in r.stderr
+    assert "PCO_DATA" in r.stderr          # tells them how to fix it
+    assert "Traceback" not in r.stderr     # a message, not a crash

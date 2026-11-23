@@ -25,3 +25,6 @@ pco_data/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Test-run artefact: app.py writes this when it cannot start.
+keel-startup-error.txt

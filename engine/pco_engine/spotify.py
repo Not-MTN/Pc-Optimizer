@@ -543,7 +543,30 @@ def write_theme(look: Look, *, themes_dir: Path | None = None) -> dict[str, Any]
             }
 
     try:
-        folder.mkdir(parents=True, exist_ok=True)
+        # exist_ok=False, and catch FileExistsError: the check above and the
+        # mkdir here are two steps, and between them another thread (or another
+        # copy of Keel) can create the folder. With exist_ok=True both writers
+        # proceed and interleave their two files, so a theme can end up with one
+        # look's colour.ini and another look's user.css — which renders as a
+        # half-applied theme nobody can explain.
+        folder.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        return {
+            "ok": False, "id": theme_id, "name": look.name,
+            "path": str(folder), "wrote": False,
+            "reason": ("That theme folder already exists. Keel does not "
+                       "overwrite a theme you may have edited — rename or "
+                       "remove the old folder first."),
+        }
+    except OSError as exc:
+        return {"ok": False, "id": theme_id, "name": look.name,
+                "path": str(folder), "wrote": False,
+                "reason": f"could not create {folder}: {exc.strerror or exc}"}
+
+    # Written after the folder is exclusively ours. Two writes, not one temp
+    # file: if the second fails the folder holds an incomplete theme, and the
+    # error says so rather than leaving a folder that looks finished.
+    try:
         (folder / "color.ini").write_text(look.color_ini(), encoding="utf-8")
         (folder / "user.css").write_text(look.user_css(), encoding="utf-8")
     except OSError as exc:

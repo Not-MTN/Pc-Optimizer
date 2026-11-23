@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (580 tests: 569 here, 11 that only a real Windows machine can run)
+## What works today (652 tests: 641 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -436,6 +436,42 @@ Then the app got a name, an installer and four tabs, which found five more:
     that same variable with `setdefault`. Two sources of truth for one directory:
     an explicitly set `PCO_DATA` was silently overridden, so the store and the
     crash log could land somewhere the user was not told about.
+
+These last ones came from deliberately attacking the build rather than using
+it — the question was "what happens if I send this garbage", and every answer
+below was found before a user could find it.
+
+77. **A folder that could not be created killed the app with no message.**
+    `store.mkdir()` raised `FileNotFoundError` at the top of `main()`. With
+    `console=False` that traceback went nowhere: double-click, nothing happens,
+    no window and no explanation. Startup now probes for *writability* (a
+    directory can exist and still be read-only), and on failure prints the path,
+    the reason, and the environment variable to change, then exits 3. It also
+    writes `%TEMP%\keel-startup-error.txt` for the case where stderr is gone.
+78. **A damaged database was a traceback.** A file that exists, is non-empty and
+    is not SQLite — the power-loss case — produced
+    `DatabaseError: file is not a database` from inside the first `PRAGMA`, with
+    no path and no way forward. Now checked *before* SQLite sees it:
+    `StoreUnusable` names the file and the rename command, and the app reports
+    it on the main thread instead of leaving a blank window. A zero-byte file is
+    correctly still a first run, and a truncated header is now caught too.
+79. **A corrupt store made the window hang, not fail.** The server runs on a
+    daemon thread; when its first migration raised, the thread died and
+    `_wait_ready` timed out. The user saw "the engine did not start" when the
+    real answer was "your database is damaged, here is its path". The thread now
+    records the exception and the main thread prints its type and message.
+80. **Theme names had no bounds.** A 100 KB name validated as a theme; control
+    characters were accepted, which lets a name forge lines in anything that
+    logs or tabs it. Names are now limited to 80 characters with no control
+    characters, `author`/`description` have limits and must be text.
+81. **Ten thousand problems were returned as ten thousand problems.** A theme
+    with 10 000 malformed widgets produced 10 000 lines; the dialog cannot show
+    them and the one real problem scrolls away. Validation now reports the first
+    twelve and says how many more there are.
+82. **`zero_cost_variant(None)` raised `AttributeError`.** The function that
+    promises "the cheap version of this" crashed on anything that was not a
+    dict. A non-document now yields an empty document — whose cost is still 0.0,
+    which is the property everything that calls it depends on.
 
 ## The wallpaper engine
 

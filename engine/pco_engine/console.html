@@ -2631,17 +2631,31 @@ async function loadSpotify() {
       "Could not load the Spotify looks: " + (err.message || "no answer")));
     return;
   }
-  host.dataset.loaded = "1";
+  // Reset, don't append. `spotifyLooks.push` on every render meant that a second
+  // successful load doubled the list — the selection then pointed at a duplicate
+  // and "copy both files" rendered the look twice in the clipboard. It only
+  // needed one failed first load and a retry to happen.
+  spotifyLooks = [];
+  spotifySelected = null;
   renderSpotifyStatus(data.status);
   host.replaceChildren();
-  data.groups.forEach((group) => {
+  const groups = Array.isArray(data.groups) ? data.groups : [];
+  if (!groups.length) {
+    host.append(el("div", "empty", "The engine returned no looks."));
+    return;
+  }
+  groups.forEach((group) => {
     const section = el("div");
     section.style.marginBottom = "20px";
     const sec = el("h2", null, group.title);
     sec.style.cssText = "font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);margin:0 0 10px";
     section.replaceChildren(sec);
     const grid = el("div", "gallery");
-    group.looks.forEach((look) => {
+    // A group with no looks array, or a look with no id, is wrong data rather
+    // than a reason to crash: skip the bad entry and keep the rest visible.
+    const looks = Array.isArray(group.looks) ? group.looks : [];
+    looks.forEach((look) => {
+      if (!look || typeof look.id !== "string") return;
       spotifyLooks.push(look);
       const tile = el("button", "tile");
       tile.dataset.id = look.id;
@@ -2702,8 +2716,17 @@ function renderSpotifyStatus(st) {
 }
 
 function spotifyRequire() {
-  if (spotifySelected) return true;
-  spotifyReport("No look selected", "Click any tile above to pick one first.", true);
+  // A selected id that is no longer in the list (the data was reloaded, or a
+  // future version drops a look) would be sent to the server and rejected with
+  // "no look". Catch it here and say the honest thing instead.
+  if (spotifySelected && spotifyLooks.some((l) => l.id === spotifySelected)) {
+    return true;
+  }
+  spotifySelected = null;
+  spotifyReport("No look selected",
+    spotifyLooks.length
+      ? "Click any tile above to pick one first."
+      : "The look list is empty — reload the page.", true);
   return false;
 }
 

@@ -78,6 +78,18 @@ telemetry.microsoft.com
 """
 
 
+def _brief(value: object, limit: int = 60) -> str:
+    """A bounded, quoted rendering of caller input for an error message.
+
+    Errors are a response, and a response should not scale with the request —
+    echoing a 1 MB id turns a rejection into a megabyte of reflection.
+    """
+    text = repr(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"… ({len(text)} characters)"
+
+
 class Service:
     def __init__(self, db_path: str, *, backend=None, catalog_dir: str | None = None,
                  vault_root: str | None = None, clock=None) -> None:
@@ -252,12 +264,35 @@ class Service:
 
     # ================================================================= dispatch
     def run_action(self, name: str, args: dict[str, Any] | None = None) -> Any:
-        """The one catalog of verbs. Palette, CLI, recipes and UI all come here."""
-        args = args or {}
+        """The one catalog of verbs. Palette, CLI, recipes and UI all come here.
+
+        Two guarantees are enforced here rather than in each of the sixty-odd
+        handlers, because remembering is not a strategy:
+
+        1. `args` is a dict. A JSON array or scalar used to reach `args["x"]` and
+           raise TypeError, which the server turned into a 500 with a traceback —
+           a crash served as an API response.
+        2. A handler that validates its own input may raise ValueError, which the
+           server maps to a 400 with the reason. A handler that indexes a name
+           into a dict may raise TypeError *from the unhashable input* — a list
+           or dict where a string was expected. That is also the caller's fault
+           and is reported the same way, rather than as a crash.
+        """
+        if args is None:
+            args = {}
+        if not isinstance(args, dict):
+            raise ValueError(
+                f"arguments must be a JSON object, got {type(args).__name__}")
         handler = ACTIONS.get(name)
         if handler is None:
             raise KeyError(f"unknown action: {name}")
-        return handler(self, args)
+        try:
+            return handler(self, args)
+        except TypeError as exc:
+            # `in` / `.get` / `Path()` on an unhashable or wrongly-typed value.
+            if "unhashable" in str(exc) or "expected str" in str(exc):
+                raise ValueError(f"bad argument type: {exc}") from exc
+            raise
 
     # ================================================================== modules
     def checkup(self, *, fix_safe: bool = False) -> dict[str, Any]:
@@ -1188,6 +1223,27 @@ class Service:
                      base_free - grown, total))
 
     # ------------------------------------------------------------- Spotify
+    def _spotify_look(self, look_id: Any) -> "spotify_theme.Look":
+        """Resolve a look id, or say why not in a way a caller can act on.
+
+        A missing id and a *wrong type* are different mistakes and deserve
+        different answers. Without the isinstance check, a JSON array or object
+        reached `dict.get` and raised TypeError, which the server reports as a
+        500 — a crash, not a bad request. `{"look": ["glass"]}` is a 400.
+        """
+        if not isinstance(look_id, str):
+            raise ValueError(
+                f"look must be a string id, got {type(look_id).__name__}")
+        look = self.spotify.LOOKS.get(look_id)
+        if look is None:
+            known = ", ".join(sorted(self.spotify.LOOKS))
+            # Quoting the input is useful right up to the point where the input
+            # is a megabyte: then the error hands it straight back, and a caller
+            # gets 1 MB for 1 MB sent. Show a bounded prefix instead.
+            raise ValueError(
+                f"no look {_brief(look_id)}; known looks are: {known}")
+        return look
+
     def spotify_looks(self) -> dict[str, Any]:
         """Every look, grouped the way a person browses them.
 
@@ -1213,23 +1269,54 @@ class Service:
         }
 
     def spotify_preview_png(self, look_id: str, width: int = 720) -> bytes:
-        look = self.spotify.LOOKS.get(look_id)
-        if look is None:
-            raise KeyError(f"no look {look_id!r}")
+        look = self._spotify_look(look_id)
         height = max(1, round(width * (460 / 720)))
         return self.spotify.render_preview(look, width, height).png()
 
-    def spotify_write(self, look_id: str, directory: str | None = None) -> dict[str, Any]:
-        look = self.spotify.LOOKS.get(look_id)
-        if look is None:
-            raise ValueError(f"no look {look_id!r}")
+    def spotify_write(self, look_id: Any, directory: Any = None) -> dict[str, Any]:
+        look = self._spotify_look(look_id)
+        if directory is not None and not isinstance(directory, str):
+            raise ValueError(
+                f"dir must be a path string, got {type(directory).__name__}")
         return self.spotify.write_theme(
-            look, themes_dir=Path(directory) if directory else None)
+            look, themes_dir=self._spotify_dir(directory))
 
-    def spotify_export(self, look_id: str) -> dict[str, Any]:
-        look = self.spotify.LOOKS.get(look_id)
-        if look is None:
-            raise ValueError(f"no look {look_id!r}")
+    def _spotify_dir(self, directory: str | None) -> Path | None:
+        """Resolve a caller-supplied themes directory, safely.
+
+        This is a write destination. It must be an absolute path to an existing
+        directory, or a path whose parent already exists — not a relative path
+        that resolves against whatever cwd the server happens to have, and not
+        `..` segments that walk somewhere surprising. We refuse rather than
+        normalise silently: a user who typed `~/spice` deserves to be told the
+        path was not understood, not to find the files somewhere else.
+        """
+        if directory is None:
+            return None
+        raw = directory.strip()
+        if not raw:
+            raise ValueError("dir was empty")
+        if len(raw) > 4096:
+            raise ValueError(f"dir is absurdly long ({len(raw)} characters)")
+        if "\x00" in raw or "\n" in raw:
+            raise ValueError("dir contains control characters")
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            raise ValueError(
+                f"dir must be an absolute path; {raw!r} is relative, so it would "
+                "resolve against the server's working directory")
+        if ".." in path.parts:
+            raise ValueError(
+                f"dir must not contain '..' path segments: {raw!r}")
+        if path.exists() and not path.is_dir():
+            raise ValueError(f"dir exists but is not a directory: {raw!r}")
+        parent = path if path.exists() else path.parent
+        if not parent.exists() or not parent.is_dir():
+            raise ValueError(f"dir does not exist: {parent}")
+        return path
+
+    def spotify_export(self, look_id: Any) -> dict[str, Any]:
+        look = self._spotify_look(look_id)
         out = self.spotify.export_bundle(look)
         out["ok"] = True
         return out

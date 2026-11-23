@@ -124,7 +124,34 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     store = data_dir()
-    store.mkdir(parents=True, exist_ok=True)
+    try:
+        store.mkdir(parents=True, exist_ok=True)
+        # Touch a file rather than trusting mkdir: a directory can exist and
+        # still be unwritable (a read-only mount, a locked-down profile, a
+        # redirected AppData). Failing here is the difference between a clear
+        # message now and a migration error thirty lines later.
+        probe = store / ".write-probe"
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        # This is the failure a windowed app handles worst: console=False, so a
+        # traceback goes nowhere and the user sees nothing at all. Say what is
+        # wrong and where, in the one place they can still read — stderr if it
+        # exists, and the log file if it does not.
+        reason = (f"Keel cannot use its data folder:\n  {store}\n"
+                  f"  {type(exc).__name__}: {exc.strerror or exc}\n\n"
+                  "That folder is where the journal lives. Keel will not start "
+                  "without it, because starting without the journal would mean "
+                  "making changes it cannot undo.\n\n"
+                  "Set PCO_DATA to a writable folder and try again, for example:\n"
+                  "  setx PCO_DATA %LOCALAPPDATA%\\Keel")
+        print(f"{APP_NAME}: {reason}", file=sys.stderr, flush=True)
+        try:
+            (Path(os.environ.get("TEMP") or ".") / "keel-startup-error.txt").write_text(
+                reason, encoding="utf-8")
+        except OSError:
+            pass
+        return 3
     os.environ.setdefault("PCO_DATA", str(store))
 
     port = _port()
@@ -139,13 +166,28 @@ def main(argv: list[str] | None = None) -> int:
     from pco_engine import server as srv
 
     def serve() -> None:
-        srv.main(["--host", "127.0.0.1", "--port", str(port)])
+        # A corrupt store raises from the first migration, on this thread. With
+        # no handler the thread dies silently and _wait_ready below reports a
+        # timeout — so the user sees "the engine did not start" with no reason,
+        # when the real answer was "your database is damaged, here is its path".
+        try:
+            srv.main(["--host", "127.0.0.1", "--port", str(port)])
+        except BaseException as exc:      # noqa: BLE001 - a dead thread is a dead app
+            _ENGINE_ERROR.append(exc)
+            _crash_log(exc)
 
     threading.Thread(target=serve, name="keel-engine", daemon=True).start()
 
     if not _wait_ready(url):
-        print(f"{APP_NAME}: the engine did not start; see {store / 'keel.log'}",
-              file=sys.stderr, flush=True)
+        # Say what actually happened where the thread told us; fall back to the
+        # log path only when it really did just time out.
+        if _ENGINE_ERROR:
+            why = _ENGINE_ERROR[0]
+            print(f"{APP_NAME}: the engine stopped: {type(why).__name__}: {why}",
+                  file=sys.stderr, flush=True)
+        else:
+            print(f"{APP_NAME}: the engine did not start; see {store / 'keel.log'}",
+                  file=sys.stderr, flush=True)
         return 1
 
     if "--no-window" in argv:
@@ -157,6 +199,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     return _open_window(url + "/", APP_NAME)
+
+
+# A list, not an attribute: the engine runs on its own thread and the main
+# thread needs to know *why* it died in order to tell the user.
+_ENGINE_ERROR: list[BaseException] = []
 
 
 def _crash_log(exc: BaseException) -> None:

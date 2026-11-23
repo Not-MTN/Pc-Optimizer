@@ -276,6 +276,10 @@ def validate(doc: dict[str, Any]) -> list[str]:
     out: list[str] = []
     if not isinstance(doc, dict):
         return ["a theme must be a JSON object"]
+    # Returning ten thousand lines of "this is wrong" is its own failure: the
+    # dialog cannot show them and the useful ones scroll away. Report the first
+    # few precisely and say how many more there were.
+    limit = 12
     unknown = set(doc) - KNOWN_TOP
     if unknown:
         out.append(f"unknown top-level key(s): {', '.join(sorted(unknown))}")
@@ -286,6 +290,24 @@ def validate(doc: dict[str, Any]) -> list[str]:
     meta = doc.get("meta")
     if not isinstance(meta, dict) or not str(meta.get("name", "")).strip():
         out.append("meta.name is required")
+    else:
+        # The name is rendered into the gallery and the page title. A 100 KB
+        # name is not a theme, and control characters would let it forge lines
+        # in any place that logs it.
+        name = str(meta.get("name"))
+        if len(name) > 80:
+            out.append(f"meta.name is {len(name)} characters; the limit is 80")
+        elif any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
+            out.append("meta.name contains control characters")
+        for field in ("author", "description"):
+            value = meta.get(field)
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                out.append(f"meta.{field} must be text")
+            elif len(value) > (120 if field == "author" else 600):
+                out.append(f"meta.{field} is too long "
+                           f"({len(value)}; limit {120 if field == 'author' else 600})")
 
     pal = doc.get("palette")
     if pal is not None:
@@ -361,6 +383,10 @@ def validate(doc: dict[str, Any]) -> list[str]:
                         _hex_to_rgb(term[key])
                     except ValueError as exc:
                         out.append(f"terminal.{key}: {exc}")
+
+    if len(out) > limit:
+        extra = len(out) - limit
+        return out[:limit] + [f"and {extra} more problem{'s' if extra != 1 else ''}"]
     return out
 
 

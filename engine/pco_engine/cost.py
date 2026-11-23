@@ -178,6 +178,12 @@ def zero_cost_variant(doc: dict[str, Any]) -> dict[str, Any]:
     list of instructions for the user to follow.
     """
     import copy
+    # A non-document is not a reason to raise: the caller is asking "give me the
+    # cheap version of this", and the cheap version of nothing is nothing. The
+    # cost of the return value is 0 either way, which is the property that
+    # matters to everyone who calls this.
+    if not isinstance(doc, dict):
+        return {"features": {}}
     out = copy.deepcopy(doc)
     feats = out.get("features")
     if isinstance(feats, dict):
