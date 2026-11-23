@@ -44,6 +44,7 @@ from .recipes import Recipes, Spec
 from .sens import SensLab
 from .sentinel import Event, Sentinel
 from .store import connect, integrity, migrate
+from . import spotify as spotify_theme
 from .studio import Studio
 
 DEFAULT_RULES = [
@@ -114,6 +115,11 @@ class Service:
         self.sens = SensLab(self.conn, self.clock)
         self.gaming = Gaming(self.conn, self.clock)
         self.studio = Studio(self.conn, self.clock)
+        # Spotify looks are pure data: a palette plus structural flags. No state
+        # to migrate, no table, and nothing installed. `apply` is the only part
+        # that touches the machine, and it refuses unless Spicetify is really
+        # there — see spotify.detect().
+        self.spotify = spotify_theme
         self.consent = Consent(self.conn, self.clock)
         self.startup = StartupSurgeon(self.conn, self.clock,
                                       backend=self.backend, catalog=self.catalog)
@@ -1181,6 +1187,53 @@ class Service:
                     (new_id(), now - days_ago * 86_400_000, _json.dumps(folders),
                      base_free - grown, total))
 
+    # ------------------------------------------------------------- Spotify
+    def spotify_looks(self) -> dict[str, Any]:
+        """Every look, grouped the way a person browses them.
+
+        Each carries its own preview URL so the console does not have to know
+        how previews are produced — and so a tile can be rendered lazily by the
+        browser rather than shipped as a payload.
+        """
+        groups = []
+        for key, (title, ids) in self.spotify.CATEGORIES.items():
+            groups.append({
+                "key": key,
+                "title": title,
+                "looks": [self.spotify.LOOKS[i].as_dict() for i in ids
+                          if i in self.spotify.LOOKS],
+            })
+        return {
+            "groups": groups,
+            "count": len(self.spotify.LOOKS),
+            "status": self.spotify.detect().as_dict(),
+            "cost_pct": 0.0,
+            "cost_note": ("A Spotify colour theme changes pixels, not frames. "
+                          "0% GPU in the idle budget — it is not an animation."),
+        }
+
+    def spotify_preview_png(self, look_id: str, width: int = 720) -> bytes:
+        look = self.spotify.LOOKS.get(look_id)
+        if look is None:
+            raise KeyError(f"no look {look_id!r}")
+        height = max(1, round(width * (460 / 720)))
+        return self.spotify.render_preview(look, width, height).png()
+
+    def spotify_write(self, look_id: str, directory: str | None = None) -> dict[str, Any]:
+        look = self.spotify.LOOKS.get(look_id)
+        if look is None:
+            raise ValueError(f"no look {look_id!r}")
+        return self.spotify.write_theme(
+            look, themes_dir=Path(directory) if directory else None)
+
+    def spotify_export(self, look_id: str) -> dict[str, Any]:
+        look = self.spotify.LOOKS.get(look_id)
+        if look is None:
+            raise ValueError(f"no look {look_id!r}")
+        out = self.spotify.export_bundle(look)
+        out["ok"] = True
+        return out
+
     def _seed_demo_junk(self, base: Path) -> dict[str, str]:
         """A simulated machine should contain simulated junk, otherwise the
         Cleaner page has nothing honest to show. These are real files on disk, so
@@ -1367,6 +1420,14 @@ ACTIONS = {
     "game.profile.export": lambda s, a: s.gaming.export_profile(a["game"]),
     "studio.themes": lambda s, a: {"themes": s.studio.themes(),
                                    "budget": s.studio.budget()},
+    # ---------------------------------------------------------- Spotify looks
+    # Reads are free and always work. `spotify.apply` writes two text files into
+    # Spicetify's own theme folder and never touches Spotify itself; the running
+    # of `spicetify apply` is left to the user, in the command we show them.
+    "spotify.looks": lambda s, a: s.spotify_looks(),
+    "spotify.status": lambda s, a: s.spotify.detect().as_dict(),
+    "spotify.write": lambda s, a: s.spotify_write(a["look"], a.get("dir")),
+    "spotify.export": lambda s, a: s.spotify_export(a["look"]),
     "studio.apply": lambda s, a: s.studio.apply(a["theme_id"], force=bool(a.get("force"))),
     "studio.import": lambda s, a: s.studio.import_doc(a["doc"]),
     "autopsy.begin": lambda s, a: {"autopsy_id": s.autopsy.begin(a.get("installer", "unknown.exe"))},

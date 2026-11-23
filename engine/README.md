@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (555 tests: 544 here, 11 that only a real Windows machine can run)
+## What works today (580 tests: 569 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -489,6 +489,34 @@ after that, exactly like any other wallpaper. The live layer is the part that
 costs, and it stays opt-in.
 
 On battery the recommendation mentions the charge. It does not disable anything.
+
+## Spotify looks — and the honest limit
+
+Twelve colour themes for Spotify, previewed as real renders before anything is
+written: `glass`, `frost`, `smoke`, `arctic`, `mint`, `deep`, `ember`, `rose`,
+`sand`, `acid`, `candy`, and `stock` (Spotify's own colours, unchanged).
+
+**What always works:** the preview. Every look is drawn from its own palette by
+the same renderer that draws wallpapers, so a tile cannot disagree with the theme
+it claims to show. No Spotify required, no network, 0% GPU — a colour theme
+changes pixels, not frames.
+
+**What needs a working setup:** writing the files. Keel never patches Spotify.
+It writes `color.ini` and `user.css` — Spicetify's documented format, twenty-four
+keys, two schemes — into Spicetify's own themes folder, and prints the two
+commands to run. If Spicetify is missing it says so and stops; it does not
+download and execute third-party installers.
+
+**The limit, stated where the user can see it:** Spotify 1.2.87 (April 2026)
+closed the injection point Spicetify used. The maintainers reported no ETA, and
+downgrading Spotify stops playback because the client refuses to stream until it
+is updated. So on a current Spotify, applying a theme may do nothing at all. That
+is Spotify's decision, not a setting Keel can flip, and the UI says so above the
+tiles rather than in a footnote.
+
+Refusing to overwrite an existing theme folder matters too: the user may have
+edited it, and a PC optimizer that silently replaces your work is the thing this
+app exists to be the opposite of.
 
 ## Building Keel.exe
 

@@ -23,6 +23,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs as urlparse_qs
 from urllib.parse import urlparse
 
 from . import __version__
@@ -105,6 +106,9 @@ ROUTES: dict[str, str] = {
     "/api/report": "report.weekly",
     "/api/checkup/apply": "checkup.fix",
     "/api/studio/themes": "studio.themes",
+    "/api/spotify/looks": "spotify.looks",
+    "/api/spotify/write": "spotify.write",
+    "/api/spotify/export": "spotify.export",
     "/api/games": "game.sessions",
     "/api/verify": "verify",
     "/api/startup": "startup.inspect",
@@ -210,6 +214,26 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(png)
             return
+        if path.startswith("/api/spotify/preview/"):
+            look_id = path[len("/api/spotify/preview/"):]
+            q = {k: v[0] for k, v in urlparse_qs(parsed.query).items() if v}
+            try:
+                width = max(240, min(1440, int(q.get("w", 720))))
+            except ValueError:
+                width = 720
+            try:
+                png = _service().spotify_preview_png(look_id, width)
+            except KeyError:
+                self._json(404, {"error": f"no look {look_id!r}"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png)))
+            # A look is immutable data; the bytes never change for a given URL.
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(png)
+            return
         if path == "/api/report/html":
             try:
                 html = _service().health_report("html").encode("utf-8")
@@ -234,8 +258,7 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(405, {"error": f"{ROUTES[path]} changes state; "
                                               "POST it to this same path"})
                     return
-                from urllib.parse import parse_qs
-                query = {k: v[0] for k, v in parse_qs(parsed.query).items() if v}
+                query = {k: v[0] for k, v in urlparse_qs(parsed.query).items() if v}
                 with _LOCK:
                     # run_action defaults args to {}, so a verb that takes nothing
                     # needs no special case here.
@@ -262,8 +285,7 @@ class Handler(BaseHTTPRequestHandler):
                 with _LOCK:
                     q = ""
                     if "?" in self.path:
-                        from urllib.parse import parse_qs
-                        q = parse_qs(urlparse(self.path).query).get("q", [""])[0]
+                        q = urlparse_qs(urlparse(self.path).query).get("q", [""])[0]
                     self._json(200, {"results": svc.palette.search(q)})
                 return
             if path == "/api/palette/all":
@@ -314,7 +336,7 @@ class Handler(BaseHTTPRequestHandler):
         "theme.apply", "theme.save", "theme.import",
         "wallpaper.save", "wallpaper.apply",
         "shell.apply", "shell.theme.save", "shell.theme.import",
-        "safety.confirm",
+        "safety.confirm", "spotify.write",
     }
 
     # -------------------------------------------------------------------- POST
@@ -335,8 +357,7 @@ class Handler(BaseHTTPRequestHandler):
         # looked only at a POST body — every theme detail request was a 500 with
         # a KeyError nobody could see. Accepting both is the fix; the alternative
         # is a client and server that disagree about where a parameter lives.
-        from urllib.parse import parse_qs
-        for key, values in parse_qs(parsed.query).items():
+        for key, values in urlparse_qs(parsed.query).items():
             if key not in args and values:
                 args[key] = values[0]
 

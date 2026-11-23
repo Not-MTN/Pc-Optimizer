@@ -650,8 +650,9 @@
       <div class="grid g2">
         <div class="card">
           <h2>Themes</h2>
-          <p class="sub">Every theme declares its idle-GPU cost. Anything over
-            <b id="budgetNum">3%</b> is refused — that is the difference between a desktop and a drain.</p>
+          <p class="sub">Every theme declares its idle-GPU cost before you apply
+            it. Nothing is refused: <b id="budgetNum">3%</b> is the advisory
+            figure, and the 0% version of every look is always one click away.</p>
           <div id="themes" style="margin-top:14px"></div>
         </div>
         <div class="card">
@@ -740,6 +741,36 @@
     </section>
 
     <!-- ============ WORKSPACES ============ -->
+    <section class="sect" id="view-spotify">
+      <div class="hubIntro">
+        <h2>Twelve ways for Spotify to look</h2>
+        <p>Every tile below is a real render of that look — not a mockup,
+           not a screenshot. Pick one, look at it at full size, then take the
+           two files or write them straight into Spicetify.</p>
+      </div>
+
+      <!-- The honest part, stated before anything is offered. It is not a
+           disclaimer bolted on afterwards; it is the reason this screen is
+           built the way it is. -->
+      <div class="card" id="spotifyStatus" style="margin-bottom:16px">
+        <h2>What Keel can and cannot do here</h2>
+        <div class="sub" id="spotifyStatusBody">Checking this machine…</div>
+      </div>
+
+      <div class="row" style="margin-bottom:14px;flex-wrap:wrap">
+        <button class="btn primary" id="spotifyWrite">Write it to Spicetify</button>
+        <button class="btn ghost" id="spotifyExport">Copy both files</button>
+        <button class="btn ghost" id="spotifyFull">Look at it full size</button>
+      </div>
+
+      <div class="card" id="spotifyOut" style="margin-bottom:16px;display:none">
+        <h2 id="spotifyOutTitle">Result</h2>
+        <div class="sub" id="spotifyOutBody"></div>
+      </div>
+
+      <div id="spotifyGroups"></div>
+    </section>
+
     <section class="sect" id="view-workspaces">
       <div class="grid g2" style="margin-bottom:16px">
         <div class="card">
@@ -960,6 +991,7 @@ window.addEventListener("error", (e) => {
 const TITLES = { home: ["Home", "Is anything wrong? Everything the engine knows, live."],
   look: ["Look", "Taskbar, Explorer, icons, themes."],
   gallery: ["Themes", "Fifteen looks, rendered live from their own theme files."],
+  spotify: ["Spotify", "Twelve ways for it to look — with the honest limits up front."],
   speed: ["Speed", "Measure, change one thing, measure again."],
   fix: ["Fix", "Drivers, battery, hardware, recovery."],
   checkup: ["Checkup", "Findings are split by what they actually affect."],
@@ -1000,6 +1032,7 @@ function show(view) {
   if (view === "shell") loadShell();
   if (view === "power") loadDisplay();
   if (view === "gallery") loadGallery();
+  if (view === "spotify") loadSpotify();
 }
 
 function renderHub(which) {
@@ -2465,6 +2498,7 @@ const BLURB = {
   gallery: "Fifteen complete looks: wallpaper, widgets, shell and terminal together.",
   shell: "Taskbar, Explorer, folder icons, terminal look and prompt identity.",
   studio: "Wallpaper-grade colour themes built from your own palette.",
+  spotify: "Colour themes for Spotify, previewed before anything is written.",
   workspaces: "Save groups of windows and reopen them in one click.",
   recipes: "Multi-step jobs: apply many changes, undo as one.",
   checkup: "A scored sweep that names the three things worth fixing.",
@@ -2483,7 +2517,7 @@ const BLURB = {
 
 const GROUPS = {
   home: ["home"],
-  look: ["gallery", "shell", "studio", "workspaces", "recipes"],
+  look: ["gallery", "shell", "studio", "spotify", "workspaces", "recipes"],
   speed: ["checkup", "clean", "dns", "power", "space", "startup", "gaming"],
   fix: ["drivers", "battery", "lab", "autopsy", "sens"],
 };
@@ -2570,6 +2604,171 @@ async function loadGallery() {
     grid.querySelector(".tile")?.classList.add("on");
   }
 }
+
+/* --------------------------------------------------------------- Spotify */
+let spotifyLooks = [];
+let spotifySelected = null;
+
+function spotifyReport(title, body, bad) {
+  const card = $("#spotifyOut");
+  card.style.display = "";
+  $("#spotifyOutTitle").textContent = title;
+  $("#spotifyOutTitle").style.color = bad ? "var(--red)" : "";
+  const box = $("#spotifyOutBody");
+  box.style.whiteSpace = "pre-wrap";
+  box.textContent = body || "";
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function loadSpotify() {
+  const host = $("#spotifyGroups");
+  if (!host || host.dataset.loaded === "1") return;
+  let data;
+  try {
+    data = await api("/api/spotify/looks");
+  } catch (err) {
+    host.replaceChildren(el("div", "empty",
+      "Could not load the Spotify looks: " + (err.message || "no answer")));
+    return;
+  }
+  host.dataset.loaded = "1";
+  renderSpotifyStatus(data.status);
+  host.replaceChildren();
+  data.groups.forEach((group) => {
+    const section = el("div");
+    section.style.marginBottom = "20px";
+    const sec = el("h2", null, group.title);
+    sec.style.cssText = "font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--faint);margin:0 0 10px";
+    section.replaceChildren(sec);
+    const grid = el("div", "gallery");
+    group.looks.forEach((look) => {
+      spotifyLooks.push(look);
+      const tile = el("button", "tile");
+      tile.dataset.id = look.id;
+      const img = document.createElement("img");
+      // Rendered by the engine from the palette — cannot disagree with the theme.
+      img.src = "/api/spotify/preview/" + encodeURIComponent(look.id) + "?w=440";
+      img.alt = look.name + " preview";
+      img.loading = "lazy";
+      tile.append(img);
+      const body = el("div", "tileBody");
+      const name = el("div", "tileName");
+      const sw = el("span", "swatch");
+      sw.style.background = "#" + look.accent;
+      name.append(sw, document.createTextNode(look.name));
+      body.append(name);
+      body.append(el("div", "tileNote", look.blurb));
+      const meta = el("div", "tileMeta",
+        [look.glass ? "glassy" : null, look.blur ? "blur" : null,
+         "radius " + look.radius + "px", "#" + look.accent.toUpperCase()]
+          .filter(Boolean).join(" · "));
+      body.append(meta);
+      // A colour theme is not an animation, so the cost line is the boring one.
+      const cost = el("div", "tileCost free", "0% GPU · not animated");
+      body.append(cost);
+      tile.append(body);
+      tile.onclick = () => {
+        spotifySelected = look.id;
+        grid.querySelectorAll(".tile").forEach(
+          (n) => n.classList.toggle("on", n === tile));
+      };
+      grid.append(tile);
+    });
+    section.append(grid);
+    host.append(section);
+  });
+  if (spotifyLooks.length) {
+    spotifySelected = spotifyLooks[0].id;
+    host.querySelector(".tile")?.classList.add("on");
+  }
+}
+
+function renderSpotifyStatus(st) {
+  const box = $("#spotifyStatusBody");
+  if (!box || !st) return;
+  const lines = [];
+  lines.push(st.installed
+    ? "Spotify: found on this machine."
+    : "Spotify: not found in its usual install locations.");
+  lines.push(st.spicetify
+    ? ("Spicetify: " + (st.spicetify_version || "installed, version unknown") + ".")
+    : "Spicetify: not installed.");
+  (st.reasons || []).forEach((r) => lines.push("· " + r));
+  lines.push(st.can_apply
+    ? "Writing a theme is available. Keel writes two text files and never patches Spotify."
+    : "Writing a theme is unavailable here — you can still copy both files and install them yourself.");
+  box.textContent = lines.join("\n");
+  box.style.whiteSpace = "pre-wrap";
+}
+
+function spotifyRequire() {
+  if (spotifySelected) return true;
+  spotifyReport("No look selected", "Click any tile above to pick one first.", true);
+  return false;
+}
+
+async function spotifyBusy(btn, label, fn) {
+  const original = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = label + "…"; }
+  try { await fn(); }
+  catch (err) {
+    spotifyReport("Could not " + label.toLowerCase(),
+                  (err && err.message) || String(err), true);
+  } finally { if (btn) { btn.disabled = false; btn.textContent = original; } }
+}
+
+$("#spotifyFull")?.addEventListener("click", async (ev) => {
+  if (!spotifyRequire()) return;
+  await spotifyBusy(ev.currentTarget, "Rendering", async () => {
+    const w = Math.max(640, Math.min(1280, window.innerWidth - 160));
+    const url = "/api/spotify/preview/" + encodeURIComponent(spotifySelected) + "?w=" + w;
+    const card = $("#spotifyOut");
+    card.style.display = "";
+    $("#spotifyOutTitle").textContent =
+      (spotifyLooks.find((l) => l.id === spotifySelected) || {}).name || "Preview";
+    $("#spotifyOutTitle").style.color = "";
+    const box = $("#spotifyOutBody");
+    box.style.whiteSpace = "normal";
+    box.replaceChildren();
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "full-size preview";
+    img.style.cssText = "width:100%;border-radius:12px;display:block;margin-top:6px";
+    box.append(img);
+    card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+});
+
+$("#spotifyWrite")?.addEventListener("click", async (ev) => {
+  if (!spotifyRequire()) return;
+  await spotifyBusy(ev.currentTarget, "Writing", async () => {
+    const r = await api("/api/spotify/write", { look: spotifySelected });
+    if (!r.ok) { spotifyReport("Not written", r.reason || "unknown reason", true); return; }
+    spotifyReport("Written — nothing has been applied",
+      r.path + "\n" + r.files.join(", ") + "\n\n" + r.note +
+      "\n\nRun this yourself:\n" + r.how_to_apply);
+  });
+});
+
+$("#spotifyExport")?.addEventListener("click", async (ev) => {
+  if (!spotifyRequire()) return;
+  await spotifyBusy(ev.currentTarget, "Copying", async () => {
+    const r = await api("/api/spotify/export", { look: spotifySelected });
+    const both = "# color.ini\n" + r.files["color.ini"] +
+                 "\n# user.css\n" + r.files["user.css"];
+    let copied = false;
+    try { await navigator.clipboard.writeText(both); copied = true; } catch (e) {}
+    const card = $("#spotifyOut");
+    card.style.display = "";
+    $("#spotifyOutTitle").textContent = "Both files";
+    $("#spotifyOutTitle").style.color = "";
+    const box = $("#spotifyOutBody");
+    box.style.whiteSpace = "pre-wrap";
+    box.textContent = (copied ? "Copied to the clipboard.\n\n" : "Clipboard blocked — select and copy below.\n\n")
+      + r.install.join(" ") + "\n\n" + both;
+    card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+});
 
 async function themeDoc() {
   if (!selectedTheme) throw new Error("Pick a theme first.");
