@@ -134,3 +134,16 @@ jobs:
             dist/installer/*.exe
           if-no-files-found: error
           retention-days: 30
+
+      # Push a tag (or publish a release) and the binaries land on it by
+      # themselves. Workflow artifacts expire after 30 days and need a login to
+      # download; a release asset is a permanent, public download link, which is
+      # the thing a person who wants the app actually needs.
+      - name: attach the binaries to the release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Keel.exe
+            dist/installer/*.exe
+          fail_on_unmatched_files: true
