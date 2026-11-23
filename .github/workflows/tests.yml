@@ -60,4 +60,4 @@ jobs:
           # output contains '·'. That is the bug this step originally caught.
           python -m pco_engine.cli --backend windows doctor
           # PowerShell's `>` writes UTF-16, so hand Python the redirect instead:
-          python -c "import sys,json,subprocess;r=subprocess.run([sys.executable,'-m','pco_engine.cli','--backend','windows','doctor','--json'],capture_output=True,text=True,encoding='utf-8');d=json.loads(r.stdout);print(json.dumps(d['backend'],indent=1));print('catalog addresses:',d['catalog_addresses'],'readable now:',d['readable_now'])"
+          python -c "import sys,json,subprocess;r=subprocess.run([sys.executable,'-m','pco_engine.cli','--json','--backend','windows','doctor'],capture_output=True,text=True,encoding='utf-8');d=json.loads(r.stdout);print(json.dumps(d['backend'],indent=1));print('catalog addresses:',d['catalog_addresses'],'readable now:',d['readable_now'])"
