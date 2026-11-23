@@ -1195,11 +1195,18 @@ class Service:
             "logs": [("setup.log", 1_200_000), ("installer.log", 340_000),
                      ("update.log", 2_600_000)],
         }
+        # Sparse writes. These files must *report* their size — the Cleaner and
+        # Space pages read real st_size — but writing 68 MB of zeros per Service()
+        # is why a 550-test run left 6.5 GB in /tmp and eventually failed with
+        # "No space left on device". truncate() sets the logical length without
+        # allocating blocks, on NTFS and on every Linux filesystem, and the file
+        # still reads back as zeros.
         for sub, files in blobs.items():
             for name, size in files:
                 f = base / sub / name
                 if not f.exists():
-                    f.write_bytes(b"\0" * size)
+                    with open(f, "wb") as fh:
+                        fh.truncate(size)
 
         # a believable duplicate set: the same installer downloaded twice, one
         # copy in Downloads and one in a backup folder
@@ -1211,6 +1218,9 @@ class Service:
             "game": ("downloads/game-setup.exe", "temp/game-setup (1).exe"),
             "tool": ("downloads/tool-installer.msi", "temp/tool-installer (2).msi"),
         }
+        # Back to 2 MB: a test asserts the reported duplicate is exactly 2 MB, and
+        # that assertion is worth more than 4 MB of scratch disk. The blobs above
+        # are the ones that mattered — they are 60 MB of the 68.
         for tag, (first, second) in pairs.items():
             payload = (tag.encode() * (2 * 1024 * 1024 // len(tag) + 1))[:2 * 1024 * 1024]
             for rel in (first, second):

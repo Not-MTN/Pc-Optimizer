@@ -94,3 +94,19 @@ def service(tmp_path, engine, clock):
     return Service(str(tmp_path / "svc.db"), backend=FakeBackend(DEMO_STATE),
                    catalog_dir=CATALOG_DIR, vault_root=str(tmp_path / "vault"),
                    clock=clock)
+
+
+# --------------------------------------------------------- scratch-space hygiene
+# pytest creates a numbered directory per test under /tmp/pytest-of-<user> and
+# never deletes them. Three runs of this suite left 6.9 GB behind, at which point
+# unrelated tests started failing with "OSError: [Errno 28] No space left on
+# device" — a red suite caused by the previous green one. Keep the last few runs
+# for debugging and delete the rest.
+def pytest_sessionfinish(session, exitstatus):
+    import glob
+    import shutil
+    base = os.environ.get("PYTEST_DEBUG_TEMPROOT") or "/tmp"
+    runs = sorted(glob.glob(os.path.join(base, "pytest-of-*", "pytest-*")),
+                  key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0)
+    for stale in runs[:-3]:
+        shutil.rmtree(stale, ignore_errors=True)

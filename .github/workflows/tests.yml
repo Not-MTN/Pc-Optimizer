@@ -21,8 +21,8 @@ jobs:
     name: engine · Linux (3.11)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: install
@@ -37,8 +37,8 @@ jobs:
     name: engine · Windows 11 + real registry
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: install
@@ -70,8 +70,8 @@ jobs:
     runs-on: windows-latest
     needs: windows
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -86,7 +86,25 @@ jobs:
           echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
       - name: build
-        run: .\packaging\build.ps1 -SkipTests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          ./packaging/build.ps1 -SkipTests *>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::group::build.log tail"
+            Get-Content build.log -Tail 60
+            Write-Host "::endgroup::"
+            exit $LASTEXITCODE
+          }
+
+      - name: keep the build log even when the build fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: verify the exe is a real PE32+ binary
         run: |

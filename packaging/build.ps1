@@ -43,6 +43,8 @@ function Find-Python {
     foreach ($c in @('py -3', 'python')) {
         try {
             $v = & cmd /c "$c -c `"import sys;print(sys.version_info[:2])`"" 2>$null
+            # $v can be an array if the probe writes anything unexpected.
+            $v = ($v -join ' ')
             if ($LASTEXITCODE -eq 0 -and $v -match '\(3, (\d+)') {
                 $minor = [int]$Matches[1]
                 if ($minor -ge 10) { return $c }
@@ -58,7 +60,13 @@ if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { Fail 'This must
 if ($PSVersionTable.PSVersion.Major -lt 5) { Fail 'PowerShell 5.1 or newer is required.' }
 
 $python = Find-Python
-if (-not $python) { Fail 'Python 3.10+ was not found. Install it from python.org and tick "Add to PATH".' }
+if (-not $python) {
+    Warn 'Find-Python did not find a usable interpreter. Diagnostics follow:'
+    & cmd /c "py -3 -c `"import sys;print(sys.version)`"" 2>&1 | ForEach-Object { Write-Host "      py -3: $_" }
+    & cmd /c "python -c `"import sys;print(sys.version)`"" 2>&1 | ForEach-Object { Write-Host "      python: $_" }
+    & cmd /c "where python" 2>&1 | ForEach-Object { Write-Host "      where: $_" }
+    Fail 'Python 3.10+ was not found. Install it from python.org and tick "Add to PATH".'
+}
 Ok "python: $python"
 
 foreach ($f in @('engine\pco_engine\app.py', 'engine\pco_engine\console.html',
@@ -73,13 +81,23 @@ Ok "icon: $icoSize bytes"
 
 # ------------------------------------------------------------------- tooling
 Step 2 'Build tooling'
-& cmd /c "$python -m PyInstaller --version" *> $null
-if ($LASTEXITCODE -ne 0) {
+$prev = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'      # a failed probe is data, not a crash
+& cmd /c "$python -m PyInstaller --version" 2>&1 | Out-Null
+$havePyInstaller = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = $prev
+if (-not $havePyInstaller) {
     Warn 'PyInstaller is not installed; installing into a build venv.'
-    & cmd /c "$python -m venv `"$Root\.venv-build`"" | Out-Null
-    $python = "`"$Root\.venv-build\Scripts\python.exe`""
-    & cmd /c "$python -m pip install --disable-pip-version-check --quiet pyinstaller pywebview"
+    $venvPy = Join-Path $Root '.venv-build\Scripts\python.exe'
+    if (-not (Test-Path $venvPy)) {
+        & cmd /c "$python -m venv `"$Root\.venv-build`""
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) {
+            Fail "could not create a build venv at $Root\.venv-build"
+        }
+    }
+    & $venvPy -m pip install --disable-pip-version-check --quiet pyinstaller pywebview
     if ($LASTEXITCODE -ne 0) { Fail 'could not install PyInstaller.' }
+    $python = $venvPy
 }
 Ok 'PyInstaller available'
 
@@ -119,7 +137,11 @@ try {
 } finally { Pop-Location }
 
 $exe = Join-Path $Dist 'Keel.exe'
-if (-not (Test-Path $exe)) { Fail 'PyInstaller reported success but dist\Keel.exe is missing.' }
+if (-not (Test-Path $exe)) {
+    Warn "nothing at $exe. Contents of ${Dist}:"
+    if (Test-Path $Dist) { Get-ChildItem $Dist -Recurse | ForEach-Object { Write-Host "      $($_.FullName)" } }
+    Fail 'PyInstaller reported success but dist\Keel.exe is missing.'
+}
 $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
 Ok "dist\Keel.exe  ($mb MB)"
 
@@ -138,7 +160,12 @@ if ($SkipInstaller) {
     Warn 'skipped — run again with Inno Setup installed to get the installer'
 } else {
     & cmd /c "`"$iscc`" /Qp packaging\keel.iss"
-    if ($LASTEXITCODE -ne 0) { Fail 'ISCC failed.' }
+    if ($LASTEXITCODE -ne 0) {
+        Warn "ISCC exited $LASTEXITCODE. Re-running without /Q to show its reasons:"
+        & cmd /c "`"$iscc`" packaging\keel.iss" 2>&1 | Select-Object -Last 25 |
+            ForEach-Object { Write-Host "      $_" }
+        Fail 'ISCC failed.'
+    }
     $setup = Get-ChildItem (Join-Path $Dist 'installer') -Filter '*.exe' | Select-Object -First 1
     if (-not $setup) { Fail 'installer was not produced' }
     $smb = [math]::Round($setup.Length / 1MB, 1)

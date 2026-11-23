@@ -393,6 +393,29 @@ Then the app got a name, an installer and four tabs, which found five more:
     message. It now builds the new grid first and swaps at the end, and on
     failure says which call failed and that nothing was changed.
 
+69. **`build.ps1` died with a bare "exit code 1".** `& cmd /c "$python -m
+    PyInstaller --version" *> $null` runs under
+    `$ErrorActionPreference = 'Stop'`. On PowerShell 7.4+ any stderr byte from
+    that probe becomes a *terminating* error, so the `$LASTEXITCODE` check on the
+    next line never runs and the script exits with no message. That is why CI
+    reported a build failure the log could not explain. The probe now runs with
+    `Continue`, captures the status, and restores the preference.
+70. **The venv fallback quoted a path into a quoted command.** `$python =
+    "`"$Root\.venv-build\Scripts\python.exe`""` then `cmd /c "$python -m pip …"`
+    produces nested quotes and a malformed command line — failing at exactly the
+    moment the fallback was needed. It calls the executable directly now.
+71. **Every `Service()` wrote 68 MB of fake junk to disk.** The demo machine
+    exists so the Cleaner page has something honest to show, and the files must
+    report real sizes because the Cleaner reads `st_size`. But they were written
+    with `b"\0" * size`, so a 550-test run left **6.5 GB** in `/tmp` — and then
+    *unrelated* tests began failing with `OSError: [Errno 28] No space left on
+    device`. A red suite caused by the previous green one. The blobs are now
+    sparse (`truncate()`, zero blocks, identical reported size, still reads as
+    zeros), which cut a full run from 3.3 GB to 496 MB.
+72. **Nothing ever cleaned the pytest temp dirs.** Three runs, 6.9 GB, and no
+    mechanism to reclaim any of it. The suite now trims itself to the last three
+    runs at session end.
+
 ## The wallpaper engine
 
 Pure stdlib: no Pillow, no numpy, no shader runtime — the exe is 12 MB and a
@@ -445,6 +468,16 @@ after that, exactly like any other wallpaper. The live layer is the part that
 costs, and it stays opt-in.
 
 On battery the recommendation mentions the charge. It does not disable anything.
+
+## Building Keel.exe
+
+`.\packaging\build.ps1` produces `dist\Keel.exe` and the installer. It needs
+Windows, Python 3.10+, and (for the installer) Inno Setup 6.
+
+CI does the same thing on every push. If the `package` job fails, download the
+**build-log** artifact from the run page: the script now prints the failing
+command's output instead of exiting silently. It used to swallow the reason —
+which is bug 69 above.
 
 ## Porting to Rust (the contract)
 
