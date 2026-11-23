@@ -1,0 +1,56 @@
+{
+  "tweaks": [
+    {
+      "id": "display.set_refresh",
+      "module": "display",
+      "title": "Set the monitor to its maximum refresh rate",
+      "plain": "Your screen can show 165 pictures a second but is currently showing 60. This is the biggest free win on most PCs.",
+      "tier": "T1",
+      "risk": "low",
+      "needs_reboot": false,
+      "blast_radius": "cosmetic",
+      "knowledge_key": "display.refresh",
+      "preconditions": [
+        {
+          "kind": "exists",
+          "what": "display:primary.mode"
+        },
+        {
+          "kind": "gte",
+          "what": "display:primary.supported_hz",
+          "value": 60
+        }
+      ],
+      "effects": [
+        {
+          "kind": "display_mode",
+          "target": "primary",
+          "to": {
+            "hz": 165
+          }
+        }
+      ],
+      "measure": {
+        "metric": "display.hz",
+        "expect": 165,
+        "tolerance": 0.5
+      }
+    },
+    {
+      "id": "display.hdr.on",
+      "module": "display",
+      "title": "Turn on HDR",
+      "plain": "The panel supports HDR10 and it is currently off.",
+      "tier": "T1",
+      "risk": "low",
+      "blast_radius": "cosmetic",
+      "effects": [
+        {
+          "kind": "display_setting",
+          "target": "primary.hdr",
+          "to": true
+        }
+      ]
+    }
+  ]
+}

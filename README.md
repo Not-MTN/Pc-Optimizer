@@ -2,7 +2,7 @@
 
 > A Windows 11 optimizer with full access, honest receipts, and a beauty budget of 0% idle CPU.
 
-**Design phase — no product code yet.** This repo is currently the idea set: vision, architecture, specs, safety model, motion system and two clickable concept screens.
+**Status: design complete, Guardian engine started.** Thirteen design documents, four clickable concept screens, a validated 67-table schema, and a working, tested reference implementation of the safety core at [`engine/`](engine) (53 tests, runs on any OS).
 
 ## Read in this order
 
@@ -19,6 +19,18 @@
 | [`MASTERPLAN.md`](MASTERPLAN.md) | **The audit:** what's designed, the honest gaps, ~40 new features scored, how every existing module upgrades, and the next ten in order |
 | [`SCHEMA.md`](SCHEMA.md) | **The full data model:** 67 validated SQLite tables, every document format, retention, migrations, privacy guarantees |
 | [`ROADMAP.md`](ROADMAP.md) | **Honest build estimates:** solo vs team, the MVP cut, what "best UI/UX" actually costs, and risk buffers |
+
+## Running code
+
+| Path | What it is |
+|---|---|
+| [`engine/`](engine) | **The Guardian engine** — journal, preflight, snapshots, recovery, CLI. Python reference (53 passing tests), written to be ported to Rust 1:1 |
+
+```bash
+cd engine && python3 -m venv .venv && .venv/bin/pip install -q pytest
+.venv/bin/python -m pco_engine.cli --fresh crash   # the promise, demonstrated
+.venv/bin/python -m pytest tests -q                # 53 passed
+```
 
 ## Clickable concepts
 
