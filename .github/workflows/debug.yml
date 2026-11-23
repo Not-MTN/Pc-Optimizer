@@ -8,9 +8,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: |
-          python -m pip install --quiet pytest
+      - run: python -m pip install --quiet pytest
       - name: full output
         working-directory: engine
         continue-on-error: true
-        run: python -m pytest -q 2>&1 | Select-Object -Last 60
+        run: python -m pytest -q --tb=short > ../pytest-win.txt 2>&1; exit 0
+      - name: annotate
+        run: |
+          python -c "
+          import pathlib
+          p = pathlib.Path('pytest-win.txt')
+          lines = p.read_text(encoding='utf-8', errors='replace').splitlines() if p.exists() else ['NO FILE']
+          for ln in lines:
+              if 'FAILED' in ln or 'ERROR' in ln:
+                  print('::error::' + ln.replace('%','%%')[:900])
+          print('::error::TAIL: ' + ' | '.join(lines[-12:])[:900].replace('%','%%'))
+          "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pytest-win
+          path: pytest-win.txt
