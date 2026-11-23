@@ -168,7 +168,8 @@ CHECKS: list[Check] = [
 
     Check("privacy.telemetry", "privacy", "privacy", "low",
           "Windows telemetry at the full level",
-          lambda p: _telemetry(p), auto_safe=False,
+          lambda p: _telemetry(p), fix_tweaks=("privacy.telemetry.minimum",),
+          auto_safe=False,
           impact="Privacy only. The UI separates this from performance on purpose."),
 
     Check("reliability.crashes", "reliability", "reliability", "medium",
@@ -230,8 +231,11 @@ def _smb1(p: Probe):
     return True, ("The 1990s SMBv1 protocol is enabled.", {"smb1": True})
 
 
+TELEMETRY_ADDRESS = "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection"
+
+
 def _telemetry(p: Probe):
-    level = p.get("privacy:telemetry.level")
+    level = p.get(TELEMETRY_ADDRESS)
     if level not in ("full", 3):
         return None
     return True, ("Diagnostics are set to the full level.", {"level": level})

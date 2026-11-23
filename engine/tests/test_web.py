@@ -220,3 +220,78 @@ def test_bridge_errors_are_json_not_stack_traces_to_the_ui(live_server):
     assert code in (400, 409)
     assert "error" in body or "reason" in body or "applied" in body
     assert "Traceback" not in json.dumps(body)
+
+
+# ============================================================ product endpoints
+
+def test_bridge_gaming_watch_and_plan(live_server):
+    _, res = _post(live_server, "/api/game/watch", {"game": "fortnite", "seconds": 12})
+    assert res["grade"] and res["stats"]["fps_p1"] > 0
+    assert res["bottleneck"]["key"] in {
+        "gpu", "cpu", "vram", "ram", "thermal", "storage", "network", "balanced"}
+    assert res["verdict"]
+
+    _, plan = _post(live_server, "/api/game/plan",
+                    {"game": "fortnite", "session_id": res["session_id"]})
+    assert plan["settings"]
+    assert "%" in plan["expected"]
+
+
+def test_bridge_game_library_has_the_known_games(live_server):
+    lib = _get(live_server, "/api/games/library")["games"]
+    ids = {g["id"] for g in lib}
+    assert {"cs2", "valorant", "apex", "fortnite", "tarkov"} <= ids
+    cs2 = next(g for g in lib if g["id"] == "cs2")
+    assert cs2["yaw"] == 0.022
+    assert cs2["engine"] == "Source 2"
+    # sessions are counted live, not asserted against a fixed number
+    assert isinstance(cs2["sessions"], int)
+
+
+def test_bridge_consent_default_then_trusted(live_server):
+    c = _get(live_server, "/api/consent")
+    assert c["level"] in {"safe", "trusted"}
+
+    _, trusted = _post(live_server, "/api/consent/set", {"trust_everything": True})
+    assert trusted["level"] == "trusted"
+    assert all(v == "trusted" for v in trusted["categories"].values())
+
+    _, back = _post(live_server, "/api/consent/set",
+                    {"level": "safe", "categories": {"privacy": "off"}})
+    assert back["categories"]["privacy"] == "off"
+
+
+def test_bridge_fix_respects_consent_and_reports_withheld(live_server):
+    _post(live_server, "/api/consent/set", {"level": "safe",
+                                            "categories": {"privacy": "off",
+                                                           "storage": "off",
+                                                           "reliability": "off",
+                                                           "performance": "safe",
+                                                           "security": "safe"}})
+    _get(live_server, "/api/checkup")
+    code, res = _post(live_server, "/api/checkup/apply", {})
+    assert code == 200
+    assert "withheld" in res
+    assert any(w["why"] == "no declared fix" for w in res["withheld"])
+
+
+def test_bridge_studio_refuses_overbudget_theme(live_server):
+    themes = _get(live_server, "/api/studio/themes")["themes"]
+    heavy = max(themes, key=lambda t: t["cost_pct"])
+    _, res = _post(live_server, "/api/studio/apply", {"theme_id": heavy["id"]})
+    assert res["applied"] is False
+    assert res["over_pct"] > 0
+
+
+def test_bridge_studio_import_is_not_apply(live_server):
+    _, res = _post(live_server, "/api/studio/import",
+                   {"doc": {"name": "imported", "features": {"widgets_light": True}}})
+    assert res["valid"] is True and res["governor"]["ok"] is True
+
+
+def test_bridge_autopsy_flow_over_http(live_server):
+    _, begun = _post(live_server, "/api/autopsy/begin", {"installer": "nonsense.exe"})
+    aid = begun["autopsy_id"]
+    assert aid
+    listed = _get(live_server, "/api/autopsy")["autopsies"]
+    assert any(a["id"] == aid for a in listed)

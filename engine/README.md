@@ -51,12 +51,19 @@ run and git-ignored.
 | Cleaner | scan by rule, move to vault, restore, 30-day retention |
 | Blocking | on / off / strict, pause 30 min, per-app rules, allow rules, counters |
 | Sens Lab | cm/360 ⇄ every game, eDPI, and the PSA two-candidate test (6 rounds to <1 cm) |
+| Gaming | watch gameplay → frame stats, bottleneck diagnosis, settings plan, session history |
+| Autopsy | watch an install, read what it left, erase exactly that (critical items immune) |
+| Studio | themes with a declared idle-GPU cost; anything over 3% is refused |
 | Performance | benchmark score vs baseline, weekly report, drift check |
+
+Plus a **consent** control on the Checkup view: `safe` applies only catalog-declared
+auto-safe fixes; `trusted` also applies review-tier items *that have a real fix*.
+Nothing is applied without a declared tweak, and every batch is undone in one click.
 
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (106 tests, all passing)
+## What works today (164 tests, all passing)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -79,7 +86,19 @@ the console is a reference client, not a toy.
 | cm/360 round-trips and CS2→VALORANT matches the ÷3.18 constant | `test_round_trip_is_exact`, `test_cs2_to_valorant_is_the_known_ratio` |
 | Non-linear-ADS games are flagged, not faked | `test_table_has_every_game_and_flags_non_linear` |
 | The PSA test converges to under 1 cm in 6 rounds | `test_psa_converges_below_one_centimetre` |
-| The HTTP bridge works over real sockets, incl. undo | `test_web.py` (10 socket-level tests) |
+| The HTTP bridge works over real sockets, incl. undo | `test_web.py` (17 socket-level tests) |
+| Average fps never hides bad frame pacing | `test_average_fps_is_not_the_whole_story` |
+| A CPU limit is found from the busiest thread, not the average | `test_cpu_limit_is_named_by_the_busiest_thread_not_the_average` |
+| Thermal and VRAM limits are named *before* the naive "GPU is full" | `test_thermal_masquerading_as_gpu_is_caught_first`, `test_vram_exhaustion_beats_the_naive_gpu_reading` |
+| A healthy machine gets no invented problem | `test_healthy_machine_gets_no_invented_problem` |
+| Autopsy never erases a shared runtime | `test_autopsy_records_and_erases_non_critical` |
+| A failed erase is reported, not swallowed | `test_partial_failure_is_reported_not_hidden` |
+| Studio refuses a theme over the 3% idle-GPU budget | `test_a_heavy_theme_is_refused_with_numbers` |
+| Import validates but never applies | `test_import_validates_without_applying` |
+| "Fix everything" cannot pretend to fix an observation | `test_trust_never_applies_something_with_no_fix` |
+| Consent survives a restart and resets to the documented default | `test_consent_survives_a_restart`, `test_reset_returns_to_the_documented_default` |
+| Applying writes a receipt with before/after values; undo marks it | `test_applying_writes_a_receipt_and_undo_marks_it` |
+| Fixing an already-fixed machine is a no-op, not an error | `test_applying_something_already_applied_is_success_not_an_error` |
 
 ## Architecture
 
@@ -117,6 +136,10 @@ catalog/tweaks.json ──► Catalog ──► Preflight ──► PLAN (read-o
 | `pco_engine/sens.py` | yaw table, cm/360, eDPI, PSA binary search |
 | `pco_engine/recipes.py` | when-X-do-Y, capped, no loops, one receipt per run |
 | `pco_engine/sentinel.py` | event feed: nothing polls, plugins push |
+| `pco_engine/gaming.py` | frame analysis, bottleneck classifier, settings plan, profiles |
+| `pco_engine/autopsy.py` | install watcher + eraser with a critical-item immune system |
+| `pco_engine/studio.py` | theme validation and the idle-GPU governor |
+| `pco_engine/consent.py` | the one gate every automatic fix passes through |
 | `pco_engine/address.py` | canonical addresses — one string per managed thing |
 | `pco_engine/catalog.py` | tweak documents, validation, index |
 | `pco_engine/backend.py` | the only I/O seam + `FakeBackend` (and policy `pin()`) |
@@ -144,6 +167,10 @@ Recorded because they are the argument for building the tests first:
 11. **Sens profile saved under the wrong key** — "I play CS2 at 1.6" stored a per-game row the table never read, so the conversion page showed a stale 40 cm/360.
 12. **Double counting in the cleaner** — one temp file listed under two rules reported 14 files when there were 10.
 13. **PSA that couldn't converge** — the first binary search compared a value against itself, so the range never shrank.
+14. **Consent aliasing** — one shared default dict meant a single profile's "trust everything" became every later profile's default, including after `reset()`. A saved permission that silently changes is the worst class of bug in this product.
+15. **Fix-all failed on a healthy machine** — one already-correct item aborted the whole batch, so a second click reported a red error on a machine with nothing wrong. Batch application now filters satisfied tweaks first.
+16. **An unfixable privacy finding** — "telemetry at the full level" had no catalog tweak, so the trusted tier legitimately did nothing. The privacy fix now exists and targets the real Windows policy key.
+17. **No receipt for applies** — the engine wrote journal rows but no receipt, so History was empty after the most important action in the product.
 
 ## Porting to Rust (the contract)
 
@@ -162,6 +189,11 @@ The checksum formula and the JSON keys are the two things that must not drift.
 - `WindowsBackend` (registry/services/tasks/display/power) — needs a Windows machine; the reference `Backend` is the whole seam, so this is one file.
 - The DNS resolver itself (this repo has the decision engine; the resolver needs Windows NRPT).
 - The Rust port and the WinUI 3 shell.
-- Desktop Studio, widgets, wallpaper engine, game-profile auto-detect (specified, not written).
+- Widgets, wallpaper renderer, theme application to the real shell (the governor and
+  document format exist; the WinUI renderer needs Windows).
+- Game auto-detect via process watcher (the library, classifier and plan are done;
+  PresentMon wiring needs Windows).
+- The installer watcher itself (deltas are recorded and erasable; the ETW/registry
+  monitor needs Windows).
 
 Each is specified; none of them needs the safety core to change.

@@ -20,6 +20,8 @@ BASE_STATE = {
     "service:diagtrack.exists": True,
     "power:active_scheme": "balanced",
     "registry:hklm\\software\\acme\\telemetry": 1,
+    # where Windows actually keeps the diagnostic-data level
+    "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection": "full",
     "registry:hklm\\software\\acme\\updater": 1,
     "startup:onedrive.defer_seconds": 0,
     "startup:steam.defer_seconds": 0,

@@ -19,12 +19,18 @@ from . import Engine, FakeBackend, Catalog
 from .bench import Bench
 from .checker import Checker, Probe
 from .cleaner import Cleaner, Rule
+from .autopsy import AutopsyLab
+from .consent import Consent
 from .dns import DnsBlocker
+from .ids import new_id
+from .address import values_equal
 from .engine import EngineError, PreflightBlocked
+from .gaming import Gaming
 from .recipes import Recipes, Spec
 from .sens import SensLab
 from .sentinel import Event, Sentinel
 from .store import connect, integrity, migrate
+from .studio import Studio
 
 DEFAULT_RULES = [
     Rule("temp.user", "Your temporary files", "free", "cosmetic",
@@ -82,6 +88,14 @@ class Service:
         self._install_demo_lists()
         self.recipes = Recipes(self.conn, self.clock, run_action=self.run_action)
         self.sens = SensLab(self.conn, self.clock)
+        self.gaming = Gaming(self.conn, self.clock)
+        self.studio = Studio(self.conn, self.clock)
+        self.consent = Consent(self.conn, self.clock)
+        self.autopsy = AutopsyLab(
+            self.conn, self.clock,
+            snapshot=lambda: self.engine.snapshots.capture(
+                sorted(self.catalog.addresses()), kind="pre_risky",
+                note="before installer autopsy").id)
 
         self.recover_on_start()
 
@@ -122,25 +136,112 @@ class Service:
                       f"score {result.total}.",
             payload={"run_id": result.run_id, "score": result.total}))
         if fix_safe:
-            safe = [f for f in result.fixable_safe if f.fix_tweaks]
-            applied = self.apply_fixes([t for f in safe for t in f.fix_tweaks],
-                                       finding_ids=[f.id for f in safe])
-            payload["fix"] = applied
+            payload["fix"] = self.fix_by_consent(result)
+        payload["consent"] = self.consent.decision().as_dict()
         return payload
+
+    def fix_by_consent(self, result=None) -> dict[str, Any]:
+        """Apply exactly what the consent level permits — never more.
+
+        `result` is a CheckResult when we already have fresh findings; otherwise
+        the latest persisted run is used, so the button works from the UI without
+        re-running the whole checkup.
+        """
+        if result is not None:
+            findings = result.findings
+            as_dicts = [f.as_dict() for f in findings]
+        else:
+            latest = self.checker.latest_run()
+            if latest is None:
+                return {"applied": False, "reason": "no checkup has run yet"}
+            as_dicts = self.checker.findings_of(latest["run_id"])
+            findings = as_dicts
+        chosen, withheld = [], []
+        for f in as_dicts:
+            has_fix = bool(f.get("fix_tweaks")) and bool(
+                str(f.get("fix_tweaks")).strip("[]'\""))
+            if self.consent.allows(f["category"], auto_safe=bool(f["auto_safe"]),
+                                  has_fix=has_fix):
+                chosen.append(f)
+            else:
+                withheld.append({"check_id": f["check_id"], "category": f["category"],
+                                 "why": ("no declared fix" if not has_fix else
+                                         "not permitted by current consent")})
+        tweaks = [t for f in chosen for t in f["fix_tweaks"]]
+        if not tweaks:
+            return {"applied": False, "reason": "consent allows nothing here",
+                    "withheld": withheld, "chosen": []}
+        out = self.apply_fixes(tweaks, finding_ids=[f["id"] for f in chosen])
+        out["chosen"] = [f["check_id"] for f in chosen]
+        out["withheld"] = withheld
+        return out
+
+    def set_consent(self, *, level: str | None = None,
+                    categories: dict[str, str] | None = None,
+                    trust_everything: bool = False) -> dict[str, Any]:
+        if trust_everything:
+            d = self.consent.trust_everything()
+        else:
+            d = self.consent.set(level=level, categories=categories)
+        self.sentinel.record(Event(
+            kind="consent", source="consent", severity="warning",
+            narrative=f"Automation level is now '{d.level}'.",
+            payload=d.as_dict()))
+        return d.as_dict()
+
+    def already_satisfied(self, tweak_id: str) -> bool:
+        """True when every effect of this tweak already matches reality.
+
+        Needed because "fix everything" is a batch: one already-correct item must
+        not fail the eleven that are not, and on a healthy machine the whole
+        operation should be a documented no-op rather than an error.
+        """
+        try:
+            tw = self.catalog.get(tweak_id)
+        except Exception:          # noqa: BLE001 - unknown tweaks are preflight's job
+            return False
+        if not tw.effects:
+            return False
+        for eff in tw.effects:
+            try:
+                current = self.engine._read(eff.address)
+            except Exception:      # noqa: BLE001 - unreadable means "assume not satisfied"
+                return False
+            if not values_equal(current, eff.to):
+                return False
+        return True
 
     def apply_fixes(self, tweak_ids: list[str], *, finding_ids: list[str] | None = None,
                     source: str = "ui") -> dict[str, Any]:
-        ids = list(dict.fromkeys(tweak_ids))
-        if not ids:
+        ids = [t for t in dict.fromkeys(tweak_ids) if not self.already_satisfied(t)]
+        if not tweak_ids:
             return {"applied": False, "reason": "nothing to fix"}
+        if not ids:
+            return {"applied": True, "already": True, "effects": [],
+                    "summary": "Already applied — every value already matches.",
+                    "tx_id": None}
         try:
             res = self.engine.apply(ids, source=source, kind="batch")
+        except EngineError as exc:
+            if "nothing to do" in str(exc).lower():
+                # Everything requested is already in place. That is success with
+                # nothing to write, not an error — the UI must not show a red box.
+                return {"applied": True, "already": True, "effects": [],
+                        "summary": "Already applied — every value already matches.",
+                        "tx_id": None}
+            return {"applied": False, "error": str(exc)}
         except PreflightBlocked as exc:
             return {"applied": False, "blocked": [i.as_dict() for i in exc.plan.errors]}
-        except EngineError as exc:
-            return {"applied": False, "error": str(exc)}
         if finding_ids:
             self.checker.mark_fixed(finding_ids, res.tx_id)
+        # Every applied batch belongs in History. Without this the most important
+        # operation in the product left no receipt at all.
+        self._write_receipt(kind="tweak", title=f"Applied {len(res.effects)} change(s)",
+                            summary=res.summary, tx_id=res.tx_id,
+                            detail={"tweaks": ids, "effects": [
+                                {"address": e.address, "old": e.old, "new": e.new}
+                                for e in res.effects],
+                                "snapshot_id": res.snapshot_id})
         self.sentinel.record(Event(
             kind="fix", source="engine", severity="info",
             narrative=f"Applied {len(res.effects)} fix(es) — undo is one click.",
@@ -151,8 +252,22 @@ class Service:
             "effects": [{"address": e.address, "old": e.old, "new": e.new}
                         for e in res.effects]}.items()}}
 
+    def _write_receipt(self, *, kind: str, title: str, summary: str, tx_id: str | None,
+                       detail: dict[str, Any]) -> str:
+        rid = new_id()
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO receipts(id,at,kind,title,summary,detail_json,tx_id) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (rid, self.clock(), kind, title, summary,
+                 json.dumps(detail, sort_keys=True, separators=(",", ":")), tx_id))
+        return rid
+
     def undo(self, tx_id: str) -> dict[str, Any]:
         res = self.engine.revert(tx_id, reason="ui")
+        with self.conn:
+            self.conn.execute("UPDATE receipts SET undone_at=? WHERE tx_id=?",
+                              (self.clock(), tx_id))
         self.sentinel.record(Event(
             kind="undo", source="engine", severity="info",
             narrative=f"Undid {res.reverted} change(s).", payload={"tx_id": tx_id}))
@@ -207,6 +322,10 @@ class Service:
             "baseline": self.bench.baseline(),
             "cleaner": vault,
             "dns": self.dns.status(),
+            "gaming": self.gaming.sessions(3),
+            "studio": self.studio.budget(),
+            "autopsy": self.autopsy.list(3),
+            "consent": self.consent.decision().as_dict(),
             "feed": self.sentinel.feed(8),
             "digest": self.sentinel.digest(),
             "receipts": self.receipts(10),
@@ -290,7 +409,7 @@ DEMO_STATE = {
     "task:\\microsoft\\office\\officebackgroundtaskhandler.state": "ready",
     "security:defender.realtime": True,
     "security:smb1.enabled": True,
-    "privacy:telemetry.level": "full",
+    "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection": "full",
     "startup:items": [
         {"name": "OneDrive", "enabled": True, "cost_ms": 900},
         {"name": "Steam", "enabled": True, "cost_ms": 1400},
@@ -319,6 +438,23 @@ CLEAN_ROOTS = {
 ACTIONS = {
     "checkup.run": lambda s, a: s.checkup(),
     "checkup.fix_safe": lambda s, a: s.checkup(fix_safe=True),
+    "checkup.fix": lambda s, a: s.fix_by_consent(),
+    "consent.set": lambda s, a: s.set_consent(level=a.get("level"),
+                                              categories=a.get("categories"),
+                                              trust_everything=bool(a.get("trust_everything"))),
+    "consent.explain": lambda s, a: s.consent.explain(a["findings"]),
+    "game.watch": lambda s, a: s.gaming.capture(a["game"], seconds=float(a.get("seconds", 45))),
+    "game.sessions": lambda s, a: s.gaming.sessions(int(a.get("limit", 10)), a.get("game")),
+    "game.plan": lambda s, a: s.gaming.plan(a["game"], a.get("session_id")),
+    "game.profile": lambda s, a: s.gaming.profile(a["game"]) or {},
+    "game.profile.save": lambda s, a: s.gaming.save_profile(a["game"], a["settings"]),
+    "game.profile.export": lambda s, a: s.gaming.export_profile(a["game"]),
+    "studio.themes": lambda s, a: {"themes": s.studio.themes(),
+                                   "budget": s.studio.budget()},
+    "studio.apply": lambda s, a: s.studio.apply(a["theme_id"], force=bool(a.get("force"))),
+    "studio.import": lambda s, a: s.studio.import_doc(a["doc"]),
+    "autopsy.begin": lambda s, a: {"autopsy_id": s.autopsy.begin(a.get("installer", "unknown.exe"))},
+    "autopsy.erase": lambda s, a: s.autopsy.erase(a["autopsy_id"]),
     "clean.scan": lambda s, a: s.clean_scan(),
     "clean.run": lambda s, a: s.clean_run(),
     "clean.restore": lambda s, a: s.clean_restore(a["run_id"]),

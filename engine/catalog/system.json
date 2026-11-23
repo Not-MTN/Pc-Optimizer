@@ -139,6 +139,35 @@
           "to": "loaded"
         }
       ]
+    },
+    {
+      "id": "privacy.telemetry.minimum",
+      "module": "privacy",
+      "title": "Set diagnostic data to the minimum level",
+      "plain": "Changes the Windows diagnostic data setting from Full to Required only. Nothing is uploaded by this app; this only reduces what Windows itself sends.",
+      "tier": "T1",
+      "risk": "low",
+      "needs_reboot": false,
+      "blast_radius": "low",
+      "knowledge_key": "privacy:telemetry.level",
+      "preconditions": [
+        {
+          "kind": "not_equals",
+          "what": "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection",
+          "value": "required"
+        }
+      ],
+      "effects": [
+        {
+          "kind": "registry_value",
+          "target": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+          "to": "required"
+        }
+      ],
+      "measure": {
+        "metric": "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection",
+        "expect": "required"
+      }
     }
   ]
 }

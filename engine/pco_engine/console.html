@@ -153,6 +153,15 @@
     <button class="nav" data-view="sens" title="Sens Lab">
       <svg viewBox="0 0 24 24"><path d="M12 3v4"/><rect x="7" y="8" width="10" height="13" rx="5"/><path d="M12 12v3"/></svg>
     </button>
+    <button class="nav" data-view="gaming" title="Gaming">
+      <svg viewBox="0 0 24 24"><path d="M6 12h4M8 10v4"/><circle cx="16" cy="11" r="1"/><circle cx="18.5" cy="13.5" r="1"/><path d="M3 14l2-6a3 3 0 013-2h8a3 3 0 013 2l2 6a2 2 0 01-3.6 1.6L16 14H8l-1.4 1.6A2 2 0 013 14z"/></svg>
+    </button>
+    <button class="nav" data-view="autopsy" title="Installer Autopsy">
+      <svg viewBox="0 0 24 24"><path d="M12 3v10"/><path d="M8 9l4 4 4-4"/><path d="M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4"/></svg>
+    </button>
+    <button class="nav" data-view="studio" title="Desktop Studio">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/></svg>
+    </button>
     <button class="nav" data-view="power" title="Performance">
       <svg viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>
     </button>
@@ -238,6 +247,14 @@
           <p class="sub" style="margin-top:14px">Disk space and speed are scored separately on
             purpose: cleaning junk frees space, it does not make games faster.</p>
           <button class="btn primary" id="runCheckup" style="margin-top:6px">Run checkup</button>
+          <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+          <h2>What am I allowed to fix?</h2>
+          <div class="sub" id="consentLine" style="margin-bottom:10px">—</div>
+          <div class="row">
+            <button class="btn" id="consentSafe">Safe only</button>
+            <button class="btn" id="consentTrusted">I trust you — fix everything fixable</button>
+          </div>
+          <div id="consentDetail" class="sub" style="margin-top:10px"></div>
         </div>
       </div>
       <div class="card">
@@ -326,6 +343,76 @@
       </div>
     </section>
 
+    <!-- ============ GAMING ============ -->
+    <section class="sect" id="view-gaming">
+      <div class="grid g2">
+        <div class="card">
+          <h2>Watch a session</h2>
+          <p class="sub">It reads real frame times while you play, then names the one thing
+            that is actually limiting you — or says there isn't one.</p>
+          <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px;margin:14px 0">
+            <div><label class="field">Game</label><select id="gameSel"></select></div>
+            <div><label class="field">Seconds</label><input id="gameSecs" type="number" value="45" min="10" max="180"></div>
+          </div>
+          <button class="btn primary" id="watchBtn">Watch gameplay</button>
+          <div id="gameResult" style="margin-top:16px"></div>
+        </div>
+        <div class="card">
+          <h2>Diagnosis</h2>
+          <div id="bottleneck" class="empty">No session watched yet.</div>
+          <div id="suggestions" style="margin-top:12px"></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Recent sessions</h2>
+        <table><thead><tr><th>Game</th><th>Grade</th><th>Avg</th><th>1% low</th>
+          <th>Stutter</th><th>Limiter</th><th>When</th></tr></thead>
+          <tbody id="sessions"></tbody></table>
+      </div>
+    </section>
+
+    <!-- ============ AUTOPSY ============ -->
+    <section class="sect" id="view-autopsy">
+      <div class="grid g2">
+        <div class="card">
+          <h2>Read the receipt</h2>
+          <p class="sub">Watch an install, then erase exactly what it left. Shared runtimes are
+            never touched, and the receipt says so.</p>
+          <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px;margin:14px 0">
+            <div><label class="field">Installer name</label>
+              <input id="autopsyName" value="nonsense-setup.exe"></div>
+            <div style="display:flex;align-items:flex-end">
+              <button class="btn primary" id="autopsyBegin" style="width:100%">Watch an install</button></div>
+          </div>
+          <div id="autopsyBody" class="empty">No install watched yet.</div>
+        </div>
+        <div class="card">
+          <h2>Past autopsies</h2>
+          <table><thead><tr><th>Installer</th><th>State</th><th>Summary</th></tr></thead>
+            <tbody id="autopsyList"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ STUDIO ============ -->
+    <section class="sect" id="view-studio">
+      <div class="grid g2">
+        <div class="card">
+          <h2>Themes</h2>
+          <p class="sub">Every theme declares its idle-GPU cost. Anything over
+            <b id="budgetNum">3%</b> is refused — that is the difference between a desktop and a drain.</p>
+          <div id="themes" style="margin-top:14px"></div>
+        </div>
+        <div class="card">
+          <h2>Budget</h2>
+          <div class="big" id="budgetActive">—</div>
+          <div class="sub" id="budgetSub">—</div>
+          <div class="bar" style="margin:14px 0"><i id="budgetBar"></i></div>
+          <div class="kv" id="budgetKv"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- ============ POWER ============ -->
     <section class="sect" id="view-power">
       <div class="grid g2">
@@ -382,6 +469,9 @@ const TITLES = { home: ["Overview", "Everything the Guardian engine knows, live.
   clean: ["Cleaner", "Space is not speed. This page is honest about that."],
   dns: ["Blocking", "Off means off — the toggle is real, not a marketing one."],
   sens: ["Sens Lab", "cm/360 is the truth; each game is just a dialect."],
+  gaming: ["Gaming", "It watches real frames, then says the one useful thing."],
+  autopsy: ["Installer Autopsy", "Every install leaves a receipt. Every line is erasable."],
+  studio: ["Desktop Studio", "Beautiful is a feature. Over 3% idle GPU is a defect."],
   power: ["Performance", "Measure, change one thing, measure again."] };
 function show(view) {
   document.querySelectorAll(".sect").forEach((s) => s.classList.remove("on"));
@@ -391,6 +481,9 @@ function show(view) {
   $("#title").textContent = TITLES[view][0];
   $("#subtitle").textContent = TITLES[view][1];
   if (view === "sens") loadSens();
+  if (view === "gaming") loadGaming();
+  if (view === "autopsy") loadAutopsy();
+  if (view === "studio") loadStudio();
 }
 
 /* ---------------------------------------------------------------- render */
@@ -569,6 +662,7 @@ async function fixSafe() {
   busy($("#quickFix"), true);
   try {
     const data = await api("/api/checkup/fix", {});
+    if (data.consent) loadConsent();
     if (data.fix && data.fix.applied) {
       toast("Fixed " + (data.fix.effects ? data.fix.effects.length : 0) +
             " thing(s). One click undoes it.");
@@ -700,6 +794,279 @@ async function psaStep(better) {
   } catch (err) { toast(err.message, true); }
 }
 
+/* ---------------------------------------------------------------- gaming */
+let LIBRARY = [];
+async function loadGaming() {
+  try {
+    const lib = await api("/api/games/library");
+    if (!LIBRARY.length) {
+      LIBRARY = lib.games;
+      const sel = $("#gameSel");
+      LIBRARY.forEach((g) => { const o = el("option", null, g.name); o.value = g.id; sel.append(o); });
+      sel.value = "fortnite";
+    }
+    renderSessions(lib.games);
+    const st = await api("/api/status");
+    if (!sessionsRendered && st.gaming) renderSessionList(st.gaming);
+  } catch (err) { toast(err.message, true); }
+}
+let sessionsRendered = false;
+
+function renderSessions(games) { /* library used for session meta */ }
+
+function renderSessionList(list) {
+  const tb = $("#sessions"); tb.replaceChildren();
+  sessionsRendered = true;
+  if (!list || !list.length) {
+    tb.append(el("tr")).append(el("td", "empty", "No sessions yet — watch one."));
+    return;
+  }
+  list.forEach((s) => {
+    const tr = el("tr");
+    const g = s.stats || {};
+    tr.append(el("td", null, s.game || s.game_id),
+              el("td", "mono " + (s.grade === "S" || s.grade === "A" ? "ok" :
+                 s.grade === "D" ? "bad" : "warn"), s.grade || "—"),
+              el("td", "mono", g.fps_avg ? Math.round(g.fps_avg) : "—"),
+              el("td", "mono", g.fps_p1 ? Math.round(g.fps_p1) : "—"),
+              el("td", "mono", g.stutter_pct != null ? g.stutter_pct + "%" : "—"),
+              el("td", null, s.bottleneck || "—"),
+              el("td", "sub", ago(s.at)));
+    tb.append(tr);
+  });
+}
+
+async function watchGame() {
+  const btn = $("#watchBtn");
+  busy(btn, true);
+  $("#gameResult").replaceChildren(
+    el("div", "sub", "Watching… do not alt-tab. (A real session reads PresentMon; " +
+                     "this build reads the simulated capture.)"));
+  try {
+    const res = await api("/api/game/watch",
+      { game: $("#gameSel").value, seconds: parseInt($("#gameSecs").value, 10) || 45 });
+    renderDiagnosis(res);
+    sessionsRendered = false;
+    const st = await api("/api/status");
+    renderSessionList(st.gaming);
+    toast("Session graded " + res.grade);
+    await loadPlan(res.game_id, res.session_id);
+  } catch (err) { toast(err.message, true); }
+  busy(btn, false);
+}
+
+function renderDiagnosis(res) {
+  const box = $("#gameResult"); box.replaceChildren();
+  const st = res.stats;
+  const big = el("div", "big", Math.round(st.fps_avg) + " fps");
+  big.append(el("small", null, "  1% low " + Math.round(st.fps_p1)));
+  box.append(big, el("div", "sub", res.verdict));
+
+  const grid = el("div", "grid");
+  grid.style.cssText = "grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px";
+  [["Grade", res.grade], ["Stutter", st.stutter_pct + "%"],
+   ["Consistency", st.consistency + "/100"]].forEach(([k, v]) => {
+    const c = el("div");
+    c.style.cssText = "background:#0f1319;border:1px solid var(--line);border-radius:10px;padding:9px";
+    c.append(el("div", "sub", k), el("div", "mono", v));
+    c.style.fontWeight = "600";
+    grid.append(c);
+  });
+  box.append(grid);
+
+  const b = res.bottleneck;
+  const bd = $("#bottleneck"); bd.replaceChildren(); bd.classList.remove("empty");
+  const head = el("div", "row between");
+  head.append(el("h3", null, b.headline),
+              el("span", "tag " + (b.key === "balanced" ? "safe" : "review"), b.key));
+  bd.append(head);
+  bd.append(el("div", "sub", "confidence " + Math.round(b.confidence * 100) + "%"));
+  const ul = el("ul"); ul.style.cssText = "margin:12px 0 0;padding-left:18px;color:var(--dim);font-size:12.5px";
+  b.advice.forEach((a) => ul.append(el("li", null, a)));
+  bd.append(ul);
+}
+
+async function loadPlan(game, sessionId) {
+  try {
+    const plan = await api("/api/game/plan", { game: game, session_id: sessionId });
+    const box = $("#suggestions"); box.replaceChildren();
+    box.append(el("h2", null, "Settings that would move it"));
+    box.append(el("div", "sub", plan.expected));
+    plan.settings.forEach((sg) => {
+      const row = el("div", "finding");
+      row.style.animation = "none";
+      const body = el("div"); body.style.flex = "1";
+      const head = el("div", "row between");
+      head.append(el("h3", null, sg.label + " → " + sg.value));
+      if (sg.fps_gain_pct) head.append(el("span", "tag safe", "+" + sg.fps_gain_pct + "% fps"));
+      body.append(head, el("p", null, sg.why));
+      row.append(body); box.append(row);
+    });
+    if (plan.tweaks.length) {
+      const b = el("button", "btn primary", "Apply " + plan.tweaks.length + " supporting tweak(s)");
+      b.onclick = async () => {
+        busy(b, true);
+        try {
+          const out = await api("/api/apply", { tweaks: plan.tweaks });
+          toast(out.applied ? "Applied — one click undoes it." : "Refused: " +
+                ((out.blocked && out.blocked[0] && out.blocked[0].message) || "preflight"));
+        } catch (err) { toast(err.message, true); }
+        busy(b, false);
+      };
+      box.append(b);
+    }
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ---------------------------------------------------------------- autopsy */
+function leafName(p) {
+  const parts = p.split(String.fromCharCode(92));
+  return parts[parts.length - 1] || p;
+}
+async function loadAutopsy() {
+  try {
+    const data = await api("/api/autopsy");
+    const tb = $("#autopsyList"); tb.replaceChildren();
+    if (!data.autopsies.length) {
+      tb.append(el("tr")).append(el("td", "empty", "Nothing watched yet."));
+      return;
+    }
+    data.autopsies.forEach((a) => {
+      const tr = el("tr");
+      tr.append(el("td", null, a.installer), el("td", null, a.state),
+                el("td", "sub", a.summary || "—"));
+      tb.append(tr);
+    });
+  } catch (err) { toast(err.message, true); }
+}
+
+async function beginAutopsy() {
+  const btn = $("#autopsyBegin");
+  busy(btn, true);
+  try {
+    const begun = await api("/api/autopsy/begin",
+                            { installer: $("#autopsyName").value || "installer.exe" });
+    toast("Watching. Install the app, then come back and erase it.");
+    await simulateAutopsyItems(begun.autopsy_id);
+  } catch (err) { toast(err.message, true); }
+  busy(btn, false);
+}
+
+async function simulateAutopsyItems(id) {
+  // demo machine: the watcher's findings are modelled, since nothing is installed here
+  const box = $("#autopsyBody"); box.replaceChildren(); box.classList.remove("empty");
+  box.append(el("div", "sub", "Watching… (demo capture: files, a service, a task, keys)"));
+  const items = [
+    { cls: "service", locator: "NonsenseAgent" },
+    { cls: "task", locator: "\Nonsense\Updater" },
+    { cls: "registry", locator: "HKLM\SOFTWARE\Nonsense" },
+    { cls: "file", locator: "C:\Program Files\Nonsense\app.exe", size: 84_000_000 },
+    { cls: "file", locator: "C:\ProgramData\Nonsense\cache.bin", size: 320_000_000 },
+    { cls: "file", locator: "C:\Windows\System32\vcruntime140.dll", size: 420_000, critical: true },
+  ];
+  items.forEach((it, i) => {
+    setTimeout(() => {
+      const row = el("div", "finding");
+      row.style.animation = "none";
+      const cat = el("div", "cat " + (it.cls === "file" ? "storage" : "performance"));
+      const body = el("div"); body.style.flex = "1";
+      body.append(el("h3", null, it.cls + " · " + leafName(it.locator)));
+      body.append(el("p", null, it.locator));
+      const tag = el("span", "tag " + (it.critical ? "review" : "safe"),
+                     it.critical ? "critical — never erased" : "erasable");
+      row.append(cat, body, tag);
+      box.append(row);
+      if (i === items.length - 1) {
+        const b = el("button", "btn primary", "Erase every non-critical trace");
+        b.style.marginTop = "12px";
+        b.onclick = () => eraseAutopsy(id, b);
+        box.append(b);
+      }
+    }, 220 * i);
+  });
+}
+
+async function eraseAutopsy(id, btn) {
+  busy(btn, true);
+  try {
+    const res = await api("/api/autopsy/erase", { autopsy_id: id });
+    toast(res.summary);
+    await loadAutopsy();
+    await refreshAll();
+  } catch (err) { toast(err.message, true); }
+  busy(btn, false);
+}
+
+/* ---------------------------------------------------------------- studio */
+async function loadStudio() {
+  try {
+    const data = await api("/api/studio/themes");
+    const list = data.themes || data;
+    const box = $("#themes"); box.replaceChildren();
+    list.forEach((t) => {
+      const row = el("div", "finding");
+      row.style.animation = "none";
+      const body = el("div"); body.style.flex = "1";
+      const head = el("div", "row between");
+      head.append(el("h3", null, t.name));
+      const over = t.cost_pct > IDLE_BUDGET;
+      head.append(el("span", "tag " + (over ? "review" : "safe"),
+                     t.cost_pct + "% idle GPU"));
+      body.append(head);
+      body.append(el("p", null, Object.keys(t.doc.features || {})
+        .filter((k) => t.doc.features[k]).join(" · ") || "no features"));
+      const b = el("button", "btn", t.applied_at ? "Active" : "Apply");
+      b.disabled = !!t.applied_at;
+      b.onclick = async () => {
+        busy(b, true);
+        try {
+          const out = await api("/api/studio/apply", { theme_id: t.id });
+          toast(out.applied ? "Applied " + t.name : out.message, !out.applied);
+          await loadStudio();
+        } catch (err) { toast(err.message, true); }
+        busy(b, false);
+      };
+      row.append(body, b); box.append(row);
+    });
+    const b = data.budget || {};
+    $("#budgetActive").textContent = b.active || "None";
+    $("#budgetSub").textContent = b.active
+      ? b.active_cost_pct + "% of the " + b.budget_pct + "% budget"
+      : "No theme applied — 0% of budget used.";
+    $("#budgetBar").style.width = Math.min(100,
+      ((b.active_cost_pct || 0) / (b.budget_pct || 3)) * 100) + "%";
+    $("#budgetNum").textContent = (b.budget_pct || IDLE_BUDGET) + "%";
+    const kv = $("#budgetKv"); kv.replaceChildren();
+    kv.append(el("b", null, "Budget"), el("span", null, (b.budget_pct || 3) + "% idle GPU"));
+    kv.append(el("b", null, "Headroom"), el("span", null, (b.remaining_pct || 0) + "% left"));
+    kv.append(el("b", null, "Rule"), el("span", null, "Refused above budget, unless forced"));
+  } catch (err) { toast(err.message, true); }
+}
+const IDLE_BUDGET = 3;
+
+/* ---------------------------------------------------------------- consent */
+async function loadConsent() {
+  try {
+    const c = await api("/api/consent");
+    const on = Object.entries(c.categories).filter(([, v]) => v !== "off");
+    $("#consentLine").textContent = "Level: " + c.level + " — " +
+      (on.length ? on.map(([k, v]) => k + ":" + v).join(", ") : "nothing automatic");
+    $("#consentDetail").textContent = c.reason || "";
+    $("#consentTrusted").classList.toggle("primary", c.level === "trusted");
+    $("#consentSafe").classList.toggle("primary", c.level === "safe");
+  } catch (err) { /* non-fatal */ }
+}
+
+async function setConsent(body) {
+  try {
+    const c = await api("/api/consent/set", body);
+    toast(body.trust_everything ? "Trusted. Only things with a real fix will be applied."
+                                : "Back to safe only.");
+    await loadConsent();
+    await refreshAll();
+  } catch (err) { toast(err.message, true); }
+}
+
 /* ---------------------------------------------------------------- wiring */
 document.querySelectorAll(".nav[data-view]").forEach((b) =>
   b.addEventListener("click", () => show(b.dataset.view)));
@@ -740,6 +1107,10 @@ $("#reportBtn").addEventListener("click", async () => {
       typeof v === "object" ? JSON.stringify(v) : String(v)));
   });
 });
+$("#watchBtn").addEventListener("click", watchGame);
+$("#autopsyBegin").addEventListener("click", beginAutopsy);
+$("#consentSafe").addEventListener("click", () => setConsent({ level: "safe" }));
+$("#consentTrusted").addEventListener("click", () => setConsent({ trust_everything: true }));
 $("#sensSave").addEventListener("click", sensConvert);
 $("#psaStart").addEventListener("click", psaStart);
 document.querySelectorAll("[data-psa]").forEach((b) =>
@@ -752,6 +1123,7 @@ document.addEventListener("keydown", (e) => {
 
 refreshAll();
 loadDns();
+loadConsent();
 </script>
 </body>
 </html>

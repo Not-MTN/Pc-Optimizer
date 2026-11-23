@@ -56,6 +56,10 @@ ROUTES: dict[str, str] = {
     "/api/dns/pause": "dns.pause",
     "/api/drift": "drift.check",
     "/api/report": "report.weekly",
+    "/api/checkup/apply": "checkup.fix",
+    "/api/studio/themes": "studio.themes",
+    "/api/games": "game.sessions",
+    "/api/verify": "verify",
 }
 
 
@@ -114,6 +118,18 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/feed":
                 with _LOCK:
                     self._json(200, {"feed": svc.sentinel.feed(25)})
+                return
+            if path == "/api/games/library":
+                with _LOCK:
+                    self._json(200, {"games": svc.gaming.games()})
+                return
+            if path == "/api/consent":
+                with _LOCK:
+                    self._json(200, svc.consent.decision().as_dict())
+                return
+            if path == "/api/autopsy":
+                with _LOCK:
+                    self._json(200, {"autopsies": svc.autopsy.list(20)})
                 return
             if path == "/api/catalog":
                 with _LOCK:
@@ -178,6 +194,46 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/sens/psa/step":
                 with _LOCK:
                     self._json(200, svc.sens.psa_step(args["state"], args["better"]))
+                return
+            if path == "/api/consent/set":
+                with _LOCK:
+                    out = svc.set_consent(level=args.get("level"),
+                                          categories=args.get("categories"),
+                                          trust_everything=bool(args.get("trust_everything")))
+                self._json(200, out)
+                return
+            if path == "/api/game/watch":
+                with _LOCK:
+                    out = svc.gaming.capture(args["game"],
+                                             seconds=float(args.get("seconds", 45)))
+                self._json(200, out)
+                return
+            if path == "/api/game/plan":
+                with _LOCK:
+                    out = svc.gaming.plan(args["game"], args.get("session_id"))
+                self._json(200, out)
+                return
+            if path == "/api/game/profile/save":
+                with _LOCK:
+                    self._json(200, svc.gaming.save_profile(args["game"], args["settings"]))
+                return
+            if path == "/api/studio/apply":
+                with _LOCK:
+                    self._json(200, svc.studio.apply(args["theme_id"],
+                                                     force=bool(args.get("force"))))
+                return
+            if path == "/api/studio/save":
+                with _LOCK:
+                    self._json(200, svc.studio.save(args["doc"], name=args.get("name")))
+                return
+            if path == "/api/studio/import":
+                with _LOCK:
+                    self._json(200, svc.studio.import_doc(args["doc"]))
+                return
+            if path == "/api/autopsy/begin":
+                with _LOCK:
+                    self._json(200, {"autopsy_id": svc.autopsy.begin(
+                        args.get("installer", "unknown.exe"))})
                 return
             if path in ROUTES:
                 with _LOCK:
