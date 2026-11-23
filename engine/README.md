@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (335 tests, 11 of which need real Windows)
+## What works today (341 tests: 330 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -244,7 +244,14 @@ Recorded because they are the argument for building the tests first:
 28. **Workspace restore was dangerous by default** — `restore()` took `dry_run=False` while its docstring promised a preview. Six programs would have launched on the first click. The default is now the safe direction, and the dangerous one has to be asked for.
 29. **Battery drain attribution dropped every process** — readings are negative while discharging, and the filter was `mw <= 0`, so the list was always just "(unattributed)". Then the residual bucket sorted *above* the real culprits. Both fixed; a named process now always outranks the remainder.
 30. **Backslashes in the console**
-31. **A service description could flip a start type** — the first `sc qc` parser searched the whole output for the word "disabled", so a service whose description reads *"...is not disabled"* was reported as disabled, and the app would then "fix" a running service back on. Now only the `START_TYPE` line is parsed, and a missing line is an error rather than a guess. Caught by a test written before the parser had ever run against `sc.exe`. — a JS string literal with `\` breaks the whole `<script>` block, which no Python test can see. Every console edit is followed by extracting the script and running `node --check`.
+31. **A service description could flip a start type**
+
+Then `windows-latest` started running, and found four more that Linux could not:
+
+32. **The demo machine followed the tests onto Windows** — the server chose its backend from `PCO_BACKEND`/auto, so on a Windows runner it pointed at the *real* machine and six bridge tests failed because the demo battery and fixtures do not exist there. The server now defaults to `demo` even on Windows: the CLI keeps `auto` (a person typed a command), but a browser tab you left open should never be able to change your PC unless you said so out loud.
+33. **Demo data leaked past the simulated machine** — `DEMO_METRICS` would have turned a hardcoded "42 GB of junk" into a *finding on a real PC*, and the demo blocklists would have been installed into a real user's blocker. Both were gated on `_demo` only after the Windows failure made me look.
+34. **`pco doctor` died on every Windows console** — output full of `·` and `→` against a cp1252 console raises `UnicodeEncodeError`, so the one command a nervous user runs first printed a traceback. Now the console is reconfigured to UTF-8, with a substitution fallback and an ASCII-safe JSON mode behind it.
+35. **PowerShell's `>` writes UTF-16** — the CI step redirected JSON to a file and `json.load` then choked on the BOM. Not a product bug, but the kind of thing that only appears on Windows and silently wastes an afternoon. — the first `sc qc` parser searched the whole output for the word "disabled", so a service whose description reads *"...is not disabled"* was reported as disabled, and the app would then "fix" a running service back on. Now only the `START_TYPE` line is parsed, and a missing line is an error rather than a guess. Caught by a test written before the parser had ever run against `sc.exe`. — a JS string literal with `\` breaks the whole `<script>` block, which no Python test can see. Every console edit is followed by extracting the script and running `node --check`.
 
 ## Porting to Rust (the contract)
 

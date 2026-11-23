@@ -54,6 +54,41 @@ job. No local setup at all.
 
 ---
 
+### What the Windows runner actually proved
+
+This repo now runs both jobs on every push, and the `windows-latest` job has
+already been green. Here is precisely what it established, so you know what is
+**verified** rather than merely written:
+
+| Test | Result on windows-latest |
+|---|---|
+| `test_the_backend_loads_on_windows` | ✅ passed |
+| `test_sc_exe_answers_in_the_format_the_parser_expects` | ✅ **passed** — `sc.exe qc wuauserv` really does emit the `START_TYPE` line the parser expects |
+| `test_powercfg_reports_a_scheme_we_can_name` | ✅ **passed** — `powercfg /getactivescheme` parsed to a named plan |
+| `test_display_path_is_refused_by_default_on_real_windows_too` | ✅ passed |
+| SMB1 registry value at the documented path | ⏭ skipped — **the runner image does not have that value** |
+| Telemetry policy key | ⏭ skipped — no such policy on a clean CI image |
+| Office background task | ⏭ skipped — Office is not installed |
+| The mutating round-trip | ⏭ skipped (opt-in, needs `PCO_WRITE_TESTS=1`) |
+
+**Read that honestly:** the *console tools* are verified against real Windows.
+The two *registry* paths are not, because a fresh CI image has neither the SMB1
+flag nor a telemetry policy — those exist on a real user's PC, not a clean VM.
+That is the gap step 3 on your machine closes, and it is a two-minute check:
+
+```powershell
+Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters' -Name SMB1
+Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' -Name AllowTelemetry
+```
+
+If both return a value, `doctor` on your PC will say `readable` for those two and
+the mapping is confirmed. If they error, the key genuinely is not there and the
+checkup will (correctly) refuse rather than invent a default — in which case run
+`security.smb1.disable` anyway: the write **creates** the value, which is the
+documented Windows behaviour for that flag.
+
+---
+
 ## Step 2 — see what it thinks it can touch (read-only, 1 minute)
 
 ```powershell
