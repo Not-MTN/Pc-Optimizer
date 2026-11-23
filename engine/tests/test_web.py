@@ -280,18 +280,24 @@ def test_bridge_fix_respects_consent_and_reports_withheld(live_server):
     assert any(w["why"] == "no declared fix" for w in res["withheld"])
 
 
-def test_bridge_studio_refuses_overbudget_theme(live_server):
+def test_bridge_studio_applies_the_heavy_theme_and_reports_cost(live_server):
+    """Over HTTP, the heavy theme must apply and carry its cost. The old
+    assertion here was that it was refused; the product rule changed because a
+    cost is not a permission slip."""
     themes = _get(live_server, "/api/studio/themes")["themes"]
     heavy = max(themes, key=lambda t: t["cost_pct"])
     _, res = _post(live_server, "/api/studio/apply", {"theme_id": heavy["id"]})
-    assert res["applied"] is False
-    assert res["over_pct"] > 0
+    assert res["applied"] is True
+    assert res["cost"]["blocked"] is False
+    assert res["cost_pct"] > 0
 
 
 def test_bridge_studio_import_is_not_apply(live_server):
     _, res = _post(live_server, "/api/studio/import",
                    {"doc": {"name": "imported", "features": {"widgets_light": True}}})
-    assert res["valid"] is True and res["governor"]["ok"] is True
+    assert res["valid"] is True
+    assert res["cost"]["blocked"] is False
+    assert res["zero_cost"]["features"]["widgets_light"] is False
 
 
 def test_bridge_autopsy_flow_over_http(live_server):

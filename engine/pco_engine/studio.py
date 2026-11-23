@@ -14,25 +14,13 @@ from typing import Any
 
 from .ids import new_id
 
-IDLE_GPU_BUDGET_PCT = 3.0        # hard product rule, from MOTION.md
-
-# what each effect costs at idle, in percentage points of GPU
-COSTS = {
-    "static_wallpaper": 0.0,
-    "animated_wallpaper": 1.1,
-    "widgets_light": 0.4,
-    "widgets_heavy": 1.6,
-    "taskbar_blur": 0.3,
-    "taskbar_accent": 0.0,
-    "icon_pack": 0.0,
-    "cursor_pack": 0.0,
-    "sounds": 0.0,
-    "rainmeter": 1.3,
-    "live_clock": 0.1,
-    "spectrum": 1.9,
-}
-
-KNOWN_KEYS = set(COSTS)
+# The policy lives in cost.py so the Studio, the theme gallery and any future
+# shell all obey one table. This module used to hold its own copy, which is how
+# two different answers to "what does this cost" appeared in one app.
+from .cost import (  # noqa: E402
+    ALTERNATIVES, COSTS, IDLE_GPU_BUDGET_PCT, TIERS, alternatives_for,
+    cost_of, tier_of, verify as _verify, zero_cost_variant,
+)
 
 
 @dataclass
@@ -48,8 +36,17 @@ class Theme:
                 "cost_pct": round(self.cost, 2), "applied_at": self.applied_at}
 
 
+KNOWN_KEYS = set(COSTS)
+
+
 def validate(doc: dict[str, Any]) -> list[str]:
-    problems = []
+    """Problems with a Studio feature document (not a theme document).
+
+    Kept separate from `themes.validate` because the two formats are different:
+    this one is a flat feature map, a theme is a full look. Mixing the two is what
+    made the gallery appear to cost 0% — see `Studio.themes`.
+    """
+    problems: list[str] = []
     if not isinstance(doc, dict):
         return ["theme must be an object"]
     feats = doc.get("features", {})
@@ -66,25 +63,22 @@ def validate(doc: dict[str, Any]) -> list[str]:
     return problems
 
 
-def cost_of(doc: dict[str, Any]) -> float:
-    feats = doc.get("features", {}) or {}
-    total = 0.0
-    for key, value in feats.items():
-        if not value:
-            continue
-        total += COSTS.get(key, 0.0)
-    return total
-
-
 def governor(cost: float, *, budget: float = IDLE_GPU_BUDGET_PCT) -> dict[str, Any]:
-    """The refusal is the feature. Say what it costs and what to turn off."""
-    ok = cost <= budget
-    over = max(0.0, cost - budget)
-    return {"ok": ok, "cost_pct": round(cost, 2), "budget_pct": budget,
-            "over_pct": round(over, 2),
-            "message": ("Within budget." if ok else
-                        f"This theme would idle at {cost:.1f}% GPU, "
-                        f"{over:.1f} points over the {budget}% budget.")}
+    """Deprecated shim. A cost alone cannot decide anything now.
+
+    `apply` previously refused anything above 3% unless forced. That treated a
+    product rule as the user's budget. The replacement reports and recommends;
+    see `cost.verify`. This shim stays so an old caller gets a verdict-shaped
+    dict instead of an AttributeError.
+    """
+    verdict = _verify({"features": {"_": cost}})
+    return {"ok": True, "cost_pct": round(cost, 2), "budget_pct": budget,
+            "over_pct": round(max(0.0, cost - budget), 2),
+            "blocked": False,
+            "message": ("Nothing is blocked. "
+                        + ("This is above the advisory "
+                           f"{budget:.0f}% figure." if cost > budget else
+                           "Within the advisory figure."))}
 
 
 class Studio:
@@ -113,9 +107,16 @@ class Studio:
 
     # --------------------------------------------------------------------- read
     def themes(self) -> list[dict[str, Any]]:
+        """Only Studio-format rows.
+
+        `desktop_themes` holds two document shapes: the Studio's feature maps and
+        the theme gallery's full looks. Reading one as the other is not a
+        cosmetic bug — `cost_of` returns 0.0 for a theme document, so the whole
+        gallery appeared to cost nothing. Filtering by shape is the fix.
+        """
         rows = self.conn.execute(
             "SELECT id,name,doc_json,cost_milli,applied_at FROM desktop_themes "
-            "ORDER BY cost_milli").fetchall()
+            "WHERE doc_json NOT LIKE '%\"meta\"%' ORDER BY cost_milli").fetchall()
         return [Theme(id=r[0], name=r[1], doc=_load(r[2]), cost=r[3] / 1000,
                       applied_at=r[4]).as_dict() for r in rows]
 
@@ -123,11 +124,19 @@ class Studio:
         return next((t for t in self.themes() if t["applied_at"]), None)
 
     def budget(self) -> dict[str, Any]:
+        """The cost picture. No budget to exceed — a number to see."""
         cur = self.active()
-        return {"budget_pct": IDLE_GPU_BUDGET_PCT,
-                "active": cur["name"] if cur else None,
-                "active_cost_pct": cur["cost_pct"] if cur else 0.0,
-                "remaining_pct": round(IDLE_GPU_BUDGET_PCT - (cur["cost_pct"] if cur else 0), 2)}
+        active_cost = cur["cost_pct"] if cur else 0.0
+        return {
+            "advisory_pct": IDLE_GPU_BUDGET_PCT,
+            "active": cur["name"] if cur else None,
+            "active_cost_pct": active_cost,
+            "tier": tier_of(active_cost),
+            "tier_meaning": TIERS[tier_of(active_cost)],
+            "zero_cost_available": True,
+            "note": ("Nothing is blocked and nothing is forced. A still "
+                     "wallpaper costs 0% and is always available."),
+        }
 
     # -------------------------------------------------------------------- write
     def save(self, doc: dict[str, Any], *, name: str | None = None) -> dict[str, Any]:
@@ -142,19 +151,22 @@ class Studio:
                 "INSERT INTO desktop_themes(id,name,doc_json,cost_milli) VALUES(?,?,?,?)",
                 (tid, doc["name"], _json(doc), int(cost * 1000)))
         return {"id": tid, "name": doc["name"], "cost_pct": round(cost, 2),
-                "governor": governor(cost)}
+                "cost": _verify(doc).as_dict()}
 
     def apply(self, theme_id: str, *, force: bool = False) -> dict[str, Any]:
+        """Apply a theme. `force` is accepted and ignored — kept for API
+        compatibility, because there is nothing left to force past.
+
+        A cost is not a permission slip. This applies, and returns what it will
+        cost so the UI can show it and offer the zero-cost variant.
+        """
         row = self.conn.execute(
             "SELECT name,doc_json,cost_milli FROM desktop_themes WHERE id=?",
             (theme_id,)).fetchone()
         if row is None:
             raise KeyError(f"unknown theme {theme_id}")
         cost = row[2] / 1000
-        verdict = governor(cost)
-        if not verdict["ok"] and not force:
-            return {"applied": False, **verdict,
-                    "suggest": "Turn off the heaviest feature, or force it knowingly."}
+        verdict = _verify({"features": {"_": cost}})
         with self.conn:
             self.conn.execute("UPDATE desktop_themes SET applied_at=NULL")
             self.conn.execute("UPDATE desktop_themes SET applied_at=? WHERE id=?",
@@ -163,7 +175,7 @@ class Studio:
                 "INSERT INTO desktop_state(key,value) VALUES('active_theme',?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (theme_id,))
         return {"applied": True, "theme": row[0], "cost_pct": round(cost, 2),
-                **{k: v for k, v in verdict.items() if k != "ok"}}
+                "cost": verdict.as_dict()}
 
     def import_doc(self, doc: dict[str, Any]) -> dict[str, Any]:
         """Import is validation + a governor verdict, never a silent apply."""
@@ -172,7 +184,8 @@ class Studio:
             raise ValueError("; ".join(problems))
         cost = cost_of(doc)
         return {"valid": True, "cost_pct": round(cost, 2),
-                "governor": governor(cost), "doc": doc}
+                "cost": _verify(doc).as_dict(), "doc": doc,
+                "zero_cost": zero_cost_variant(doc)}
 
 
 def _json(value: Any) -> str:

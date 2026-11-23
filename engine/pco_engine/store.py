@@ -52,12 +52,62 @@ def connect(path: str) -> sqlite3.Connection:
     return conn
 
 
+def _backup_before_migrate(conn: sqlite3.Connection,
+                           current: int) -> str | None:
+    """Copy the database next to itself before a migration runs.
+
+    Returns the backup path, or None when there is nothing to back up (a brand
+    new file) or the file is not on disk (in-memory test databases). Never
+    raises: failing to back up must not be what stops the app from starting —
+    but it is stamped so a failed migration can point at the reason.
+    """
+    row = conn.execute("PRAGMA database_list").fetchone()
+    path = row[2] if row else ""
+    if not path or path == ":memory:":
+        return None
+    try:
+        from pathlib import Path
+        src = Path(path)
+        if not src.exists() or src.stat().st_size == 0:
+            return None
+        target = src.with_name(f"{src.stem}.pre-v{current}.bak")
+        if target.exists():                      # keep one per source version
+            return str(target)
+        dest = sqlite3.connect(str(target))
+        try:
+            conn.backup(dest)                    # consistent, unlike a file copy
+        finally:
+            dest.close()
+        return str(target)
+    except Exception:                            # noqa: BLE001 - see docstring
+        return None
+
+
 def migrate(conn: sqlite3.Connection, *, clock=time.time) -> list[int]:
-    """Apply pending migrations. Backs up the file first (if it already exists)."""
+    """Apply pending migrations. Backs up the file first, if there is one.
+
+    The backup is not decoration. `executescript` commits implicitly, so a
+    migration that fails halfway leaves the database in whatever state the last
+    successful statement produced, and the version stamp that would let SQLite
+    roll back never got written. The only way back is a copy made before the
+    first byte changed — which this docstring promised for a long time without
+    the code ever doing it.
+
+    The copy is a plain file copy taken through SQLite's own backup API, so it is
+    consistent even if another connection is mid-transaction.
+    """
     current = conn.execute("PRAGMA user_version").fetchone()[0]
     pending = [(v, sql) for v, sql in MIGRATIONS if v > current]
     if not pending:
         return []
+
+    # Only worth copying a database that already has a schema. A brand-new file
+    # has had its header written by connect(), so a size check is not enough —
+    # ask SQLite whether anything is in it.
+    has_tables = conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0] > 0
+    if has_tables:
+        _backup_before_migrate(conn, current)
 
     applied: list[int] = []
     for version, sql in pending:
@@ -72,7 +122,9 @@ def migrate(conn: sqlite3.Connection, *, clock=time.time) -> list[int]:
                 "VALUES(?,?,?,?)",
                 (version, int(clock() * 1000), checksum,
                  int((time.monotonic() - started) * 1000)))
-            conn.execute(f"PRAGMA user_version={version}")
+            # PRAGMA does not take bound parameters. force it through int() so
+            # the f-string can only ever contain a number, never SQL.
+            conn.execute(f"PRAGMA user_version={int(version)}")
         except Exception:
             raise StoreError(f"migration {version} failed") from None
         applied.append(version)

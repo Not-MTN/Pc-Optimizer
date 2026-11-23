@@ -32,7 +32,10 @@ from typing import Any
 # Each entry is a real, documented registry value under the current user's hive.
 # `needs_restart` is Explorer, not the machine — that distinction matters because
 # restarting Explorer closes every File Explorer window the user has open.
-DEFAULT_HIVE = "hcru"          # placeholder replaced below; kept for clarity
+# Registry hive every entry below lives in. Explorer preferences are per-user
+# (HKCU), so this app never needs elevation to change them — that is the whole
+# reason the Desktop Lab is safe. The previous constant here was "hcru", a typo
+# nothing read; it is deleted rather than left as a trap for the next caller.
 USER_HIVE = "hkcu"
 
 # --------------------------------------------------------------------- taskbar

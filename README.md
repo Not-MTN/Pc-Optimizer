@@ -7,7 +7,7 @@
 **Status: packaged, not yet signed.** An installable Windows app — `Keel.exe`
 (one file, ~12 MB) plus a per-user installer that needs no administrator rights.
 Under it: twenty-one screens collapsed into **four tabs**, a journal that undoes
-every change, and a local console with 517 tests (the Windows-only ones run in
+every change, and a local console with 539 tests (the Windows-only ones run in
 CI). No cloud, no account, no telemetry, no network connection at all.
 
 ## Make it yours
@@ -28,8 +28,11 @@ so Undo works. `Set as my wallpaper` writes the PNG and calls the documented
 Win32 API, keeping the previous path for exact undo.
 
 The honest limit: widgets are baked into the image, not a live repainting layer —
-a live layer costs 1–3 % GPU forever, which is what this app refuses to do. Clocks
-in a still wallpaper are flagged as stale rather than silently frozen.
+a live layer costs 1–3 % GPU forever. That is **opt-in, not refused**: you get the
+cost before you choose, the free version is always one click away, and nothing is
+ever applied silently. Every look in the gallery is a still image, so every one of
+them is 0 % GPU after the render. Clocks in a still wallpaper are flagged as stale
+rather than silently frozen.
 
 **Why "Keel"?** The fin under a hull you never see from the deck, and the only
 reason the boat does not capsize. That is where the work is here: the switches

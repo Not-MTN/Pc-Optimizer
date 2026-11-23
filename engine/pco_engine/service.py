@@ -735,7 +735,16 @@ class Service:
     def theme_gallery(self) -> dict[str, Any]:
         """Every built-in theme, with the scene and accent needed to draw a tile."""
         from . import themes
-        return {"themes": themes.gallery(), "count": len(themes.BUILTIN),
+        from .cost import tier_of
+        gal = themes.gallery()
+        for t in gal:
+            # Generated wallpapers are static once rendered: 0% forever. The
+            # tile says so, because "free" is the option most people want and
+            # hiding it behind a click is how a free option stops existing.
+            t["cost_pct"] = 0.0
+            t["tier"] = tier_of(0.0)
+            t["cost_note"] = "still image — 0% after the render"
+        return {"themes": gal, "count": len(themes.BUILTIN),
                 "scenes": list(__import__("pco_engine.scenes", fromlist=["SCENES"]).SCENES)}
 
     def theme_get(self, theme_id: str) -> dict[str, Any]:

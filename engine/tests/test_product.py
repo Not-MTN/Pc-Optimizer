@@ -276,24 +276,60 @@ def test_a_light_theme_fits_the_budget():
     assert governor(cost_of(doc))["ok"] is True
 
 
-def test_a_heavy_theme_is_refused_with_numbers():
+def test_a_heavy_theme_reports_its_cost_without_refusing():
+    """This used to assert a refusal. The rule changed: nothing is forced on
+    anyone, so nothing is blocked either. What must survive is that the number
+    is visible before the choice — a cost you cannot see is the real problem."""
+    from pco_engine.cost import verify
     doc = {"name": "Overkill", "features": {"animated_wallpaper": True,
                                             "spectrum": True, "widgets_heavy": True}}
-    v = governor(cost_of(doc))
-    assert v["ok"] is False
-    assert v["over_pct"] > 0
-    assert str(IDLE_GPU_BUDGET_PCT) in v["message"]
+    v = verify(doc).as_dict()
+    assert v["blocked"] is False, "a visual choice must never be blocked"
+    assert v["cost_pct"] > IDLE_GPU_BUDGET_PCT
+    assert v["over_advisory_budget"] is True
+    assert v["tier"] == "full"
+    assert v["recommendations"], "the user must be told what it costs"
+    assert v["alternatives"], "the cheaper option must be named"
 
 
-def test_apply_refuses_overbudget_and_force_overrides(engine):
+def test_the_zero_cost_option_is_always_reported_available():
+    from pco_engine.cost import verify
+    v = verify({"features": {"animated_wallpaper": True}}).as_dict()
+    assert v["tier"] in {"light", "balanced", "full"}
+    assert "zero-cost option is always available" in v["note"]
+
+
+def test_a_zero_cost_document_is_the_zero_tier_and_costs_nothing():
+    from pco_engine.cost import tier_of
+    doc = {"name": "Still", "features": {"static_wallpaper": True,
+                                         "icon_pack": True}}
+    assert cost_of(doc) == 0.0
+    assert tier_of(0.0) == "zero"
+
+
+def test_the_zero_cost_variant_switches_every_paid_feature_off():
+    from pco_engine.cost import cost_of as c, zero_cost_variant
+    doc = {"features": {"animated_wallpaper": True, "spectrum": True,
+                        "icon_pack": True, "taskbar_accent": True}}
+    cheap = zero_cost_variant(doc)
+    assert c(cheap) == 0.0
+    assert cheap["features"]["icon_pack"] is True, "free features must survive"
+    assert doc["features"]["animated_wallpaper"] is True, "input must not mutate"
+
+
+def test_apply_always_applies_and_reports_the_cost(engine):
+    """The old contract: a heavy theme was refused unless forced. The new one:
+    it applies, and tells you what it costs. `force` is still accepted so no
+    caller breaks, but there is nothing left to force past."""
     from pco_engine.studio import Studio
     s = Studio(engine.conn, engine.clock)
     heavy = s.themes()[-1]
     out = s.apply(heavy["id"])
-    # the seeded "Overkill" is deliberately over budget
-    assert out["applied"] is False
-    forced = s.apply(heavy["id"], force=True)
-    assert forced["applied"] is True
+    assert out["applied"] is True
+    assert out["cost"]["blocked"] is False
+    assert out["cost_pct"] == heavy["cost_pct"]
+    # force is still accepted and still applies
+    assert s.apply(heavy["id"], force=True)["applied"] is True
 
 
 def test_apply_is_exclusive(engine):
@@ -319,12 +355,19 @@ def test_import_validates_without_applying(engine):
     assert s.active() is None                    # import must not apply
 
 
-def test_budget_reports_remaining_headroom(engine):
+def test_budget_reports_the_active_cost_and_tier(engine):
+    """`remaining_pct` was headroom against a cap that no longer exists. What a
+    user needs is what the active look costs and which tier that is."""
     from pco_engine.studio import Studio
     s = Studio(engine.conn, engine.clock)
     s.apply(s.themes()[0]["id"])
     b = s.budget()
-    assert b["active"] and 0 <= b["remaining_pct"] <= IDLE_GPU_BUDGET_PCT
+    assert b["active"]
+    assert b["active_cost_pct"] >= 0
+    assert b["tier"] in {"zero", "light", "balanced", "full"}
+    assert b["tier_meaning"]
+    assert b["zero_cost_available"] is True
+    assert "Nothing is blocked" in b["note"]
 
 
 # ==================================================================== consent

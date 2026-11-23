@@ -29,6 +29,7 @@ from . import __version__
 from .service import Service
 
 _LOCK = threading.Lock()
+_INIT_LOCK = threading.Lock()     # guards one-time service construction
 _SVC: Service | None = None
 
 
@@ -54,16 +55,25 @@ def _pick_backend() -> Any:
 
 
 def _service() -> Service:
+    """Build the service once, under a lock.
+
+    Without the lock two request threads arriving together both saw `_SVC is
+    None` and both ran the full migration path against one SQLite file. The
+    per-request `_LOCK` below does not help: this happens before any handler
+    takes it. A double-locked check costs nothing and removes the race.
+    """
     global _SVC
     if _SVC is None:
-        data = os.environ.get("PCO_DATA") or str(Path.cwd() / "pco_data")
-        os.makedirs(data, exist_ok=True)
-        catalog = os.environ.get("PCO_CATALOG") or str(
-            Path(__file__).resolve().parent.parent / "catalog")
-        _SVC = Service(os.path.join(data, "pco.db"),
-                       catalog_dir=catalog,
-                       vault_root=os.path.join(data, "vault"),
-                       backend=_pick_backend())
+        with _INIT_LOCK:
+            if _SVC is None:
+                data = os.environ.get("PCO_DATA") or str(Path.cwd() / "pco_data")
+                os.makedirs(data, exist_ok=True)
+                catalog = os.environ.get("PCO_CATALOG") or str(
+                    Path(__file__).resolve().parent.parent / "catalog")
+                _SVC = Service(os.path.join(data, "pco.db"),
+                               catalog_dir=catalog,
+                               vault_root=os.path.join(data, "vault"),
+                               backend=_pick_backend())
     return _SVC
 
 

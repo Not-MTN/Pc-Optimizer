@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (517 tests: 506 here, 11 that only a real Windows machine can run)
+## What works today (539 tests: 528 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -316,6 +316,37 @@ Then the app got a name, an installer and four tabs, which found five more:
     use, and so did the calendar's day number and its header — because both were
     positioned with hardcoded offsets instead of measuring the block first.
 
+55. **`migrate()` promised a backup and never made one** — the docstring said
+    "backs up the file first" for many versions while the code went straight to
+    `executescript`, which commits implicitly. A migration that failed halfway
+    left no rollback and no copy. There is now a real backup via SQLite's own
+    `conn.backup()`, taken only when the database already has a schema, so a
+    fresh install does not litter `.bak` files.
+56. **The service was built outside its lock** — two request threads arriving
+    together both saw `_SVC is None` and both ran the full migration path against
+    one SQLite file. The per-request lock does not cover this: it is taken after
+    construction. Now a double-checked lock around initialisation.
+57. **`PRAGMA user_version={version}` was string-interpolated.** `version` comes
+    from a module constant, so it was never exploitable — but it is the shape of
+    an injection, and the next person to make versions dynamic would not notice.
+    Forced through `int()`.
+58. **85 API calls, zero global error handlers** — `api()` throws on any non-2xx,
+    and roughly twenty call sites were outside a `try`. A failed call left the
+    screen on stale data with no message; the user's only clue was that the
+    button did nothing, which is the worst possible outcome for an app whose
+    pitch is honest reporting. Unhandled rejections and script errors now route
+    into a toast that shows the server's own reason.
+59. **One table held two incompatible document shapes.** `desktop_themes` stores
+    both the Studio's feature maps and the gallery's full themes. Read through
+    the Studio's parser, a theme document has no `features` key, so
+    `cost_of()` returned 0.0 — every theme in the gallery would have reported
+    **costing nothing**, including the most expensive ones. The Studio's list is
+    now filtered by shape.
+60. **`DEFAULT_HIVE = "hcru"`** — a typo'd hive name in `shell_lab`, marked
+    "placeholder replaced below", read by nothing. Deleted rather than left as a
+    trap: the next caller would have used it and hit a `KeyError` on a real
+    machine.
+
 ## The wallpaper engine
 
 Pure stdlib: no Pillow, no numpy, no shader runtime — the exe is 12 MB and a
@@ -345,6 +376,29 @@ demand and caches them in the browser.
 `SystemParametersInfoW(SPI_SETDESKWALLPAPER)`, reading the previous path from the
 registry first so undo restores an exact value. This is materially safer than a
 display mode change: a wrong image is a wrong image, not a black screen.
+
+## The cost policy: nothing is forced
+
+Earlier builds **refused** a theme above 3% idle GPU unless the caller passed
+`force=True`. That was a product rule treated as the user's budget, and it taught
+users to click "force" without reading — worse than either refusing or allowing.
+
+The rule now, in `cost.py`:
+
+| | |
+|---|---|
+| **Nothing is blocked** | `verify()` never returns a refusal. There is no gate to click through |
+| **0% is always available** | the zero tier exists, is reachable, and is shown on the tile |
+| **Cost before the choice** | every effect has an entry; an effect with no entry would silently cost 0, which is a lie in the flattering direction |
+| **The cheaper option is named** | "too expensive" is not advice; "here is the free version" is |
+| **Estimates say so** | `measured: False` on every verdict, because these are a table, not counters |
+
+Tiers: `zero` (0%), `light` (≤0.5%), `balanced` (≤1.5%), `full` (more). A
+generated wallpaper is `zero` — it is rendered once to a PNG and is a still image
+after that, exactly like any other wallpaper. The live layer is the part that
+costs, and it stays opt-in.
+
+On battery the recommendation mentions the charge. It does not disable anything.
 
 ## Porting to Rust (the contract)
 
