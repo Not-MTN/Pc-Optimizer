@@ -52,7 +52,7 @@ jobs:
         working-directory: engine
         env:
           PCO_REAL_WINDOWS: "1"
-        run: python -m pytest -q tests/test_real_windows.py -v
+        run: python -m pytest tests/test_real_windows.py -v -rs
       - name: doctor (writes nothing; reports what this build can touch)
         working-directory: engine
         run: |
