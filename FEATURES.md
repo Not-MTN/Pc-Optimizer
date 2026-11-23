@@ -1,316 +1,328 @@
 # Feature Specs — Balanced Scope
 
-> Companion to `IDEAS.md` (vision) and `ARCHITECTURE.md` (how it's built). This doc is the *what* — deep enough to build from, honest about edge cases. No product code yet.
+> Companion to `IDEAS.md` (vision), `ARCHITECTURE.md` (how it's built), `SAFETY.md` (the undo system), `DESKTOP.md` (customization suite). This doc is the *what*.
 
-## Scope balance (your call: "keep balanced")
+## Scope balance
 
 | Ring | Features | Rule |
 |---|---|---|
-| **Core** — built to excellence, ships v0.1–v1.0 | Guardian, Cleaner, Gaming session, Palette + Personal CMD, Startup surgeon, DNS blocker, Installer Autopsy, Customization profiles, Sandbox modes, Privacy/air-gap | If it's in Core, it's *excellent* or it's cut |
-| **Extended** — planned, specced, ships v1.x | File manager companion, Health/longevity, Network lab, Skins/sounds, Drift repair UI, Community gallery | Build only after Core is solid |
-| **Experimental** — labeled as such | Live wallpaper HUD, local copilot, kernel interrupt lab, WASM plugin SDK, deterministic PC rebuild | Never blocks a release |
+| **Core** — built to excellence | Guardian, **PC Checkup**, **Gaming session + Gaming Coach**, Palette + Personal CMD, Startup surgeon, DNS blocker, Installer Autopsy, **Customization suite** (see `DESKTOP.md`), Sandbox modes, Privacy/air-gap | If it's in Core it's *excellent* or it's cut |
+| **Extended** — specced, ships v1.x | File manager companion, Health/longevity, Network lab, community gallery, drift repair UI | After Core is solid |
+| **Experimental** — labeled | Live desktop HUD, local copilot, kernel interrupt lab, plugin SDK | Never blocks a release |
 
-**The rule that governs everything:** every feature must produce a **receipt** (what it did, measured, reversible) or it doesn't ship. "Optimized!" with no numbers is a bug.
-
----
-
-## 1. Cleaner
-
-### Model: classify by regeneration cost, not by size
-
-| Class | Meaning | Examples | Default |
-|---|---|---|---|
-| `free` | Nothing needs it again; regenerates itself or never mattered | Temp, crash dumps, old installers, Delivery Optimization cache, thumbnail/icon caches | **on** |
-| `auto-regen` | Will rebuild itself, may cost time on next launch | DX shader cache, font cache, Defender scan history, Store cache | on, with "first launch feels slower" note |
-| `policy` | User must decide; usually a tradeoff | hiberfil.sys (resize, don't delete), pagefile, Windows.old (age-gated), WinSxS via DISM, dormant Store apps, OneDrive on-demand | **off**, explained |
-| `never` | Protects the user from us | Documents, saves, browser profiles, dev caches (outside dev profile), System32, drivers, activation | not offered |
-
-### Rule schema (shipped data, not code)
-
-```toml
-[[rule]]
-id          = "dx.shader.cache"
-title       = "DirectX shader cache"
-paths       = ["%LOCALAPPDATA%\\D3DSCache"]
-action      = "delete-children"          # delete-children | delete-tree | resize | dism-component
-class       = "auto-regen"
-risk        = "cosmetic"
-regen_cost  = "games recompile shaders, first launch slower"
-locks       = ["dwm.exe", "explorer.exe"] # may hold files open
-fallback    = "schedule-reboot"           # MoveFileEx(PENDING) when locked
-estimate    = "scan"                      # computed, never hardcoded
-receipt     = ["bytes", "files", "elapsed", "locked-skipped"]
-```
-
-### Sources of truth for size estimates
-Streaming directory walk (cancelable, resumable), memory-mapped sorting of results, and for system stores the **DISM component API** rather than guessing. Nothing is reported as "reclaimable" unless it was actually scanned.
-
-### What the Cleaner refuses to do (documented in-product)
-- ❌ Registry "cleaning" — no measurable benefit, real risk. Offered only as an opt-in hive-compaction expert tool (off by default).
-- ❌ "RAM optimizers" that free standby memory — actively harmful on Windows.
-- ❌ Deleting Prefetch — Windows 11 already manages it; deletion costs boot time.
-- ❌ Pagefile deletion — breaks crash dumps and some apps; resizing is offered instead.
-- ❌ Anything under user documents, saves, or browser profiles.
-- ❌ "Speed up internet" registry tricks.
-
-### Lock handling & undo
-Deletes go to a **quarantine vault** on the same volume (`.pco-vault`, 30-day retention, size shown honestly in "space freed"). Undo = move back, restoring original timestamps. Locked files → scheduled delete at reboot, listed in the receipt. Never follows junctions/symlinks out of an approved root path.
-
-### UI
-Disk heatmap (treemap, streamed), per-rule toggles with plain-English consequences, **scan → confirm → clean → receipt** flow. The receipt is a shareable card: freed bytes, items, time, what was skipped and why.
+**Governing rule:** every feature produces a **receipt** (what it did, measured, reversible) or it doesn't ship.
 
 ---
 
-## 2. Gaming session
+## 1. PC Checkup (the home screen)
 
-### Lifecycle (a state machine, not a switch)
+One scan, one list, one button. The checkup is what the app opens to.
 
-```
-idle → arming (snapshot + pre-measure) → active (tweaks + live measure)
-     → concluding (post-measure + revert) → report → idle
-                  ↘ aborted (crash/game exit) → auto-revert → report
-```
+### The honesty split (this is the core idea)
 
-### What actually runs during a session
-| Bucket | Actions | Tier |
+Most optimizers mix "things taking up space" with "things slowing you down" to inflate the scary number. We separate them into **three tabs**:
+
+| Tab | Means | Examples |
 |---|---|---|
-| Power | Power plan, core parking, min/max processor state, PCIe ASPM, USB selective suspend | T1 |
-| Background | Pause updaters/indexer/sync, suspend non-essential apps *(best-effort, allowlist of known-safe)*, disable notifications (Focus API), pause Windows Update | T1 |
-| GPU | Per-game GPU preference, HAGS *flag only* (needs reboot → never "live"), overlay/RGB killers | T1 |
-| Network | Delivery Optimization throttle, per-app QoS (DSCP), Nagle off for game process | T1/T2 |
-| Deep | Interrupt affinity, DPC tuning, per-process WFP | T2, auto-suspended for anti-cheat titles |
+| **Slowing you down** | Measurably or mechanically affects speed/responsiveness | 60 Hz on a 165 Hz monitor, 21 startup items, thermals throttling, SSD 94% full, driver crashes |
+| **Taking up space** | Costs disk, not speed | 42 GB junk, duplicates, stale installers, old Windows backup |
+| **Needs attention** | Risk, not speed | BitLocker off, 12 outdated apps (3 with known exploits), 4 background mic grants |
 
-### Measurement (the honest part)
-- **PresentMon-style ETW**: frametimes, FPS, 1% lows, frame-time σ, GPU busy, present mode.
-- **DPC/ISR ETW**: latency spikes attributed to drivers.
-- **CPU/GPU power & temps** where available without a driver (PDH/WMI); T2 unlocks MSR-based precision.
-- **Input latency**: user-initiated 60-second test (photodiode-free, uses raw input timestamps) — optional.
-- **Rules of honesty**: report effect size *with variance*; if the delta is inside noise, say **"no measurable change"** in large type; never average away a regression; always show the raw distribution, not just the mean. Sample size and duration displayed.
+A finding never appears in a tab it doesn't belong in. Nobody is told that deleting temp files will make games faster, because it won't.
 
-### Per-game profiles
-Auto-detect from Steam/SX/Epic/GOG libraries and exe hash; profile = overrides on top of the global session profile. Importable as YAML. Example:
+### Finding model (every finding is explainable)
 
 ```yaml
-match: { exe: "RocketLeague.exe", hash: "sha256:…" }
-overrides:
-  power.core_parking: "disabled"
-  network.nagle: off
-  gpu.preference: "high"
-  suspend: ["OneDrive.exe", "Spotify.exe"]
-disabled_for_anticheat: ["t2.*"]
+id: display.refresh.below_max
+category: performance
+severity: high
+title: "Monitor running at 60 Hz — it supports 165 Hz"
+plain: "Your screen can show 165 pictures a second but is only showing 60. This is the single biggest free win on your PC."
+evidence: { current: "59.94 Hz", max: "165 Hz", panel: "VG27A", cable: "DP 1.4" }
+impact: "Up to 2.7× smoother motion; games feel far more responsive"
+fix: { kind: apply-tweak, tweak: "display.set_refresh", args: { hz: 165 }, risk: low, reversible: true }
+auto_safe: true          # safe enough for "Fix everything"
 ```
 
-### Anti-cheat matrix (shipped, updated like an antivirus definition)
-| Ring | Vanguard | EAC | BattlEye | Faceit | Notes |
-|---|---|---|---|---|---|
-| T0/T1 tweaks | ✅ | ✅ | ✅ | ✅ | Service-level only, no injection |
-| T2 driver | ⛔ suspended | ⛔ | ⛔ | ⛔ | Auto-unloads on process detect; UI badge explains |
+Click any finding → **why this matters**, what the evidence is, what the fix does, and what changes if you accept.
 
-### Failure modes → behavior
-| Failure | Behavior |
-|---|---|
-| Game crashes | Session concludes, revert, report kept |
-| PC crashes / power loss | Boot guard reverts session tweaks automatically |
-| User alt-tabs and forgets | Auto-conclude after 10 min idle, notify |
-| Launcher → game tree | Session binds to process tree, survives launcher exit |
-| Multiple games | One session at a time; second game prompts |
+### What gets checked
+
+**Performance / "slowing you down"**
+- Display refresh rate below panel maximum, wrong resolution, HDR/VRR off while available
+- Startup items (count, boot-time contribution, what each is), services, scheduled tasks
+- Background apps holding CPU/disk/RAM; apps that run at login and never close
+- Thermal throttling history (did the CPU/GPU drop clocks under load?), fan curve sanity
+- GPU driver age, driver crash history, DPC/ISR latency spikes
+- Disk fullness > 85/90% (real slowdowns on SSDs), disk health warnings, failing SMART attributes
+- RAM pressure / pagefile thrash, memory compression churn
+- Power plan set to "power saver" on a desktop, USB power suspend issues
+- Network: bufferbloat grade, DNS resolver latency ranking, an app saturating the uplink
+- Windows Update paused for months, pending reboot flags
+
+**Storage / "taking up space"**
+- Junk (temp, crash dumps, old installers, WinUpdate leftovers, Delivery Optimization)
+- **Duplicates** (see below)
+- Stale large files (untouched 1 year+, > 500 MB, previewed before suggesting)
+- Empty folders, broken shortcuts, orphaned uninstall entries
+- Windows.old, hibernation file, restore-point creep, WinSxS (via DISM, age-gated)
+- "What's eating this folder" treemap
+
+**Security / posture** (a *posture check*, not an antivirus — stated plainly in the UI)
+- Defender state, real-time protection, **suspicious exclusion paths**
+- Firewall per-profile state, inbound rules open to everything
+- BitLocker/device encryption off on non-system drives, removable-drive encryption
+- Pending updates, updates paused by "tweak" tricks, Windows version end-of-life
+- Outdated apps vs a **shipped, updateable vulnerability feed** (locally compared — known-exploited first)
+- Autostart items with no/odd signatures, tasks running from `%TEMP%`, services with unusual paths
+- RDP / Remote Registry / Remote Assistance exposed, SMBv1 enabled, autorun on USB
+- UAC lowered, passwordless accounts, auto-login enabled, extra admin accounts
+- Hosts-file and DNS tampering, proxy hijacks
+- Browser extensions with dangerous permissions (local read of extension manifests)
+- Wide-open shares, guest access, saved open Wi-Fi profiles
+
+**Privacy**
+- Telemetry level, ad ID, activity history, tailored experiences, app permissions (mic/camera/location) incl. background grants, sync settings, diagnostics upload
+
+**Reliability**
+- Crash/BSOD history with blame attribution, boot-time trend, service failure history, driver rollback candidates, backup/restore-point freshness
+
+### Scoring (explainable, never magic)
+
+```
+PC Score = 100 − Σ(finding penalties × severity weight)
+Sub-scores: Speed · Security · Privacy · Reliability
+```
+Clicking a score shows the exact findings and weights that produced it. The score is *a summary of findings*, not a benchmark, and the UI says so. Scores never go up because we did something cosmetic.
+
+### One-button fix
+
+**"Fix everything safe (14)"** →
+1. Shows a **plan**: 14 fixes, grouped, with combined expected effect and reboot requirements.
+2. Runs as **one batch transaction** → streamed progress, cancellable.
+3. Ends with **one receipt and one undo** for the whole batch.
+4. Anything needing judgment (open firewall port, deleting large files, driver changes) is **not** included — it goes to **Review**, one item at a time, with the evidence in front of you.
+
+Safety rules: never batch two risky changes together; never fix something we can't revert; if a fix requires a reboot, it's queued and clearly marked, never hidden.
+
+### Duplicates (inside the checkup)
+
+- **Pipeline:** group by size → hash first/last 64 KB → full hash (BLAKE3) → optional **perceptual hash** for near-identical photos. Resumable, cancelable, ~1M files in minutes.
+- **Correctness:** hardlinks and symlinks/junctions are understood and never counted as duplicates or followed outside the chosen roots. System folders are excluded by default.
+- **Keep rules:** keep newest / keep oldest / keep shortest path / keep in a chosen folder / ask per group.
+- **Preview:** side-by-side with metadata, image thumbnails, and "this file is a game save / document" warnings.
+- **Delete:** moves to the **vault** (30 days), verified per file, with a receipt. Nothing is deleted from the vault automatically without your retention setting.
+- **Why it matters:** shown honestly — "frees 18.4 GB; no speed impact".
+
+### Weekly health report + drift
+
+A short weekly summary (local, exportable): what changed, what drifted (Windows Update silently reverted a tweak), what got worse. Replaces the "run an optimizer every day" habit.
+
+---
+
+## 2. Gaming — session + coach
+
+### Lifecycle (state machine)
+
+```
+idle → arming (snapshot + pre-measure) → active (tweaks + live coach)
+     → concluding (post-measure + revert) → report → idle
+              ↘ aborted (crash/game exit) → auto-revert → report
+```
+
+### What runs during a session
+
+| Bucket | Actions | Tier |
+|---|---|---|
+| Power | Power plan, core parking, PCIe ASPM, USB selective suspend | T1 |
+| Background | Pause updaters/indexer/sync, Focus assist, suspend known-heavy apps (allowlist, never blind-kill) | T1 |
+| Display | Confirm max refresh, HDR/VRR state, resolution, scaling; warn on wrong cable mode | T1 |
+| GPU | Per-game GPU preference, overlay/RGB killers, HAGS flag (reboot-gated, never "live") | T1 |
+| Network | Delivery Optimization throttle, per-game QoS/DSCP, Nagle off for the game process | T1/T2 |
+| Deep | Interrupt affinity, DPC tuning, per-process WFP | T2, **auto-suspended** for anti-cheat titles |
+
+### The Gaming Coach (watch gameplay → advise → verify)
+
+**Capture while you play** (ETW, no injection):
+
+| Signal | Source | Used for |
+|---|---|---|
+| Frame times, FPS, 1% lows, present mode | PresentMon-style ETW | stutter + pacing analysis |
+| GPU load/clocks/temp/VRAM | PDH / vendor APIs (MSR precision at T2) | bottleneck classification |
+| CPU per-core load, effective clocks | ETW | single-thread vs multi-thread bound |
+| RAM, page file, disk queue | PDH | streaming/paging stutter |
+| DPC/ISR spikes | ETW | driver-caused stutter |
+| Power/thermal limits | PDH/WMI | throttling |
+| Display state | display config API | Hz/HDR/VRR/color depth |
+| Network | per-process sockets | online-game ping/jitter/loss |
+| Input | raw input timestamps | input latency test (opt-in) |
+
+**Bottleneck classifier** — a rules table, not a vibe:
+
+| Verdict | Evidence pattern | Advice direction |
+|---|---|---|
+| GPU-bound | GPU ≥ 97% most frames, CPU < 70% | lower GPU-cost settings (shadows, AA, post-FX, resolution) |
+| CPU single-thread bound | 1 core ≥ 95%, GPU < 85% | draw distance, crowd/physics, background CPU |
+| VRAM-limited | VRAM ≥ 95% + stutter spikes | textures ↓, resolution ↓, RT off |
+| Thermal/power limited | clocks fall during session, temps high | fan curve, undervolt advice, laptop power |
+| Background interference | DPC spikes correlate with a process/disk | kill/defer that workload |
+| Frame-cap / display issue | inconsistent pacing, Hz mismatch, VRR off | fix cap/VRR/Hz |
+| Streaming stutter | disk queue spikes on asset load | move game to SSD, defrag HDD, shader warm-up |
+| Network-limited | ping/jitter/loss spikes at same moments as stutter | QoS, bufferbloat, Wi-Fi |
+
+**Recommendations — two kinds, always separated:**
+
+1. **Windows-side** (we can apply it): refresh rate, VRR, GPU preference, power, QoS. Auto-applicable during a session.
+2. **In-game** (we guide, or edit config files): presented as `current → suggested` with **expected gain, confidence, and the basis** (your own measurements, or our curated library). Never a fake percentage.
+
+Example:
+```
+Resolution scale 100% → 90%     +9% fps   confidence: high     basis: 41 sessions, GPU-bound 87%
+Shadows High → Medium           +6%       confidence: medium
+Textures  High → keep           ±0%       you have 4 GB VRAM headroom — don't touch
+Anti-aliasing TAA → keep        ±0%       CPU-bound on your 6-core; MSAA would cost more
+```
+
+**Settings capture (screenshot OCR)** — open the game's settings menu, press the hotkey, and the app reads the labels and values from the screen **locally** (Windows OCR) to build your current profile. You never type settings in by hand.
+
+**A/B benchmark** — record a repeatable 60–120 s scene twice with different configs; the app compares distributions (n, variance, 1% lows) and tells you which actually won. If the difference is inside noise: **"no measurable difference"**, in large type.
+
+**Overlay HUD** — external, top-most window (never injected): FPS, frametime graph, temps, VRAM, and a coach whisper when a pattern is detected ("stutter cluster — 3 spikes/20 s, GPU clock dropped to 1.2 GHz"). Costs < 0.5% CPU; auto-off when the game is exclusive-fullscreen and the driver refuses composition.
+
+**Session history** — per-game timeline: "1% lows improved 14% since the power-plan change", "6% slower in this game since driver 560.94". Regression detection is the point.
+
+**Extras** — game library readiness (space, drivers, pending downloads), move games between drives, shader warm-up, mouse polling/controller check, streaming assist (encoder + bitrate vs upload), VR/emulator profiles.
+
+### Anti-cheat matrix
+
+| Ring | Vanguard | EAC | BattlEye | Faceit |
+|---|---|---|---|---|
+| T0/T1 tweaks | ✅ | ✅ | ✅ | ✅ |
+| T2 driver | ⛔ suspended (auto) | ⛔ | ⛔ | ⛔ |
+
+### Never
+
+- Never promise FPS; report measured distributions.
+- Never inject into game processes.
+- Never apply in-game config edits without a backup and one-click restore.
+- Never "optimize" by disabling security features.
 
 ---
 
 ## 3. DNS ad + tracker blocker
 
+### The master switch (your ask)
+
+| Control | Behavior |
+|---|---|
+| **On / Off** | One toggle in the tray, the dashboard, and the palette — instant, no reboot |
+| **Pause** | 5 min / 30 min / 1 hour / until tomorrow, with a visible countdown badge |
+| **Per-app** | Filter this app: on / off / strict |
+| **Levels** | Minimal / Balanced / Strict (group toggles underneath) |
+| **Hotkey** | Global toggle, so it's one keystroke mid-game |
+| **State is always visible** | Tray icon changes (shield solid / ringed / gray), palette shows status, blocking counters freeze when off |
+
+Turning it **off** restores plain system DNS immediately (no resolver swap left behind). Turning it **on** re-arms the local resolver in < 200 ms.
+
 ### Pipeline
 
 ```
-app → NRPT/WFP routing (per-app policy) → local resolver (127.0.0.1:53)
-    → allowlist/denylist trie (wildcards + CNAME chain check)
-    → DoH upstream (ranked by measured latency) → cache → answer
+app → NRPT/WFP routing (per-app) → local resolver 127.0.0.1:53
+    → trie/bloom matcher → CNAME-chain check → DoH upstream (ranked) → cache → answer
 ```
 
 ### Lists
-Compiled at **build time** to a sorted array + bloom filter + wildcard table (imports in ms, ~0 runtime cost). Groups: ads, trackers, Windows telemetry, malware/badware, phishing, optional adult/regional. User-imported lists compiled at import with a progress pane; dedupe across lists.
+Compiled at build time into a sorted table + wildcard set (runtime cost ~0). Groups: ads, trackers, Windows telemetry, malware/badware, phishing, regional/adult (opt-in). User imports compile on import with progress and dedupe.
 
-### Per-app policies
-- Default: all apps filtered.
-- App sets: browsers strict; games permissive; apps with known login flows auto-allowlisted.
-- **Breakage recovery (the thing nobody does well):** when a page or app fails and blocked domains were involved in the last N seconds, offer a one-click **"allow this domain for this app"** + a 60-second "pause blocking for this app" — never a silent broken login.
+### Breakage recovery (what nobody does well)
+If a page/app fails and blocked domains appeared in the last N seconds → offer **allow this domain for this app** or **pause for this app (60 s)**. Never a silent broken login.
 
 ### Transparency catalog
-Every blocked endpoint has a plain-English entry: what it is, who owns it, what breaks if blocked (e.g., "blocks Windows Update telemetry — safe; blocks license validation — apps may call home on next launch"). Bucket toggles: **Minimal / Balanced / Strict**, default Balanced.
+Every blocked endpoint has an owner, a purpose, and a plain "what breaks if blocked". Bucketed toggles: Minimal / Balanced / Strict, default **Balanced**.
 
 ### Failure modes
-| Failure | Behavior |
-|---|---|
-| Resolver unavailable | Fail-open to system DNS + toast (never leave user offline) |
-| VPN active | Detect, warn about DNS leak, offer split rules |
-| Captive portal | Auto-detect, bypass until auth completes |
-| mDNS/.local | Never filtered |
-| DoH provider down | Ranked failover list, measured, local cache |
-
-### Extras
-DNS latency ranking (real browsing speed gain, measurable), DNS cache warm-up, **CNAME-cloaking detection** via our own resolution chain, per-domain live counters, and an export of "who your PC talks to" as a CSV.
+Resolver down → fail-open to system DNS + toast (never leave you offline) · VPN → leak warning + split rules · captive portal → bypass until auth · `.local`/mDNS → never filtered · DoH provider down → ranked failover.
 
 ---
 
 ## 4. Startup surgeon
 
-### Enumeration sources
-Run/RunOnce (HKLM/HKCU, WOW64), StartupApproved state, services, scheduled tasks (all triggers), shell extensions (context menu, icon overlays), Winlogon entries, UWP startup tasks, drivers with start=auto, known vendor updaters.
+Sources: Run/RunOnce (HKLM/HKCU, WOW64), StartupApproved, services, scheduled tasks (all triggers), shell extensions, Winlogon, UWP startup tasks, auto-start drivers, vendor updaters.
 
-### Boot-phase attribution
-ETW phases: kernel init → services (group by service group) → logon → shell init → first idle. Each startup item is attributed to a phase and a duration contribution where measurable; the rest is labeled "unattributed" rather than invented.
+Boot-phase attribution via ETW (kernel → services → logon → shell → idle). Items get a phase and a measured cost where possible; everything else is labelled **unattributed** rather than invented.
 
-### Knowledge base (offline, versioned, shipped)
+Knowledge base ships offline, keyed by path + signer + hash:
 ```yaml
 - key: "service:DiagTrack"
   does: "Windows diagnostics + telemetry"
   disable_ok: false
   breaks: ["Feedback Hub", "some enterprise diagnostics"]
-  recommended: "leave on; use Privacy screen to limit data instead"
-- key: "task:\\Microsoft\\Office\\OfficeBackgroundTaskHandler"
-  does: "Office updater housekeeping"
-  disable_ok: true
-  breaks: ["nothing user-visible"]
-  recommended: "defer 60s rather than disable"
+  recommended: "leave on; limit data in Privacy instead"
 ```
-Keyed by file hash + authenticode signer when paths match flaky vendors. Unmatched items get an honest "unknown — here's what it is, decide yourself" card with signer, path, network activity.
 
-### Actions
-Disable (type-correct API), **defer N seconds** (usually better), run-once-then-disable, and "kill and watch." Dependency graph: refuses to disable a service with running dependents; explains which app depends on it.
-
-### Watchdog
-Detects re-enable events (updates silently restore startup entries — very common), reports who did it and when, offers re-apply. Logs every drift event to the journal so the time machine can show it.
+Actions: disable, **defer N seconds** (usually better), run-once-then-disable, kill-and-watch. Dependency-aware: refuses to disable a service with live dependents and names the dependent. **Watchdog** catches apps that silently re-add themselves and reports who did it.
 
 ---
 
-## 5. Installer Autopsy (the killer feature)
+## 5. Installer Autopsy
 
-### Session capture
-Start when a watched process tree starts; end when the tree exits + 15 s quiet or a hard timeout.
-| Source | Method | Fidelity |
-|---|---|---|
-| Files | USN journal read (default, no driver) | high for creates/deletes/moves |
-| Files (deep) | Read-only minifilter (T2, optional) | exact writes |
-| Registry | ETW `Kernel-Registry` (create/set/delete + key path) | high |
-| Services / tasks / drivers | Change notifications + before/after enumeration diff | exact |
-| Network | ETW `Kernel-Network` + DNS client events → hostnames | per-endpoint |
-| Processes | ETW `Kernel-Process` | full tree |
+Watch any installer: files (USN), registry (ETW), services/tasks/drivers (before/after + notifications), process tree, every network endpoint. Optional T2 minifilter for exact writes.
 
-### Report model
-Grouped by category with sizes, **risk flags** (autostart, service, kernel driver, scheduled task, beaconing), a plain-English summary, and a **leftover detector**: run the vendor's uninstaller, re-scan, show what it forgot.
+Report: grouped, sized, risk-flagged (autostart, service, driver, beaconing), plain-English summary, plus a **leftover detector** (run the vendor uninstaller, re-scan, show what it forgot).
 
-### Erase
-Reverse creation order: stop/remove services and drivers first (reboot-safe mode when a driver is loaded), delete created tasks, remove created registry keys (restore *modified* values from the captured pre-state), delete files, verify, report. Anything it can't remove is listed with the exact path — never "cleaned 100%" when it wasn't.
-
-### Honest limitations
-- Kernel-mode writers can hide from user-mode observation (T2 minifilter closes most; not all).
-- MSIX/UWP installs go through the deployment stack — separate dedicated path.
-- Detached, self-elevating child processes are caught by PID-tree + time window + parent-set heuristics; misses are reported as "possible blind spots."
+**Keep** (journaled and traceable) or **Erase** (reverse order: services/drivers → tasks → registry values restored from pre-state → files → verify). Anything unremovable is listed by exact path. Honest blind spots stated: kernel-mode writers, MSIX/UWP installs.
 
 ---
 
 ## 6. Command palette & Personal CMD
 
-### Action model
-```yaml
-id: game.start
-title: Start gaming session
-keywords: [game, gaming, session, fps]
-icon: gamepad
-tier: T1
-target: engine.session.start
-args: { profile: "auto", measure: true }
-risk: none
-confirm: false
-undo: on-session-end
+Built-ins execute **inside the engine** (~4 ms, no console flash). User commands declare their executor (`engine`, `shell`, `app`, `web`, `script`), a timeout, and permissions; imported commands show a **permission diff** before first run.
+
+```
+:clean            :snap name="before update"      :game --profile rocket-league
+:run "C:\tools\sync.cmd" --timeout 120
 ```
 
-### Execution model
-- Built-ins run **inside the engine** — no shell spawn, no console flash, ~4 ms.
-- User commands choose their executor explicitly: `engine` (built-ins), `shell` (cmd/pwsh/bash with declared shell), `app` (launch), `web`, `script` (a file with hash recorded).
-- Sandboxed execution: explicit cwd, env allowlist, timeout, captured stdout into a results pane, and a permission badge per command (tier + what it may touch). First run of any imported command shows a **diff of its permissions**.
-
-### DSL (small on purpose)
-```
-:clean                 # alias to built-in
-:clean --dry           # flags
-:snap name="before update"
-:run "C:\tools\sync.cmd" --timeout 120 --as user
-:game --profile rocket-league
-```
-No variables/functions in v1; v2 adds `{selection}`, `{clipboard}`, and pipes. Deliberately not a general-purpose language.
-
-### Out-of-the-box magic
-- **Macro recorder**: record a sequence of palette actions and replay as a command (`:morning`).
-- **Alias suggestions**: after doing the same 3 actions together twice, offer to record it.
-- **Preview pane**: what a command will do before Enter.
-
-### Performance contract
-Open ≤ 50 ms (resident helper), first results ≤ 16 ms, input latency ≤ 1 frame, zero allocations in the typing path after warm-up.
+Macro recorder turns a sequence into a command (`:morning`); after doing the same three actions twice, the app offers to save them. Sandboxed execution: fixed cwd, env allowlist, captured output pane. Open ≤ 50 ms, first results ≤ 16 ms.
 
 ---
 
-## 7. Customization profiles (taskbar, CMD, Explorer, the whole vibe)
+## 7. Customization suite
 
-### Profile schema (one file, git-friendly)
-```yaml
-meta: { name: "MTN dev rig", version: 3 }
-appearance: { base: dark, accent: "#4fd1c5", wallpaper: "file:wall/aurora.png", transparency: on }
-taskbar: { align: center, size: compact, grouping: never, labels: off, clock: "{HH:mm} {date}", seconds: true }
-explorer: { tabs: on, compact: on, classic_menu: on, sync_provider: off }
-terminal: { profile: "pwsh", font: "Cascadia Code 11", opacity: 92, aliases: { ll: "eza -la", gs: "git status" } }
-shortcuts: { "capslock": "esc", "win+shift+s": "snip" }
-sounds: { scheme: "studio-quiet", toggles: on, session_chime: on }
-```
+Deep specs live in **`DESKTOP.md`**: custom terminal, taskbar/shell theming, icon packs, wallpaper engine, widget layer (Rainmeter-class clocks and monitors), sounds, and **Theme bundles** that package all of it as one shareable file — governed by a performance budget so customization never costs more than it should.
 
-### Per-setting apply / verify / revert
-Every setting is an individual tweak (Guardian rules apply). Some things Windows simply doesn't expose → handled by an optional **mod pack** (Windhawk-detected; we ship configs, not injections, at first). Honest support labels in the UI:
+---
 
-| Area | Support |
+## 8. Sandbox modes
+
+| Intent | Solution |
 |---|---|
-| Accent, wallpapers, sounds, pointer, terminal, aliases, shortcuts | **native, perfect** |
-| Taskbar align/size/grouping/labels/clock | **native** (Win11 26H2) |
-| Explorer behaviors | **mostly native** |
-| Start menu layout, Explorer visuals beyond settings | **mod pack**, labeled risky, auto-disabled after crash |
+| "What did this installer do?" | Autopsy (observe, don't contain) |
+| "Run this sketchy exe" | Windows Sandbox (Pro+) / AppContainer + low integrity (Home) |
+| "Nothing touches my system" | Virtual profile (files/registry redirect) |
+| "No network for this app" | Per-app WFP rule / firewall by path |
+| "Throwaway app, clean uninstall" | Virtual profile + Autopsy |
 
-### Fresh-install bootstrap (the wow flow)
-`winget export/import` + profile apply + manual account re-login checklist → a wiped PC becomes *yours* in ~15 minutes. Profile stored in the user's own git repo; the app can commit changes per session.
-
-### Community
-Profiles are static files → a gallery can be a static site (publish via Vercel). Import shows exactly what will change before applying.
-
----
-
-## 8. Sandbox modes (the decision tree users never get)
-
-| User intent | Solution | Tier |
-|---|---|---|
-| "What did this installer do?" | **Autopsy** — observe, don't contain | T0/T1 |
-| "Run this sketchy exe safely" | Windows Sandbox (Pro+) / AppContainer + low integrity (Home) | T0/T1 |
-| "Nothing should touch my system" | Virtual profile (files/registry redirect) | T1 |
-| "No network for this app" | Per-app WFP rule (T2) or firewall rule by path | T1/T2 |
-| "Throwaway app with clean uninstall" | Virtual profile + Autopsy | T1 |
-
-All of these are **one right-click away** in Explorer and in the palette. Each returns a receipt.
+All reachable by right-click in Explorer and from the palette. Each returns a receipt.
 
 ---
 
 ## 9. File manager companion (Extended)
 
-Not an Explorer clone. Scope: tabs and dual-pane, **Miller columns**, fast search from our own USN-based index, bulk rename with live preview, hashing, duplicate finder (size → partial hash → full hash), treemap folder sizes, rule engine ("downloads > 30 days → archive"), tags stored in SQLite (not ADS, to stay portable). Performance targets: 10k-entry folder paint < 100 ms; 1M-file initial index < 60 s; incremental updates via USN.
+Not an Explorer clone: tabs, dual-pane, **Miller columns**, USN-based search index, bulk rename with preview, hashing, duplicates (shared with the checkup), treemap sizes, rule engine ("downloads > 30 days → archive"), tags in SQLite for portability. Targets: 10k-entry folder < 100 ms; 1M-file index < 60 s.
 
-## 10. Health, network lab, privacy (Extended, concise)
+## 10. Health, network lab, privacy (Extended)
 
-- **Health**: SMART/NVMe wear, temps, fan, battery cycles/degradation, thermal history, driver/BIOS drift, crash correlation with the tweak journal.
-- **Network lab**: bufferbloat test, resolver ranking, per-app throughput ledger, "game on this network" (measured toggles, revert on exit), router-side advice where software ends.
-- **Privacy**: endpoint catalog, per-app network ledger, air-gap toggle with provable WFP rules, privacy self-test that reads the real rules.
+- **Health**: SMART/NVMe wear, temps/fans, battery cycles, thermal history, driver/BIOS drift, crash correlation with the journal.
+- **Network**: bufferbloat, resolver ranking, per-app throughput ledger, "game on this network" (measured toggles, revert on exit).
+- **Privacy**: endpoint catalog, per-app ledger, air-gap with inspectable WFP rules, self-test that reads the real rules.
 
 ---
 
 ## Cross-cutting rules
 
-1. **Receipts**: every mutation produces a journal entry + a human receipt. If an action can't be measured, say so.
-2. **Drift repair**: Windows Update/Store/vendors silently revert tweaks — weekly hash check of managed state, show what changed, offer re-apply. This is the #1 complaint about every optimizer.
-3. **Blame engine**: correlate crashes/hangs/boot regressions with recent tweaks and offer targeted revert.
-4. **Honest claims policy**: no percentage claims without a measurement; "no change" is a legitimate headline result; cosmetic features are labeled cosmetic.
-5. **Two moods, one app**: Casual (mascot-forward, plain language, big friendly controls) and Pro (dense, numeric, monospace, keyboard-first). Same engine, same guardrails — only the surface changes.
+1. **Receipts** on every mutation; "no measurable change" is a legitimate headline.
+2. **Drift repair** — weekly hash check of managed state; show what Windows changed.
+3. **Blame engine** — correlate crashes/hangs/boot regressions with recent tweaks.
+4. **Honest claims** — no percentage without a measurement; cosmetic features labelled cosmetic.
+5. **Two moods, one app** — Casual and Pro change presentation only, never behavior.

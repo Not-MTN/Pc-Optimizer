@@ -511,6 +511,140 @@
   html.js body.reduce-motion .card{opacity:1!important;transform:none!important;transition:none!important}
 
   @media (pointer:coarse){ .card{transform:none!important} }
+
+  /* =========================================================
+     v3 — checkup, gaming coach, desktop studio
+     ========================================================= */
+  .grid{margin-bottom:4px}
+
+  /* tab filtering */
+  #content[data-sec="overview"] .card:not([data-sec="overview"]),
+  #content[data-sec="gaming"]   .card:not([data-sec="gaming"]),
+  #content[data-sec="desktop"]  .card:not([data-sec="desktop"]),
+  #content[data-sec="safety"]   .card:not([data-sec="safety"]){display:none}
+  @keyframes tabIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .tabin{animation:tabIn .34s var(--ease) both}
+
+  /* mini tab group */
+  .tabs-mini{display:flex;gap:4px;margin-top:10px;background:rgba(255,255,255,.05);border:1px solid var(--stroke);border-radius:9px;padding:3px;position:relative}
+  .tabs-mini button{flex:1;border:0;background:transparent;color:var(--muted);font:600 10px var(--font);padding:6px 3px;border-radius:6px;cursor:pointer;transition:.16s;white-space:nowrap}
+  .tabs-mini button:hover{color:var(--ink)}
+  .tabs-mini button.on{background:rgba(255,255,255,.1);color:var(--ink)}
+
+  /* findings */
+  .finding-list{list-style:none;margin:9px 0 0;padding:0;display:flex;flex-direction:column;gap:5px;font-size:10.5px}
+  .finding{display:grid;grid-template-columns:7px 1fr auto;gap:8px;align-items:center;background:rgba(255,255,255,.035);border:1px solid var(--stroke);border-radius:8px;padding:7px 8px;animation:tabIn .3s var(--ease) both}
+  .finding .sev{width:6px;height:6px;border-radius:50%}
+  .sev.high{background:var(--hot);box-shadow:0 0 7px var(--hot)}
+  .sev.med{background:var(--warn);box-shadow:0 0 7px var(--warn)}
+  .sev.low{background:rgba(255,255,255,.35)}
+  .finding .ftxt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d3dcec}
+  .finding .ftxt small{display:block;color:var(--muted);font-size:9px;overflow:hidden;text-overflow:ellipsis}
+  .finding .fv{font-size:8.5px;color:var(--ok);white-space:nowrap;text-transform:uppercase;letter-spacing:.04em}
+  .finding .fv.warn{color:var(--warn)}
+  .finding.fixed{opacity:.42}
+  .finding.fixed .fv{color:var(--ok)}
+  .score-row{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:10px}
+  .score{background:rgba(255,255,255,.04);border:1px solid var(--stroke);border-radius:9px;padding:8px 6px;text-align:center}
+  .score b{display:block;font-size:15px;font-variant-numeric:tabular-nums;line-height:1.2}
+  .score span{font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+
+  /* terminal */
+  .term{margin-top:10px;border-radius:9px;overflow:hidden;border:1px solid var(--stroke-2);background:rgba(6,9,14,.92);font-family:var(--mono);font-size:9.5px}
+  .term-bar{display:flex;align-items:center;gap:4px;padding:5px 7px;background:rgba(255,255,255,.05);border-bottom:1px solid var(--stroke)}
+  .term-tab{font-size:8.5px;color:var(--muted);padding:2px 6px;border-radius:4px;transition:.16s}
+  .term-tab.on{background:rgba(255,255,255,.1);color:#e6edf9}
+  .term-bar .sp{flex:1}
+  .term-body{padding:8px 9px;display:flex;flex-direction:column;gap:7px;color:#a9c2d8;max-height:156px;overflow:hidden}
+  .term-block{border-left:2px solid rgba(79,209,197,.45);padding-left:7px;animation:tabIn .26s var(--ease) both}
+  .term-block.err{border-left-color:rgba(255,122,89,.7)}
+  .term-cmd{color:#e6f2ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .term-cmd .p{color:var(--accent)}
+  .term-cmd .p.err{color:var(--hot)}
+  .term-out{color:#94a7bf;margin-top:2px;font-size:9px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+  .term-out .ok{color:var(--ok)}
+  .term-out .warn{color:var(--warn)}
+  .guard-strip{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:9px;color:var(--muted)}
+  .guard-strip svg{width:11px;height:11px;color:var(--warn)}
+
+  /* wallpaper */
+  .wall-preview{margin-top:10px;height:104px;border-radius:10px;overflow:hidden;position:relative;border:1px solid var(--stroke-2);
+    background:linear-gradient(120deg,#0a2a33,#123a52 30%,#1b2a52 62%,#331b44)}
+  .wall-preview::before{content:"";position:absolute;inset:-30%;
+    background:
+      radial-gradient(60% 50% at 30% 40%,rgba(79,209,197,.55),transparent 62%),
+      radial-gradient(50% 45% at 70% 60%,rgba(124,156,255,.5),transparent 62%),
+      radial-gradient(45% 40% at 50% 82%,rgba(255,122,89,.34),transparent 62%);
+    animation:wallDrift 13s ease-in-out infinite alternate;filter:blur(9px)}
+  .wall-preview.paused::before{animation-play-state:paused}
+  @keyframes wallDrift{from{transform:translate3d(-4%,-3%,0) scale(1.06)}to{transform:translate3d(4%,3%,0) scale(1.16)}}
+  .wall-hud{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:18px;color:#eaf2ff;text-shadow:0 2px 10px rgba(0,0,0,.65)}
+  .wall-hud .w{text-align:center}
+  .wall-hud b{display:block;font-size:17px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.1}
+  .wall-hud span{font-size:7.5px;color:rgba(234,242,255,.72);text-transform:uppercase;letter-spacing:.1em}
+  .wall-badge{position:absolute;top:7px;left:8px;font-size:8px;color:#cfe9e5;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.16);border-radius:5px;padding:2px 6px;letter-spacing:.05em}
+  .gov{display:flex;flex-wrap:wrap;gap:4px;margin-top:9px}
+  .gov span{font-size:8.5px;color:#c3cfe4;border:1px solid var(--stroke-2);background:rgba(255,255,255,.04);border-radius:5px;padding:3px 6px}
+  .gov span.paused{color:var(--warn);border-color:rgba(255,180,84,.32);background:rgba(255,180,84,.08)}
+  .cost{margin-top:8px;font-size:9.5px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  .cost b{color:var(--ok);font-weight:600;font-variant-numeric:tabular-nums}
+
+  /* widgets */
+  .wid-stage{margin-top:10px;height:112px;border-radius:10px;border:1px solid var(--stroke-2);background:linear-gradient(160deg,#0b1220,#0f1728 60%,#101a2c);position:relative;overflow:hidden}
+  .wid-stage::after{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.05) 1px,transparent 1px);background-size:18px 18px;pointer-events:none}
+  .wid-clock{position:absolute;left:10px;top:10px;width:92px;height:92px}
+  .wid-clock .hand{transform-origin:50px 50px}
+  .wid-clock .h{animation:spin 43200s linear infinite}
+  .wid-clock .m{animation:spin 3600s linear infinite}
+  .wid-clock .s{animation:spin 60s linear infinite;stroke:var(--accent)}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .wid-gauge{position:absolute;right:10px;top:12px;text-align:center;width:58px}
+  .wid-gauge b{display:block;font-size:15px;font-variant-numeric:tabular-nums;color:#e9f0fb}
+  .wid-gauge span{font-size:7px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+  .wid-gauge .track{height:4px;border-radius:99px;background:rgba(255,255,255,.09);margin-top:5px;overflow:hidden}
+  .wid-gauge .track i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),#7c9cff);transition:width .8s var(--ease)}
+  .wid-net{position:absolute;right:10px;top:72px;font-size:8px;color:#9fb0c8;font-family:var(--mono);text-align:right;line-height:1.6}
+  .wid-now{position:absolute;left:112px;top:14px;max-width:calc(100% - 190px)}
+  .wid-now b{display:block;font-size:10.5px;color:#e6edf9;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wid-now span{font-size:8px;color:var(--muted)}
+  .wid-now .viz{display:inline-flex;align-items:flex-end;gap:2px;height:12px;margin-top:7px}
+  .wid-now .viz i{display:block;width:2.5px;border-radius:2px;background:var(--accent);animation:eq 1.15s ease-in-out infinite}
+  .wid-now .viz i:nth-child(1){height:5px;animation-delay:-.2s}
+  .wid-now .viz i:nth-child(2){height:11px;animation-delay:-.5s}
+  .wid-now .viz i:nth-child(3){height:7px;animation-delay:-.75s}
+  .wid-now .viz i:nth-child(4){height:9px;animation-delay:-.35s}
+  .wid-now .viz i:nth-child(5){height:4px;animation-delay:-.9s}
+
+  /* theme */
+  .icon-row{display:flex;gap:6px;margin-top:9px}
+  .icon-tile{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;background:rgba(255,255,255,.07);border:1px solid var(--stroke-2);transition:.18s}
+  .icon-tile:hover{background:rgba(255,255,255,.13);transform:translateY(-1px)}
+  .icon-tile svg{width:15px;height:15px;color:#dfe7f5}
+  .pills{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+  .pill{font:600 9.5px var(--font);color:#cbd5e8;background:rgba(255,255,255,.05);border:1px solid var(--stroke-2);border-radius:99px;padding:5px 9px;cursor:pointer;transition:.16s}
+  .pill:hover{background:var(--accent-soft);border-color:rgba(79,209,197,.42);color:#fff}
+  .pill.on{background:var(--accent-soft);border-color:rgba(79,209,197,.5);color:var(--accent)}
+
+  /* gaming coach */
+  .hud-line{display:flex;gap:5px;margin-top:10px;flex-wrap:wrap}
+  .hud-chip{font:500 9px var(--mono);color:#cfe0f0;border:1px solid var(--stroke-2);background:rgba(0,0,0,.32);border-radius:5px;padding:3px 6px}
+  .hud-chip b{color:var(--accent);font-weight:600}
+  .verdict-big{display:flex;align-items:center;gap:9px;margin-top:10px;padding:9px 10px;border-radius:9px;background:rgba(255,180,84,.08);border:1px solid rgba(255,180,84,.28)}
+  .verdict-big .vi{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;background:rgba(255,180,84,.16);color:var(--warn);flex:0 0 auto}
+  .verdict-big .vi svg{width:14px;height:14px}
+  .verdict-big b{display:block;font-size:11px;color:#f3e2c8;font-weight:650}
+  .verdict-big span{font-size:9.5px;color:var(--muted);display:block;margin-top:1px}
+  .rec-list{list-style:none;margin:9px 0 0;padding:0;display:flex;flex-direction:column;gap:5px;font-size:10.5px}
+  .rec{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;background:rgba(255,255,255,.035);border:1px solid var(--stroke);border-radius:8px;padding:6px 8px;color:#cbd5e8;animation:tabIn .3s var(--ease) both}
+  .rec .chg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rec .chg b{color:#e9eefb;font-weight:600}
+  .rec .gain{font-weight:650;color:var(--ok);font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .rec .conf{font-size:7.5px;text-transform:uppercase;letter-spacing:.05em;border-radius:4px;padding:1.5px 5px;white-space:nowrap;font-weight:700}
+  .conf.high{background:rgba(74,222,128,.15);color:var(--ok)}
+  .conf.med{background:rgba(255,180,84,.15);color:var(--warn)}
+  .conf.low{background:rgba(255,255,255,.07);color:var(--muted)}
+  .ocr{margin-top:9px;border-radius:9px;border:1px dashed rgba(124,156,255,.35);background:rgba(124,156,255,.06);padding:8px 9px;font-size:9.5px;color:#c6d2e8;line-height:1.55;font-family:var(--mono)}
+  .ocr b{color:var(--accent);font-weight:600}
 </style>
 </head>
 <body class="mode-balanced">
@@ -536,7 +670,14 @@
     <symbol id="i-win" viewBox="0 0 24 24"><path d="M3.5 5.6l7.4-1v7.1H3.5zM12.6 4.4l7.9-1.1v8.4h-7.9zM3.5 12.6h7.4v7.1l-7.4-1zM12.6 12.6h7.9v8.4l-7.9-1.1z" fill="currentColor"/></symbol>
     <symbol id="i-steam" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="15.4" cy="9.2" r="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8.4" cy="15.2" r="1.6" fill="currentColor"/><path d="M9.6 14.2l3-2.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4.5h10l4 4v11H5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 4.5v5h6v-5M8.5 19.5v-5h7v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 11v5.5M12 7.6v.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 12.3l2.7 2.7L16 9.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="10.2" y="10.2" width="3.6" height="3.6" rx=".8" fill="currentColor"/><path d="M10 3.5v2.2M14 3.5v2.2M10 18.3v2.2M14 18.3v2.2M3.5 10h2.2M3.5 14h2.2M18.3 10h2.2M18.3 14h2.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 20h6M12 16.5V20" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7.4V12l3.2 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18c1.2 0 1.8-.8 1.8-1.7 0-1-.8-1.6-.8-2.5 0-.9.7-1.6 1.7-1.6h1.6A4.7 4.7 0 0021 10.5C21 6.4 16.9 3 12 3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="8.3" cy="10.2" r="1.15" fill="currentColor"/><circle cx="11.6" cy="7.4" r="1.15" fill="currentColor"/><circle cx="15.4" cy="8.6" r="1.15" fill="currentColor"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.5v13M5.5 12h13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 10.5V7.8a4 4 0 018 0v2.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="15.4" r="1.4" fill="currentColor"/></symbol>
   </defs>
 </svg>
@@ -560,7 +701,8 @@
         <button class="on" type="button">Overview</button>
         <button type="button" onclick="go('gamingCard')">Gaming</button>
         <button type="button" onclick="go('customizeCard')">Customize</button>
-        <button type="button" onclick="go('guardianCard')">Guardian</button>
+        <button type="button" data-mode-tab="gaming" onclick="coachJump(this)">Coach</button>
+        <button type="button" data-mode-tab="desktop" onclick="coachJump(this)">Studio</button>
       </div>
       <div class="lock"><i></i>Tier 1 · 214 changes journaled</div>
     </header>
@@ -595,9 +737,15 @@
                 <h2><svg><use href="#i-sparkle"/></svg>Nim <span class="micro">your optimizer</span></h2>
                 <p class="sub">I only run when you do. 11.4&nbsp;MB idle, 0.0% CPU — lighter than the things I turn off.</p>
                 <div class="chips">
-                  <button class="chip" type="button" onclick="cleanNow()"><svg><use href="#i-sparkle"/></svg>Clean now</button>
+                  <button class="chip" type="button" onclick="runCheckup()"><svg><use href="#i-shield"/></svg>Run checkup</button>
                   <button class="chip" type="button" onclick="setMode('gaming')"><svg><use href="#i-gamepad"/></svg>Gaming session</button>
                   <button class="chip" type="button" onclick="whySlow()"><svg><use href="#i-info"/></svg>Why is my PC slow?</button>
+                </div>
+                <div class="tabs-mini" role="tablist" id="heroTabs">
+                  <button class="on" type="button" data-sec="overview">Overview</button>
+                  <button type="button" data-sec="gaming">Gaming</button>
+                  <button type="button" data-sec="desktop">Desktop studio</button>
+                  <button type="button" data-sec="safety">Safety</button>
                 </div>
               </div>
               <div class="mascot">
@@ -634,8 +782,34 @@
             </div>
           </article>
 
+          <!-- PC CHECKUP -->
+          <article class="card span2" id="checkupCard" data-sec="overview">
+            <h2><svg><use href="#i-check-circle"/></svg>PC Checkup <span class="micro" id="checkMeta">38 checks · 14 fixable</span></h2>
+            <div class="row" style="margin-top:10px;align-items:flex-start;gap:14px">
+              <div style="flex:0 0 auto;text-align:center">
+                <div class="big-num" id="pcScore" style="font-size:30px">86<small>score</small></div>
+                <div class="score-row" style="grid-template-columns:1fr 1fr;gap:5px;width:132px;margin-top:8px">
+                  <div class="score" style="padding:5px 3px"><b id="sSpeed" style="font-size:12px">61</b><span>speed</span></div>
+                  <div class="score" style="padding:5px 3px"><b id="sSec" style="font-size:12px">78</b><span>security</span></div>
+                  <div class="score" style="padding:5px 3px"><b id="sPriv" style="font-size:12px">92</b><span>privacy</span></div>
+                  <div class="score" style="padding:5px 3px"><b id="sRel" style="font-size:12px">95</b><span>reliability</span></div>
+                </div>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div class="tabs-mini" role="tablist" style="margin-top:0" id="checkTabs">
+                  <button class="on" type="button" onclick="setCheckTab('speed',this)">Slowing you down</button>
+                  <button type="button" onclick="setCheckTab('space',this)">Taking up space</button>
+                  <button type="button" onclick="setCheckTab('risk',this)">Needs attention</button>
+                </div>
+                <ul class="finding-list" id="findingList"></ul>
+                <button class="btn full" type="button" id="fixAllBtn" onclick="fixAll()"><svg><use href="#i-check"/></svg>Fix everything safe (14)</button>
+                <p class="sub" style="margin-top:7px;font-size:10px">Speed issues are ranked by measured impact. Space and risk are separate on purpose — freeing disk does not make games faster, and I won't pretend it does.</p>
+              </div>
+            </div>
+          </article>
+
           <!-- POWER -->
-          <article class="card span2" id="powerCard">
+          <article class="card span2" id="powerCard" data-sec="overview">
             <h2><svg><use href="#i-bolt"/></svg>Power state <span class="micro">live · no restart</span></h2>
             <div class="meter">
               <div class="lbl"><span>Background noise</span><b id="noiseVal">41%</b></div>
@@ -653,7 +827,7 @@
           </article>
 
           <!-- CLEANER -->
-          <article class="card" id="cleanerCard">
+          <article class="card" id="cleanerCard" data-sec="overview">
             <h2><svg><use href="#i-sparkle"/></svg>Cleaner <span class="micro">receipted</span></h2>
             <div class="ring-wrap">
               <div class="ring">
@@ -675,7 +849,7 @@
           </article>
 
           <!-- AD BLOCKER -->
-          <article class="card" id="adCard">
+          <article class="card" id="adCard" data-sec="overview">
             <h2><svg><use href="#i-shield"/></svg>Ad + tracker block <span class="micro">dns layer</span></h2>
             <div class="row between" style="margin-top:11px">
               <div>
@@ -689,10 +863,15 @@
               <li><code>telemetry.microsoft.com</code><span id="c2">3,871</span></li>
               <li><code>metrics.steamstatic.com</code><span id="c3">1,204</span></li>
             </ul>
+            <div class="row" style="margin-top:10px;gap:5px;flex-wrap:wrap">
+              <button class="btn ghost" type="button" id="adPauseBtn" onclick="pauseBlocking(this)" style="flex:1;justify-content:center"><svg><use href="#i-clock"/></svg>Pause 30 min</button>
+              <button class="btn ghost" type="button" onclick="toast('Per-app rules','Filter this app: on / off / strict. Games stay permissive by default; browsers strict.')" style="flex:1;justify-content:center"><svg><use href="#i-sliders"/></svg>Per app</button>
+            </div>
+            <p class="sub" style="margin-top:7px;font-size:9.5px">Off = plain system DNS immediately. On = re-armed in under 200 ms. A global hotkey toggles it mid-game.</p>
           </article>
 
           <!-- PALETTE -->
-          <article class="card" id="paletteCard">
+          <article class="card" id="paletteCard" data-sec="overview">
             <h2><svg><use href="#i-search"/></svg>Command palette <span class="micro">alt + space</span></h2>
             <div class="search">
               <svg><use href="#i-search"/></svg>
@@ -703,7 +882,7 @@
           </article>
 
           <!-- CUSTOMIZE -->
-          <article class="card" id="customizeCard">
+          <article class="card" id="customizeCard" data-sec="overview">
             <h2><svg><use href="#i-sliders"/></svg>Make it yours <span class="micro">live</span></h2>
             <div class="mini-bar" id="miniBar">
               <div class="grp" id="miniGrp">
@@ -730,8 +909,41 @@
             </div>
           </article>
 
+          <!-- GAMING COACH -->
+          <article class="card span2" id="coachCard" data-sec="gaming">
+            <h2><svg><use href="#i-cpu"/></svg>Coach <span class="micro">watches your gameplay</span></h2>
+            <div class="hud-line">
+              <span class="hud-chip">fps <b id="hudFps">144</b></span>
+              <span class="hud-chip">1% low <b>102</b></span>
+              <span class="hud-chip">gpu <b id="hudGpu">87%</b></span>
+              <span class="hud-chip">cpu <b>41%</b></span>
+              <span class="hud-chip">vram <b>4.1/6 GB</b></span>
+              <span class="hud-chip">temp <b id="hudTemp">71°C</b></span>
+              <span class="hud-chip">net <b>18 ms</b></span>
+            </div>
+            <div class="verdict-big">
+              <div class="vi"><svg><use href="#i-info"/></svg></div>
+              <div>
+                <b id="coachVerdict">GPU-bound.</b>
+                <span id="coachWhy">41 sessions on this game · GPU pinned at 87%, CPU mostly idle. Visual settings are the only lever that pays off here.</span>
+              </div>
+            </div>
+            <ul class="rec-list" id="recList">
+              <li class="rec"><span class="chg">Resolution scale <b>100% → 90%</b></span><span class="gain">+9% fps</span><span class="conf high">high</span></li>
+              <li class="rec"><span class="chg">Shadows <b>High → Medium</b></span><span class="gain">+6%</span><span class="conf med">medium</span></li>
+              <li class="rec"><span class="chg">Textures <b>keep High</b></span><span class="gain">±0%</span><span class="conf low">keep</span></li>
+              <li class="rec"><span class="chg">Anti-aliasing <b>keep TAA</b></span><span class="gain">±0%</span><span class="conf low">keep</span></li>
+            </ul>
+            <div class="ocr" id="ocrBox">screenshot OCR · reading your settings menu locally<br><b>shadows</b> High · <b>textures</b> High · <b>AA</b> TAA · <b>scale</b> 100%</div>
+            <div class="row" style="margin-top:10px;gap:6px;flex-wrap:wrap">
+              <button class="btn" type="button" id="coachBtn" onclick="coachRun(this)"><svg><use href="#i-gamepad"/></svg>Run a 90s A/B test</button>
+              <button class="btn ghost" type="button" onclick="coachApply()"><svg><use href="#i-check"/></svg>Apply suggested settings</button>
+            </div>
+            <div class="verdict"><svg><use href="#i-check"/></svg><span><b>Honest rule:</b> every number above comes from your own sessions. If a change is inside the noise, the row says ±0% and I leave it alone.</span></div>
+          </article>
+
           <!-- GAMING -->
-          <article class="card span2" id="gamingCard">
+          <article class="card span2" id="gamingCard" data-sec="gaming">
             <h2><svg><use href="#i-gamepad"/></svg>Gaming session <span class="micro">measured, not promised</span></h2>
             <div class="chart" id="chart">
               <span class="lbl">frametime · ms · <b id="chartMode">session off</b></span>
@@ -751,18 +963,21 @@
           </article>
 
           <!-- GUARDIAN -->
-          <article class="card" id="guardianCard">
+          <article class="card" id="guardianCard" data-sec="safety">
             <h2><svg><use href="#i-shield"/></svg>Guardian journal <span class="micro">1-click undo</span></h2>
             <ul class="journal" id="journal">
               <li><span class="risk low">safe</span><span class="jtxt">Power plan: High perf<small>golden pre-state kept</small></span><button class="undo" type="button" aria-label="Undo"><svg><use href="#i-undo"/></svg></button></li>
               <li><span class="risk low">auto</span><span class="jtxt">Paused 6 updaters<small>auto-revert in 2h 00m</small></span><button class="undo" type="button" aria-label="Undo"><svg><use href="#i-undo"/></svg></button></li>
               <li><span class="risk med">med</span><span class="jtxt">Quiet telemetry svc<small>revert if apps complain</small></span><button class="undo" type="button" aria-label="Undo"><svg><use href="#i-undo"/></svg></button></li>
             </ul>
-            <button class="btn ghost full" type="button" onclick="whySlow()"><svg><use href="#i-info"/></svg>Time machine · diff last week</button>
+            <div class="row" style="margin-top:9px;gap:6px">
+              <button class="btn ghost" type="button" onclick="whySlow()" style="flex:1;justify-content:center;font-size:10px"><svg><use href="#i-info"/></svg>Time machine</button>
+              <button class="btn ghost" type="button" onclick="weeklyReport()" style="flex:1;justify-content:center;font-size:10px"><svg><use href="#i-check-circle"/></svg>Weekly report</button>
+            </div>
           </article>
 
           <!-- NETWORK -->
-          <article class="card" id="netCard">
+          <article class="card" id="netCard" data-sec="overview">
             <h2><svg><use href="#i-network"/></svg>Who's eating bandwidth <span class="micro">local only</span></h2>
             <div class="apps">
               <div class="app-row"><span class="nm">OneDrive</span><span class="bar"><i id="netSync" style="width:86%"></i></span><b id="netSyncV">12.8 MB/s</b></div>
@@ -774,7 +989,7 @@
           </article>
 
           <!-- SANDBOX -->
-          <article class="card" id="sandboxCard">
+          <article class="card" id="sandboxCard" data-sec="safety">
             <h2><svg><use href="#i-lock"/></svg>Sandbox <span class="micro">disposable apps</span></h2>
             <div class="sandbox-art">
               <span class="glass"></span>
@@ -789,7 +1004,7 @@
           </article>
 
           <!-- SCRIPT LAB -->
-          <article class="card" id="scriptCard">
+          <article class="card" id="scriptCard" data-sec="overview">
             <h2><svg><use href="#i-terminal"/></svg>Personal CMD <span class="micro">no shell, 4 ms</span></h2>
             <div class="codeblock"><span class="dim"># type in the palette</span>
 :clean  → clean safe, keep saves
@@ -801,7 +1016,7 @@
           </article>
 
           <!-- ACCESS TIERS -->
-          <article class="card" id="tierCard">
+          <article class="card" id="tierCard" data-sec="safety">
             <h2><svg><use href="#i-shield"/></svg>Access tiers <span class="micro">provenance</span></h2>
             <ul class="tierlist">
               <li><span class="tdot on"></span><b style="color:#dbe4f4;font-weight:600">T0</b>&nbsp;user · simulate first <span class="tstate">always</span></li>
@@ -813,7 +1028,7 @@
           </article>
 
           <!-- PRIVACY -->
-          <article class="card" id="privacyCard">
+          <article class="card" id="privacyCard" data-sec="safety">
             <h2><svg><use href="#i-lock"/></svg>Nothing leaves <span class="micro">firewalled</span></h2>
             <div class="row between" style="margin-top:11px">
               <div class="big-num">0<small>packets sent</small></div>
@@ -829,7 +1044,7 @@
           </article>
 
           <!-- MOTION LAB -->
-          <article class="card" id="motionCard">
+          <article class="card" id="motionCard" data-sec="overview">
             <h2><svg><use href="#i-sparkle"/></svg>Motion lab <span class="micro">compositor only</span></h2>
             <div class="row between" style="margin-top:12px">
               <span class="sub" style="margin:0">Reduce motion</span>
@@ -841,6 +1056,80 @@
             </div>
             <button class="btn ghost full" type="button" id="labBtn" onclick="runLab(this)"><svg><use href="#i-bolt"/></svg>Replay the whole motion</button>
             <p class="lab-note">Every animation on this page runs on the GPU. Turn on <b style="color:#dce4f3">Reduce motion</b> and they all stop at once — that switch is a real setting in the app, and it costs zero CPU while idle.</p>
+          </article>
+
+          <!-- ============ DESKTOP STUDIO ============ -->
+          <article class="card" id="termCard" data-sec="desktop">
+            <h2><svg><use href="#i-terminal"/></svg>Terminal <span class="micro">blocks · guard</span></h2>
+            <div class="term">
+              <div class="term-bar">
+                <span class="term-tab on">pwsh</span><span class="term-tab">wsl</span><span class="term-tab">cmd</span>
+                <span class="sp"></span><span class="term-tab">⌘K palette</span>
+              </div>
+              <div class="term-body" id="termBody">
+                <div class="term-block"><div class="term-cmd"><span class="p">❯</span> gco main</div><div class="term-out"><span class="ok">switched to 'main'</span> · 0.04 s</div></div>
+                <div class="term-block"><div class="term-cmd"><span class="p">❯</span> pco clean --dry</div><div class="term-out">would free 41.9 GB · 214 items · <span class="warn">nothing deleted</span></div></div>
+              </div>
+            </div>
+            <div class="guard-strip"><svg><use href="#i-shield"/></svg>paste guard on · dry-run offered on destructive commands</div>
+            <button class="btn full" type="button" onclick="termCmd()"><svg><use href="#i-bolt"/></svg>Run a command</button>
+          </article>
+
+          <article class="card" id="wallCard" data-sec="desktop">
+            <h2><svg><use href="#i-monitor"/></svg>Wallpaper engine <span class="micro">governed</span></h2>
+            <div class="wall-preview" id="wallPreview">
+              <span class="wall-badge" id="wallBadge">aurora flow · shader · 30 fps</span>
+              <div class="wall-hud">
+                <div class="w"><b>18:42</b><span>monday</span></div>
+                <div class="w"><b id="wallCpu">23%</b><span>cpu</span></div>
+                <div class="w"><b>71<span style="font-size:10px">°</span></b><span>gpu temp</span></div>
+              </div>
+            </div>
+            <div class="gov">
+              <span>pauses in games</span><span>pauses on battery</span><span>pauses when covered</span><span class="paused" id="govLock">locked · paused</span>
+            </div>
+            <div class="cost"><svg style="width:11px;height:11px;color:var(--ok)"><use href="#i-bolt"/></svg>measured: <b>1.2% GPU</b> · 0.2% CPU · zero when paused</div>
+            <button class="btn ghost full" type="button" onclick="toggleWall(this)">Pause the scene</button>
+          </article>
+
+          <article class="card" id="widgetCard" data-sec="desktop">
+            <h2><svg><use href="#i-clock"/></svg>Widgets <span class="micro">rainmeter-class</span></h2>
+            <div class="wid-stage">
+              <svg class="wid-clock" viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="46" fill="rgba(255,255,255,.04)" stroke="rgba(255,255,255,.16)" stroke-width="1.4"/>
+                <line class="hand h" x1="50" y1="50" x2="50" y2="30" stroke="#e7eefa" stroke-width="3.4" stroke-linecap="round"/>
+                <line class="hand m" x1="50" y1="50" x2="50" y2="21" stroke="#cdd9ec" stroke-width="2.2" stroke-linecap="round"/>
+                <line class="hand s" x1="50" y1="56" x2="50" y2="19" stroke-width="1.3" stroke-linecap="round"/>
+                <circle cx="50" cy="50" r="2.6" fill="var(--accent)"/>
+              </svg>
+              <div class="wid-now">
+                <b>Ambient · focus</b><span>now playing · local</span>
+                <div class="viz"><i></i><i></i><i></i><i></i><i></i></div>
+              </div>
+              <div class="wid-gauge">
+                <b id="widCpu">23%</b><span>cpu</span>
+                <div class="track"><i id="widCpuBar" style="width:23%"></i></div>
+              </div>
+              <div class="wid-net">↑ 0.4 <br>↓ 12.8 MB/s</div>
+            </div>
+            <button class="btn ghost full" type="button" onclick="toast('Widget editor','Drag to move, snap to grid, per-monitor placement. Every widget declares a refresh rate.')">Open desktop editor</button>
+          </article>
+
+          <article class="card" id="themeCard" data-sec="desktop">
+            <h2><svg><use href="#i-palette"/></svg>Theme <span class="micro">one file</span></h2>
+            <div class="icon-row">
+              <span class="icon-tile"><svg><use href="#i-folder"/></svg></span>
+              <span class="icon-tile"><svg><use href="#i-terminal"/></svg></span>
+              <span class="icon-tile"><svg><use href="#i-steam"/></svg></span>
+              <span class="icon-tile"><svg><use href="#i-music"/></svg></span>
+              <span class="icon-tile"><svg><use href="#i-win"/></svg></span>
+              <span class="icon-tile" style="border-style:dashed;color:var(--muted)"><svg><use href="#i-plus"/></svg></span>
+            </div>
+            <div class="pills">
+              <span class="pill on">icon pack</span><span class="pill">taskbar</span><span class="pill">clock panel</span><span class="pill">explorer</span><span class="pill">sounds</span><span class="pill">cursors</span>
+            </div>
+            <p class="sub" style="margin-top:9px">Colors, taskbar, icons, wallpaper, widgets, terminal and sounds in one bundle — shareable, git-friendly, revertible as a set.</p>
+            <button class="btn full" type="button" onclick="shareTheme()"><svg><use href="#i-save"/></svg>Export my theme</button>
           </article>
         </div>
       </main>
@@ -891,6 +1180,7 @@
 
   /* ---------------- toasts ---------------- */
   var toastHost = document.getElementById('toasts');
+  window.toast = toast;
   function toast(title, sub, undoLabel, undoFn){
     var el = document.createElement('div');
     el.className = 'toast';
@@ -982,22 +1272,52 @@
 
   /* ---------------- ad blocker ---------------- */
   var adOn = true;
+  var adSwitchEl = null, adPauseTimer = 0;
   window.toggleAd = function(el){
+    adSwitchEl = el;
     adOn = !adOn;
     el.classList.toggle('on', adOn);
     el.setAttribute('aria-checked', String(adOn));
+    clearTimeout(adPauseTimer);
+    var pauseBtn = document.getElementById('adPauseBtn');
+    if (pauseBtn) pauseBtn.innerHTML = '<svg><use href="#i-clock"/></svg>Pause 30 min';
     if (adOn){
-      toast('Blocking resumed', 'DNS policy re-armed for every app on this PC.');
+      toast('Blocking on', 'DNS policy re-armed for every app on this PC — in under 200 ms.');
     } else {
-      toast('Ad blocking paused', 'Pages keep their telemetry pixels until you re-arm.', 'Re-arm', function(){
-        adOn = true; el.classList.add('on'); el.setAttribute('aria-checked', 'true');
-        toast('Re-armed', 'Live counters resume where they left off.');
+      toast('Ad blocking off', 'Plain system DNS restored. Nothing left behind. Counters frozen.', 'Turn on', function(){
+        window.toggleAd(adSwitchEl);
       });
     }
   };
+  window.pauseBlocking = function(btn){
+    if (!adOn){
+      toast('Already off', 'Press the switch to turn blocking back on.');
+      return;
+    }
+    adOn = false;
+    if (adSwitchEl){
+      adSwitchEl.classList.remove('on');
+      adSwitchEl.setAttribute('aria-checked', 'false');
+    }
+    var secs = 30 * 60;
+    clearInterval(adPauseTimer);
+    adPauseTimer = setInterval(function(){
+      secs--;
+      var m = Math.floor(secs / 60), s = secs % 60;
+      btn.innerHTML = '<svg><use href="#i-clock"/></svg>Resuming in ' + m + ':' + (s < 10 ? '0' + s : s);
+      if (secs <= 0){
+        clearInterval(adPauseTimer);
+        adOn = true;
+        if (adSwitchEl){ adSwitchEl.classList.add('on'); adSwitchEl.setAttribute('aria-checked', 'true'); }
+        btn.innerHTML = '<svg><use href="#i-clock"/></svg>Pause 30 min';
+        toast('Blocking resumed', 'Pause expired. Your own allowlist choices were kept.');
+      }
+    }, 1000);
+    toast('Paused for 30 minutes', 'The tray icon shows a countdown. Everything resumes automatically.');
+  };
   var base = [12948, 4102, 3871, 1204];
   setInterval(function(){
-    if (!adOn) return;
+    if (!adOn) return;  /* paused: counters freeze */
     base[0] += Math.floor(Math.random() * 4) + 1;
     if (Math.random() > .45) base[1] += 1;
     if (Math.random() > .6) base[2] += 1;
@@ -1396,6 +1716,234 @@
       nowPlay.innerHTML = '<span class="viz"><i></i><i></i><i></i></span><span>now playing · ' + TRACKS[ti] + '</span>';
     }, 7000);
   }
+
+  /* =========================================================
+     v3 — checkup, coach, desktop studio
+     ========================================================= */
+  var FINDINGS = {
+    speed: [
+      { sev:'high', t:'Monitor at 60 Hz — supports 165 Hz', s:'biggest free win on this PC', v:'fix', fixed:false },
+      { sev:'high', t:'21 startup items · 6.4 s boot cost', s:'OneDrive, Steam, RGB, 3 updaters…', v:'defer', fixed:false },
+      { sev:'med',  t:'Thermal throttling in 3 of 5 sessions', s:'CPU dropped to 82% clocks under load', v:'fix', fixed:false },
+      { sev:'med',  t:'SSD 94% full', s:'slows writes and shader caching', v:'clean', fixed:false },
+      { sev:'low',  t:'Power plan: Balanced', s:'High performance is safe on a desktop', v:'fix', fixed:false }
+    ],
+    space: [
+      { sev:'med', t:'1,284 duplicate files · 18.4 GB', s:'keep-newest ready · preview before delete', v:'review', fixed:false },
+      { sev:'low', t:'Old Windows backup · 12.6 GB', s:'33 days old — safe to remove', v:'clean', fixed:false },
+      { sev:'low', t:'WinUpdate leftovers · 21.6 GB', s:'System restore point kept', v:'clean', fixed:false },
+      { sev:'low', t:'Stale large files (1 yr+) · 6.2 GB', s:'screenshots, installers, exports', v:'review', fixed:false }
+    ],
+    risk: [
+      { sev:'high', t:'3 apps have known exploits', s:'browser plugins + an old runtime', v:'update', fixed:false },
+      { sev:'med',  t:'Defender has 2 suspicious exclusions', s:'paths in %TEMP% — auto-added?', v:'review', fixed:false },
+      { sev:'med',  t:'SMBv1 still enabled', s:'legacy protocol, real attack surface', v:'fix', fixed:false },
+      { sev:'low',  t:'4 background mic grants', s:'apps can listen without a window', v:'review', fixed:false }
+    ]
+  };
+  var SCORES = {
+    speed:[61,88], sec:[78,84], priv:[92,92], rel:[95,95]
+  };
+  var checkTab = 'speed';
+
+  window.setCheckTab = function(tab, btn){
+    checkTab = tab;
+    var tabs = document.querySelectorAll('#checkTabs button');
+    for (var i=0;i<tabs.length;i++) tabs[i].classList.toggle('on', tabs[i] === btn);
+    renderFindings();
+  };
+  function renderFindings(){
+    var list = document.getElementById('findingList');
+    if (!list) return;
+    var items = FINDINGS[checkTab];
+    list.innerHTML = items.map(function(f){
+      var label = f.fixed ? 'fixed' : f.v;
+      return '<li class="finding' + (f.fixed?' fixed':'') + '">' +
+        '<span class="sev ' + f.sev + '"></span>' +
+        '<span class="ftxt">' + f.t + '<small>' + (f.s || '') + '</small></span>' +
+        '<span class="fv' + (f.v === 'review' ? ' warn' : '') + '">' + label + '</span></li>';
+    }).join('');
+  }
+  renderFindings();
+
+  window.runCheckup = function(){
+    setMood('thinking', 3800);
+    toast('Checkup started', '38 checks · disk scan + posture + measurements. This is the whole-PC pass.', );
+    var delivered = 0;
+    var stream = ['Scanning junk + duplicates…','Checking display + refresh rate…','Measuring startup cost…','Driver + crash history…','Security posture…','Privacy grants…'];
+    stream.forEach(function(st, i){
+      setTimeout(function(){ toast('Check', st); delivered++; }, 700 + i * 900);
+    });
+    setTimeout(function(){
+      toast('Checkup complete', '14 safe fixes ready · 4 need your judgment. Tabs are separated so nothing is exaggerated.');
+      setMood('happy', 2600);
+    }, 700 + stream.length * 900);
+  };
+
+  window.fixAll = function(){
+    var btn = document.getElementById('fixAllBtn');
+    if (!btn) return;
+    btn.innerHTML = '<svg><use href="#i-bolt"/></svg>Fixing 14 items…';
+    btn.disabled = true;
+    setMood('happy', 3600);
+    var i = 0;
+    var timer = setInterval(function(){
+      if (i >= 5){ clearInterval(timer); return; }
+      i++;
+      if (FINDINGS.speed[i]) FINDINGS.speed[i].fixed = true;
+      renderFindings();
+      if (i === 1) toast('Refresh rate 60 → 165 Hz','Applied and verified against the panel’s reported modes.');
+      if (i === 2) toast('Deferred 21 startup items','Defer, not disable — everything still works, just later.');
+      if (i === 3) toast('Thermals','Fan curve adjusted; monitoring continues.');
+      if (i === 4) toast('Space','Cleaned into the vault — 30 days to change your mind.');
+    }, 620);
+    setTimeout(function(){
+      btn.disabled = false;
+      btn.innerHTML = '<svg><use href="#i-undo"/></svg>Undo the whole batch';
+      toast('14 fixes applied', 'One receipt, one undo. Nothing risky was touched — 4 items wait in Review.');
+      animateNum(document.getElementById('pcScore'), 86, 94, 0);
+      var a = document.getElementById('sSpeed'); if (a) a.textContent = '88';
+      var b = document.getElementById('sSec'); if (b) b.textContent = '84';
+    }, 3600);
+  };
+
+  /* ---------- hero tabs ---------- */
+  var heroTabs = document.getElementById('heroTabs');
+  var contentEl = document.getElementById('content');
+  if (heroTabs && contentEl){
+    heroTabs.addEventListener('click', function(e){
+      var b = e.target.closest('button');
+      if (!b) return;
+      var sec = b.getAttribute('data-sec');
+      var btns = heroTabs.querySelectorAll('button');
+      for (var i=0;i<btns.length;i++) btns[i].classList.toggle('on', btns[i] === b);
+      contentEl.setAttribute('data-sec', sec);
+      Array.prototype.forEach.call(contentEl.querySelectorAll('.card'), function(c){
+        if (c.getAttribute('data-sec') === sec){
+          c.classList.remove('tabin'); void c.offsetWidth; c.classList.add('tabin');
+        }
+      });
+      contentEl.scrollTo({ top: 0, behavior: 'smooth' });
+      var names = { overview:'Overview', gaming:'Gaming', desktop:'Desktop studio', safety:'Safety' };
+      toast(names[sec] + ' view', sec === 'desktop' ? 'Customization lives here — every layer is measured and reversible.'
+        : sec === 'gaming' ? 'Coach, session, and honest measurements.'
+        : sec === 'safety' ? 'Guardian, sandbox, tiers and privacy.' : 'Everything that matters today.');
+    });
+  }
+
+  /* ---------- terminal ---------- */
+  var TERM = [
+    ['gco main', '<span class="ok">switched to \'main\'</span> · 0.04 s'],
+    ['pco clean --dry', 'would free 41.9 GB · 214 items · <span class="warn">nothing deleted</span>'],
+    ['rm -rf .\\build', '<span class="warn">destructive — dry-run offered first</span>\n<span class="ok">blocked until you confirm</span>'],
+    ['pco game start --profile rocket-league', 'session armed · snapshot ok · <span class="ok">measuring</span>'],
+    ['gst', 'Clean tree · 2 ahead · 1 behind']
+  ];
+  var termI = 0;
+  window.termCmd = function(){
+    var body = document.getElementById('termBody');
+    if (!body) return;
+    var cmd = TERM[termI % TERM.length]; termI++;
+    var blk = document.createElement('div');
+    blk.className = 'term-block' + (cmd[0].indexOf('rm -rf') === 0 ? ' err' : '');
+    blk.innerHTML = '<div class="term-cmd"><span class="p' + (cmd[0].indexOf('rm -rf') === 0 ? ' err' : '') + '">❯</span> ' + cmd[0] + '</div>' +
+                    '<div class="term-out">' + cmd[1] + '</div>';
+    body.appendChild(blk);
+    while (body.children.length > 3) body.removeChild(body.firstChild);
+    if (cmd[0].indexOf('rm -rf') === 0){
+      toast('Paste/destructive guard', 'Checked against a dry-run pattern. Nothing ran — you get to see what it would delete.');
+    }
+  };
+
+  /* ---------- wallpaper ---------- */
+  var wallPaused = false;
+  window.toggleWall = function(btn){
+    wallPaused = !wallPaused;
+    var p = document.getElementById('wallPreview');
+    var badge = document.getElementById('wallBadge');
+    if (!p) return;
+    p.classList.toggle('paused', wallPaused);
+    if (badge) badge.textContent = wallPaused ? 'aurora flow · paused · 0% gpu' : 'aurora flow · shader · 30 fps';
+    if (btn) btn.textContent = wallPaused ? 'Resume the scene' : 'Pause the scene';
+    toast(wallPaused ? 'Scene paused' : 'Scene resumed',
+      wallPaused ? 'Zero GPU cost while paused. The static frame is kept.'
+                 : 'Back to 1.2% GPU at 30 fps — the governor still stops it in games.');
+  };
+
+  /* ---------- widgets ---------- */
+  setInterval(function(){
+    if (reduceBySetting) return;
+    var el = document.getElementById('widCpu');
+    var bar = document.getElementById('widCpuBar');
+    var hud = document.getElementById('wallCpu');
+    var v = 16 + Math.round(Math.random() * 22);
+    if (el) el.textContent = v + '%';
+    if (bar) bar.style.width = v + '%';
+    if (hud) hud.textContent = v + '%';
+  }, 2600);
+
+  /* ---------- theme ---------- */
+  window.shareTheme = function(){
+    setMood('happy', 2600);
+    toast('Theme exported','Aurora.pco — colors, taskbar, icons, wallpaper, widgets, terminal, sounds. 4.2 MB, no tracking.');
+  };
+
+  /* ---------- gaming coach ---------- */
+  var VERDICTS = [
+    { v:'GPU-bound.', why:'41 sessions on this game · GPU pinned at 87%, CPU idle. Visual settings are the only lever that pays off here.',
+      recs:[['Resolution scale <b>100% → 90%</b>','+9% fps','high'],['Shadows <b>High → Medium</b>','+6%','med'],['Textures <b>keep High</b>','±0%','low'],['Anti-aliasing <b>keep TAA</b>','±0%','low']] },
+    { v:'CPU single-thread bound.', why:'One core is at 96% while the GPU sits at 71%. Shadows and textures are nearly free on your rig — draw distance and post-FX are not.',
+      recs:[['Draw distance <b>Ultra → High</b>','+11% fps','high'],['Post-FX <b>Ultra → High</b>','+7%','med'],['Textures <b>raise to Ultra</b>','±0% cost','med'],['Resolution scale <b>keep</b>','±0%','low']] },
+    { v:'Thermal limited.', why:'GPU clocks fall from 1.92 to 1.44 GHz after 9 minutes. Settings barely matter — airflow and the fan curve do.',
+      recs:[['Fan curve <b>aggressive</b>','+8% sustained','high'],['Cap fps <b>144 → 120</b>','stops the fall','med'],['Shadows <b>High → Medium</b>','+4%','med'],['Undervolt <b>advice only</b>','see guide','low']] }
+  ];
+  var verdictI = 0;
+  window.coachRun = function(btn){
+    btn.innerHTML = '<svg><use href="#i-gamepad"/></svg>Recording 90 s…';
+    btn.disabled = true;
+    setMood('gaming', 0);
+    setTimeout(function(){
+      verdictI = (verdictI + 1) % VERDICTS.length;
+      var d = VERDICTS[verdictI];
+      document.getElementById('coachVerdict').textContent = d.v;
+      document.getElementById('coachWhy').textContent = d.why;
+      var list = document.getElementById('recList');
+      list.innerHTML = d.recs.map(function(r){
+        return '<li class="rec"><span class="chg">' + r[0] + '</span><span class="gain">' + r[1] + '</span><span class="conf ' + r[2] + '">' + (r[2] === 'high' ? 'high' : r[2] === 'med' ? 'medium' : 'keep') + '</span></li>';
+      }).join('');
+      btn.disabled = false;
+      btn.innerHTML = '<svg><use href="#i-gamepad"/></svg>Run a 90s A/B test';
+      toast('A/B complete', 'Distributions compared, n=312 frames. Verdict: ' + d.v.replace('.', '') + '. Raw chart saved to the session.');
+    }, 2400);
+  };
+  window.coachApply = function(){
+    setMood('happy', 3000);
+    toast('Settings queued','3 in-game changes will be written with a backup of the config. Windows-side ones apply now. One undo for the whole lot.');
+  };
+
+  /* ---------- jump from the titlebar segments into the new sections ---------- */
+  window.coachJump = function(btn){
+    var sec = btn.getAttribute('data-mode-tab');
+    var hero = document.getElementById('heroTabs');
+    if (!hero) return;
+    var target = hero.querySelector('button[data-sec="' + sec + '"]');
+    if (target) target.click();
+    var content = document.getElementById('content');
+    if (content) content.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  /* ---------- weekly report ---------- */
+  window.weeklyReport = function(){
+    setMood('thinking', 3000);
+    toast('Weekly report', 'This week: 41.9 GB reclaimed · 2 drifts repaired · 1 tweak auto-reverted (it slowed boot 9%).');
+    setTimeout(function(){
+      toast('Drift repaired', 'Windows Update re-enabled 2 items you disabled. I put them back and told you who did it.');
+    }, 2200);
+    setTimeout(function(){
+      toast('Auto revert', 'A startup tweak made boot slower on your machine. Guardian took it out before you noticed.');
+      setMood('happy', 2400);
+    }, 4400);
+  };
 
   /* ---------- keep the segmented rail pinned correctly on load ---------- */
   window.addEventListener('load', resizePill);
