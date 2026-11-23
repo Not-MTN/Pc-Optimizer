@@ -111,9 +111,11 @@ begin
     DelTree(ExpandConstant('{localappdata}\Keel'), True, True, True);
 end;
 
-; Close a running Keel before replacing its exe. Inno's CloseApplications would
-; do this too, but not with a graceful window close, and Keel's journal wants one.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+// Close a running Keel before replacing its exe. Inno's CloseApplications would
+// do this too, but not with a graceful window close, and Keel's journal wants
+// one. (Pascal comments use // or { }; the semicolon form above sits outside a
+// routine and confuses the parser.)
 var
   ResultCode: Integer;
 begin
