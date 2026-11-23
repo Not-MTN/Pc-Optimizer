@@ -32,6 +32,7 @@ The console is a reference client for the same JSON the WinUI shell will consume
 
 | Path | What it is |
 |---|---|
+| [`WINDOWS.md`](WINDOWS.md) | **how to run it on your actual PC** — the four steps from simulated to real, with the expected output at each one |
 | [`engine/`](engine) | **The app + the Guardian engine** — safety core (journal, preflight, snapshots, recovery, drift), checkup, cleaner with restorable vault, benchmark, ad/tracker blocker, recipes, event feed, Sens Lab, and the stdlib HTTP bridge + dark console. Python reference (308 passing tests), written to be ported to Rust 1:1 |
 
 ```bash

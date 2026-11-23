@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (308 tests, all passing)
+## What works today (335 tests, 11 of which need real Windows)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -138,6 +138,14 @@ the console is a reference client, not a toy.
 | An unparseable sentence is refused and says what it could not read | `test_unknown_sentence_is_refused_with_the_grammar` |
 | Panic reverts everything in effect and turns the blocker off | `test_bridge_boot_status_and_panic`, `test_panic_is_recorded_as_critical` |
 | A broken journal chain forces read-only, never a "repair" | `test_a_broken_journal_forces_read_only` |
+| Every catalog address has a **Windows mapping or a documented refusal** | `test_every_catalog_address_has_a_mapping_or_a_documented_refusal` |
+| A registry address names its value, not just its key | `test_smb1_reads_the_named_value_not_the_key` |
+| `"required"` translates to the native number, both ways | `test_telemetry_translates_required_to_the_native_level` |
+| A service's *description* cannot flip its start type | `test_disabled_is_not_confused_with_auto_start` |
+| An OEM power plan is reported as OEM, never as "balanced" | `test_an_oem_power_scheme_is_reported_as_unknown_not_as_balanced` |
+| An unelevated shell produces a privilege message, not a mystery | `test_a_denied_write_explains_the_privilege_problem` |
+| Display writes refuse until verified on hardware | `test_display_writes_are_refused_until_verified` |
+| The real registry/sc.exe/schtasks/powercfg paths are checked **on Windows** | `test_real_windows.py` (11 tests, skipped here) |
 
 ## Architecture
 
@@ -191,6 +199,7 @@ catalog/tweaks.json ──► Catalog ──► Preflight ──► PLAN (read-o
 | `pco_engine/drivers.py` | driver inventory graded from local crash history, blocks, rollback |
 | `pco_engine/nlrecipe.py` | a narrow, honest natural-language grammar that always previews |
 | `pco_engine/guard.py` | boot chain verification, read-only mode, panic, boot events |
+| `pco_engine/windows_backend.py` | the only file that touches Windows: an explicit address → API table, refusing anything it cannot map |
 | `pco_engine/address.py` | canonical addresses — one string per managed thing |
 | `pco_engine/catalog.py` | tweak documents, validation, index |
 | `pco_engine/backend.py` | the only I/O seam + `FakeBackend` (and policy `pin()`) |
@@ -234,7 +243,8 @@ Recorded because they are the argument for building the tests first:
 27. **A catalog entry pointed at the wrong key** — `security.smb1.disable` read and wrote `HKLM\SOFTWARE\Acme\Telemetry`, a leftover from an example. The title, the knowledge article and the risk rating were all correct; only the thing it actually changed was wrong. Every earlier test passed because the *demo backend* had been given a matching invented address. Found by asserting the real registry address after an apply, then auditing every entry's `effects`/`reactions` against its own title.
 28. **Workspace restore was dangerous by default** — `restore()` took `dry_run=False` while its docstring promised a preview. Six programs would have launched on the first click. The default is now the safe direction, and the dangerous one has to be asked for.
 29. **Battery drain attribution dropped every process** — readings are negative while discharging, and the filter was `mw <= 0`, so the list was always just "(unattributed)". Then the residual bucket sorted *above* the real culprits. Both fixed; a named process now always outranks the remainder.
-30. **Backslashes in the console** — a JS string literal with `\` breaks the whole `<script>` block, which no Python test can see. Every console edit is followed by extracting the script and running `node --check`.
+30. **Backslashes in the console**
+31. **A service description could flip a start type** — the first `sc qc` parser searched the whole output for the word "disabled", so a service whose description reads *"...is not disabled"* was reported as disabled, and the app would then "fix" a running service back on. Now only the `START_TYPE` line is parsed, and a missing line is an error rather than a guess. Caught by a test written before the parser had ever run against `sc.exe`. — a JS string literal with `\` breaks the whole `<script>` block, which no Python test can see. Every console edit is followed by extracting the script and running `node --check`.
 
 ## Porting to Rust (the contract)
 
@@ -250,7 +260,11 @@ The checksum formula and the JSON keys are the two things that must not drift.
 
 ## Not built yet (deliberately)
 
-- `WindowsBackend` (registry/services/tasks/display/power) — needs a Windows machine; the reference `Backend` is the whole seam, so this is one file.
+- ~~`WindowsBackend`~~ — **now written** (`pco_engine/windows_backend.py`): registry,
+  services, tasks, power plans and files, with an explicit address table instead of
+  guessing. Its mapping logic is tested on every OS; the real calls are tested by
+  CI on `windows-latest`. The display family stays refused until it is verified on
+  hardware. See `WINDOWS.md`.
 - The DNS resolver itself (this repo has the decision engine; the resolver needs Windows NRPT).
 - The Rust port and the WinUI 3 shell.
 - Widgets, wallpaper renderer, theme application to the real shell (the governor and

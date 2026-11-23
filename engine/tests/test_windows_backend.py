@@ -1,0 +1,325 @@
+"""The Windows backend's mapping logic, tested on Linux.
+
+The point of this file: every dangerous decision a real Windows backend makes —
+which registry value it writes, what it translates ``"required"`` to, whether it
+refuses an address it does not know — is exercised here, on every platform, on
+every commit. Only the final winreg/subprocess call is left to windows-latest.
+
+That split is the honest one: the thin adapter can only be wrong in ways the
+installer cannot recover from, and the thick part can be wrong in ways that
+change a user's machine.
+"""
+from __future__ import annotations
+
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from pco_engine.backend import BackendError  # noqa: E402
+from pco_engine.catalog import Catalog  # noqa: E402
+from pco_engine.windows_backend import (  # noqa: E402
+    COMMANDS, HKLM, REGISTRY, UNSERVICED, WinregRegistry, WindowsBackend,
+    parse_registry,
+)
+
+CATALOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "catalog")
+
+
+# ------------------------------------------------------------------- doubles
+class FakeRegistry:
+    """Five methods, an in-memory tree, and a record of every write."""
+
+    def __init__(self, initial: dict | None = None) -> None:
+        # (hive, path, name) -> (value, kind)
+        self.data: dict[tuple[str, str, str], tuple[object, int]] = dict(initial or {})
+        self.writes: list[tuple[str, str, str, object, int]] = []
+        self.fail_on_set: dict[str, str] = {}
+
+    def get(self, hive, path, name):
+        return self.data.get((hive, path, name))
+
+    def set(self, hive, path, name, value, kind):
+        if path in self.fail_on_set:
+            raise BackendError(self.fail_on_set[path])
+        self.data[(hive, path, name)] = (value, kind)
+        self.writes.append((hive, path, name, value, kind))
+
+    def delete(self, hive, path, name):
+        self.data.pop((hive, path, name), None)
+
+    def enum_values(self, hive, path):
+        return [n for (h, p, n) in self.data if h == hive and p == path]
+
+    def enum_keys(self, hive, path):
+        return []
+
+
+class FakeRunner:
+    """A console-tool runner that answers from a script, not from Windows."""
+
+    def __init__(self, responses: dict[str, tuple[int, str]] | None = None) -> None:
+        self.responses = responses or {}
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str]) -> tuple[int, str]:
+        self.calls.append(list(argv))
+        key = " ".join(argv[:2])
+        if key in self.responses:
+            return self.responses[key]
+        # default: success with empty output
+        return 0, ""
+
+
+def backend(reg=None, runner=None, **kw) -> WindowsBackend:
+    return WindowsBackend(registry=reg or FakeRegistry(), runner=runner or FakeRunner(),
+                          **kw)
+
+
+# ------------------------------------------------ the table must be complete
+def test_every_catalog_address_has_a_mapping_or_a_documented_refusal():
+    """A tweak that cannot reach its address must say so *before* the UI offers it.
+
+    This is the test that stops the next `security.smb1.disable` bug: an address
+    with no entry here would fail at apply time, on a user's machine, after the
+    journal had already recorded intent.
+    """
+    catalog = Catalog.load_dir(CATALOG_DIR)
+    unmapped = []
+    for tweak in catalog.all():
+        for address in tweak.addresses:
+            known = (address in REGISTRY
+                     or address in COMMANDS
+                     or address in UNSERVICED
+                     or address.startswith(("service:", "display:", "file:")))
+            if not known:
+                unmapped.append((tweak.id, address))
+    assert not unmapped, (
+        "these catalog addresses have no Windows mapping and would fail on a "
+        f"real machine: {unmapped}")
+
+
+def test_a_documented_refusal_names_what_is_missing():
+    for address, why in UNSERVICED.items():
+        assert len(why) > 30, f"{address}: a refusal must explain itself"
+        with pytest.raises(BackendError) as exc:
+            backend().read(address)
+        assert "not built" in str(exc.value) or "needs" in str(exc.value)
+
+
+def test_an_unknown_address_is_refused_not_guessed():
+    with pytest.raises(BackendError) as exc:
+        backend().read("registry:hklm\\software\\made\\up")
+    assert "no mapping" in str(exc.value)
+
+    # an address family this build does not service at all
+    with pytest.raises(BackendError) as exc:
+        backend().read("hardware:gpu.temperature")
+    assert "no mapping" in str(exc.value)
+
+
+def test_a_service_that_does_not_exist_does_not_look_like_success():
+    """Any name can be a service *shape*; only sc.exe knows if it exists."""
+    runner = FakeRunner({"sc.exe qc": (1060, "The specified service does not exist")})
+    with pytest.raises(BackendError) as exc:
+        backend(runner=runner).read("service:notreal.start_type")
+    assert "sc.exe qc failed" in str(exc.value)
+
+
+# ------------------------------------------------------------- the registry
+def test_smb1_reads_the_named_value_not_the_key():
+    """The catalog's effect targets a key; the value inside it is `SMB1`.
+
+    Writing a DWORD named ``(Default)`` here would look like success and change
+    nothing — the exact failure this product is built to make impossible.
+    """
+    reg = FakeRegistry({(HKLM, r"SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters",
+                         "SMB1"): (1, 4)})
+    be = backend(reg)
+    addr = "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters"
+
+    assert be.read(addr) == 1
+    be.write(addr, 0)
+
+    assert reg.writes == [(HKLM, r"SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters",
+                           "SMB1", 0, 4)]
+    assert be.read(addr) == 0
+
+
+def test_telemetry_translates_required_to_the_native_level():
+    """`required` is the app's word; Windows stores 1. Both directions must work."""
+    addr = "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection"
+    reg = FakeRegistry()
+    be = backend(reg)
+
+    be.write(addr, "required")
+    assert reg.data[(HKLM, r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
+                     "AllowTelemetry")] == (1, 4)
+
+    # and reading it back gives the app's word again, not a bare integer
+    assert be.read(addr) == "required"
+
+
+def test_telemetry_refuses_a_level_it_does_not_know():
+    addr = "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection"
+    with pytest.raises(BackendError) as exc:
+        backend().write(addr, "maximum")
+    assert "not a value this address understands" in str(exc.value)
+    assert "required" in str(exc.value), "the error must list what is accepted"
+
+
+def test_a_missing_registry_value_is_a_missing_address():
+    addr = "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters"
+    be = backend(FakeRegistry())          # nothing seeded
+    assert be.exists(addr) is False
+    with pytest.raises(BackendError) as exc:
+        be.read(addr)
+    assert "does not exist" in str(exc.value)
+
+
+def test_a_malformed_registry_address_says_how_it_should_look():
+    with pytest.raises(BackendError) as exc:
+        parse_registry("registry:hkey_local_machine\\software")
+    assert "hklm" in str(exc.value)
+
+
+def test_a_denied_write_explains_the_privilege_problem():
+    """The most common real failure is an unelevated shell, and it must not read
+    as a mysterious engine error."""
+    addr = "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters"
+    reg = FakeRegistry()
+    reg.fail_on_set[r"SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"] = (
+        "could not write HKLM\\...: access denied. Registry writes under HKLM need "
+        "an elevated shell.")
+    with pytest.raises(BackendError) as exc:
+        backend(reg).write(addr, 0)
+    assert "elevated" in str(exc.value)
+
+
+# ----------------------------------------------------------------- services
+def _svc_state(sc_line: str, reg=None, runner=None):
+    runner = runner or FakeRunner({"sc.exe qc": (0, sc_line)})
+    return backend(reg, runner).read("service:diagtrack.start_type")
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("START_TYPE         : 4   DISABLED", "disabled"),
+    ("START_TYPE         : 2   AUTO_START", "auto"),
+    ("START_TYPE         : 3   DEMAND_START", "manual"),
+    ("START_TYPE         : 2   AUTO_START (DELAYED)", "auto"),
+])
+def test_service_start_types_are_read_from_sc_output(line, expected):
+    assert _svc_state(line) == expected
+
+
+def test_disabled_is_not_confused_with_auto_start():
+    """'DISABLED' and 'AUTO_START' can both appear in one `sc qc` block (the
+    display name, the description). Checking words in any order is how you set a
+    telemetry service back to Automatic."""
+    line = (
+        "SERVICE_NAME: diagtrack\n"
+        "DISPLAY_NAME: Connected User Experiences and Telemetry\n"
+        "START_TYPE         : 2   AUTO_START\n"
+        "                        (service is not disabled)\n")
+    assert _svc_state(line) == "auto"
+
+
+def test_setting_a_service_to_disabled_uses_a_separate_argument():
+    runner = FakeRunner()
+    backend(runner=runner).write("service:diagtrack.start_type", "disabled")
+    assert runner.calls == [["sc.exe", "config", "diagtrack", "start=", "disabled"]]
+
+
+def test_service_write_refuses_a_word_sc_does_not_accept():
+    with pytest.raises(BackendError):
+        backend().write("service:diagtrack.start_type", "off")
+
+
+def test_a_failed_service_write_mentions_elevation():
+    runner = FakeRunner({"sc.exe config": (5, "Access is denied.")})
+    with pytest.raises(BackendError) as exc:
+        backend(runner=runner).write("service:sysmain.start_type", "disabled")
+    assert "elevated" in str(exc.value)
+
+
+# -------------------------------------------------------------------- tasks
+def test_task_state_is_read_from_schtasks():
+    addr = "task:\\microsoft\\office\\officebackgroundtaskhandler.state"
+    assert backend(runner=FakeRunner(
+        {"schtasks.exe /Query": (0, "TaskName: \\Microsoft\\Office\\OfficeBackgroundTaskHandler\nStatus: Ready")})
+    ).read(addr) == "ready"
+    assert backend(runner=FakeRunner(
+        {"schtasks.exe /Query": (0, "TaskName: x\nStatus: Disabled")})
+    ).read(addr) == "disabled"
+
+
+def test_disabling_a_task_and_reenabling_are_different_commands():
+    addr = "task:\\microsoft\\office\\officebackgroundtaskhandler.state"
+    be = backend()
+    be.write(addr, "disabled")
+    be.write(addr, "ready")
+    assert be._run.calls == [
+        ["schtasks.exe", "/Change", "/TN", r"\Microsoft\Office\OfficeBackgroundTaskHandler", "/Disable"],
+        ["schtasks.exe", "/Change", "/TN", r"\Microsoft\Office\OfficeBackgroundTaskHandler", "/Enable"],
+    ]
+
+
+# ------------------------------------------------------------- power scheme
+def test_power_scheme_is_named_from_its_guid():
+    runner = FakeRunner({"powercfg.exe /getactivescheme":
+                         (0, "Power Scheme GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (High performance)")})
+    assert backend(runner=runner).read("power:active_scheme") == "high"
+
+
+def test_an_oem_power_scheme_is_reported_as_unknown_not_as_balanced():
+    """OEMs replace the stock GUIDs. Calling their scheme 'balanced' would make
+    the checkup claim a fix that never happened."""
+    runner = FakeRunner({"powercfg.exe /getactivescheme":
+                         (0, "Power Scheme GUID: deadbeef-0000-0000-0000-000000000000  (ACME Performance)")})
+    value = backend(runner=runner).read("power:active_scheme")
+    assert value.startswith("oem:")
+    assert "balanced" not in value
+
+
+def test_power_scheme_write_uses_the_guid():
+    runner = FakeRunner()
+    backend(runner=runner).write("power:active_scheme", "high")
+    assert runner.calls == [[
+        "powercfg.exe", "/setactive", "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"]]
+
+
+# ------------------------------------------------------- what must not happen
+def test_display_writes_are_refused_until_verified():
+    """A refresh-rate change that is wrong can leave a screen black with no way
+    back. Until this path is verified on hardware it refuses, loudly."""
+    with pytest.raises(BackendError) as exc:
+        backend().write("display:primary.mode", {"hz": 165})
+    assert "not been verified" in str(exc.value)
+
+
+def test_window_enumeration_does_not_invent_a_list():
+    with pytest.raises(BackendError) as exc:
+        backend().keys("window:")
+    assert "nothing to capture" in str(exc.value)
+
+
+def test_drain_counters_return_nothing_rather_than_a_guess():
+    """Workspaces and Battery read these. An empty list flows through as 'nothing
+    measured' in the UI, which is the truth until the counters are wired."""
+    assert backend().keys("power:drain:") == []
+
+
+def test_capabilities_distinguish_certified_from_unverified():
+    caps = backend().capabilities()
+    assert "registry" in caps["certified"]
+    assert caps["display_enabled"] is False
+    assert "display" not in caps["unverified_on_hardware"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="winreg only exists on Windows")
+def test_the_real_registry_adapter_has_the_five_methods():
+    reg = WinregRegistry()
+    for name in ("get", "set", "delete", "enum_values", "enum_keys"):
+        assert hasattr(reg, name)

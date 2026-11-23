@@ -17,6 +17,7 @@ import argparse
 import json
 import mimetypes
 import os
+import sys
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,10 +25,28 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from . import __version__
 from .service import Service
 
 _LOCK = threading.Lock()
 _SVC: Service | None = None
+
+
+def _pick_backend() -> Any:
+    """Same rule as the CLI: real machine on Windows, simulated everywhere else.
+
+    `PCO_BACKEND=demo` forces the simulated machine, which is what every test and
+    the published preview use. `PCO_BACKEND=windows` refuses to start on a
+    non-Windows OS rather than pretending.
+    """
+    mode = os.environ.get("PCO_BACKEND", "auto")
+    if mode == "demo":
+        return None                      # Service builds its own FakeBackend
+    if mode == "windows" or (mode == "auto" and sys.platform == "win32"):
+        from .windows_backend import WindowsBackend
+        return WindowsBackend(
+            allow_display=os.environ.get("PCO_WINDOWS_DISPLAY") == "1")
+    return None
 
 
 def _service() -> Service:
@@ -39,7 +58,8 @@ def _service() -> Service:
             Path(__file__).resolve().parent.parent / "catalog")
         _SVC = Service(os.path.join(data, "pco.db"),
                        catalog_dir=catalog,
-                       vault_root=os.path.join(data, "vault"))
+                       vault_root=os.path.join(data, "vault"),
+                       backend=_pick_backend())
     return _SVC
 
 
@@ -135,7 +155,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(500, {"error": traceback.format_exc(limit=3)})
             return
         if path == "/api/health":
-            self._json(200, {"ok": True, "version": "0.2.0"})
+            self._json(200, {"ok": True, "version": __version__,
+                             "backend": ("windows" if os.environ.get("PCO_BACKEND") == "windows"
+                                         else "demo" if os.environ.get("PCO_BACKEND") == "demo"
+                                         else "auto")})
             return
         try:
             svc = _service()

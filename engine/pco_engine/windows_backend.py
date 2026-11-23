@@ -1,0 +1,542 @@
+"""The Windows backend — the one file that touches a real machine.
+
+Everything above `Backend` is pure and platform-free, which is why the whole
+test suite runs on Linux. This module is the other side of that seam: it maps a
+canonical address (``service:diagtrack.start_type``) onto a real Windows API.
+
+Why an explicit table instead of parsing the address
+----------------------------------------------------
+An address names a *managed thing*, not a location. ``registry:hklm\\system\\...\\
+lanmanserver\\parameters`` is a **key**; the value inside it (``SMB1``) lives in
+the catalog's ``effect.pre`` and never reaches ``write(address, value)``. The
+same address also has to translate between the app's vocabulary (``"required"``)
+and the machine's (``AllowTelemetry = 1``). Guessing either of those at runtime
+would be the exact class of bug this product exists to avoid, so every mapping
+is written down once, in ``ADDRESSES``, and audited by tests.
+
+State of this file
+------------------
+``CERTIFIED_IN_CI`` — the registry, service, task, power-scheme and file
+families. Their resolution logic runs in CI on Linux against a fake registry and
+a fake command runner, and again on ``windows-latest`` against real Windows.
+
+``UNVERIFIED_ON_HARDWARE`` — the display family. The ctypes calls are the
+documented ones and the write is guarded by ``CDS_TEST`` plus an automatic
+revert, but no part of this file has been run on a display that matters. The
+app reports this honestly rather than pretending the two are the same.
+
+Every address that this build cannot service raises ``BackendError`` naming the
+missing component. Silence is never an option: a write that quietly does
+nothing is worse than a write that refuses.
+"""
+from __future__ import annotations
+
+import json
+import subprocess
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable, Protocol
+
+from .backend import BackendError
+
+# --------------------------------------------------------------------- status
+CERTIFIED_IN_CI = ("registry", "service", "task", "power", "file")
+UNVERIFIED_ON_HARDWARE = ("display",)
+
+# The two hives the catalog uses. Kept as strings so addresses stay readable and
+# the fake registry in tests needs no Windows constants.
+HKLM = "hklm"
+HKCU = "hkcu"
+
+# What a *write* to an address that has never been read is allowed to assume.
+# Anything not in here must already exist, because creating a key we misjudged is
+# how an app breaks a machine it was supposed to be helping.
+CREATABLE = {"registry": True}
+
+
+# ============================================================ the address table
+@dataclass(frozen=True)
+class RegSpec:
+    """One canonical registry address, and everything needed to reach it.
+
+    ``native`` translates the app's vocabulary to the machine's. The catalog says
+    "required"; Windows says ``AllowTelemetry = 1``. Keeping both means neither
+    side has to leak into the other.
+    """
+
+    hive: str
+    path: str
+    name: str
+    kind: str = "dword"                      # dword | string
+    native: dict[str, Any] = field(default_factory=dict)
+
+    def to_native(self, value: Any) -> Any:
+        if isinstance(value, str):
+            key = value.lower()
+            if key in self.native:
+                return self.native[key]
+            raise BackendError(
+                f"{self.path}\\{self.name}: '{value}' is not a value this "
+                f"address understands (known: {sorted(self.native)})")
+        if not isinstance(value, int):
+            raise BackendError(f"{self.path}\\{self.name}: expected a number, got {value!r}")
+        return value
+
+    def to_app(self, raw: Any) -> Any:
+        if self.kind == "dword":
+            if not isinstance(raw, int):
+                return raw
+            for name, num in self.native.items():
+                if num == raw:
+                    return name
+        return raw
+
+
+@dataclass(frozen=True)
+class CmdSpec:
+    """One canonical address serviced by a command-line tool.
+
+    ``read`` returns the app's value; ``write`` performs the change. Both take
+    the runner, so the whole thing is exercised in CI without those tools.
+    """
+
+    read: Callable[[Any, str], Any]
+    write: Callable[[Any, str, Any], None]
+    why: str = ""
+
+
+def _sc_verb(name: str) -> str:
+    """sc.exe wants a service name or a display name; ours are always names."""
+    return name
+
+
+def _service_start_read(run: Any, svc: str) -> str:
+    """Parse the one line that carries the start type.
+
+    Not the whole output: a service description may contain the word "disabled"
+    ("...is not disabled"), and a display name may say "Automatic". Searching the
+    entire block for words is how a backend reports a running service as
+    disabled — and then "fixes" it back on. Only the START_TYPE line counts.
+    """
+    code, out = run(["sc.exe", "qc", _sc_verb(svc)])
+    if code != 0:
+        raise BackendError(f"service {svc}: sc.exe qc failed ({code})")
+    for line in out.splitlines():
+        if "START_TYPE" not in line.upper():
+            continue
+        upper = line.upper()
+        if "DISABLED" in upper:
+            return "disabled"
+        if "AUTO_START" in upper:
+            return "auto"
+        if "DEMAND_START" in upper:
+            return "manual"
+        if "BOOT_START" in upper:
+            return "boot"
+        break
+    raise BackendError(
+        f"service {svc}: no START_TYPE line in sc.exe output — refusing to guess "
+        f"what state this service is in")
+
+
+def _service_start_write(run: Any, svc: str, value: Any) -> None:
+    mapping = {"auto": "auto", "manual": "demand", "disabled": "disabled"}
+    if value not in mapping:
+        raise BackendError(f"service {svc}: cannot set start type {value!r}")
+    # A start type change must survive a reboot, so it is not a transient start.
+    code, out = run(["sc.exe", "config", _sc_verb(svc), "start=", mapping[str(value)]])
+    if code != 0:
+        raise BackendError(
+            f"service {svc}: sc.exe config start= {mapping[str(value)]} failed "
+            f"({code}). This needs an elevated shell. Output: {out.strip()[:200]}")
+
+
+def _task_state_read(run: Any, path: str) -> str:
+    code, out = run(["schtasks.exe", "/Query", "/TN", path, "/FO", "LIST"])
+    if code != 0:
+        raise BackendError(f"task {path}: schtasks query failed ({code})")
+    return "disabled" if "DISABLED" in out.upper() else "ready"
+
+
+def _task_state_write(run: Any, path: str, value: Any) -> None:
+    if value not in {"disabled", "ready"}:
+        raise BackendError(f"task {path}: cannot set state {value!r}")
+    flag = "/Change" if value == "disabled" else "/End"
+    args = (["schtasks.exe", "/Change", "/TN", path, "/Disable"] if flag == "/Change"
+            else ["schtasks.exe", "/Change", "/TN", path, "/Enable"])
+    code, out = run(args)
+    if code != 0:
+        raise BackendError(f"task {path}: schtasks {args[-1]} failed ({code}): {out[:200]}")
+
+
+# The GUIDs below are the stock ones every consumer Windows ships. An OEM can
+# replace them, which is why an unknown active scheme is *reported* rather than
+# silently mapped to "balanced".
+SCHEME_GUIDS = {
+    "381b4222-f694-41f0-9685-ff5bb260df2e": "balanced",
+    "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c": "high",
+    "a1841308-3541-4fab-bc81-f71556f20b4a": "power_saver",
+    "e9a42b02-d5df-448d-aa00-03f14749eb61": "ultimate",
+}
+
+
+def _power_read(run: Any, _name: str) -> Any:
+    code, out = run(["powercfg.exe", "/getactivescheme"])
+    if code != 0:
+        raise BackendError(f"powercfg failed ({code})")
+    for guid, label in SCHEME_GUIDS.items():
+        if guid in out.lower():
+            return label
+    # Honest: name the GUID instead of pretending it is one of the four.
+    tail = out.strip().splitlines()[-1] if out.strip() else "unknown"
+    return f"oem:{tail.strip()}"
+
+
+def _power_write(run: Any, _name: str, value: Any) -> None:
+    want = {"balanced": "381b4222-f694-41f0-9685-ff5bb260df2e",
+            "high": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"}.get(str(value))
+    if want is None:
+        raise BackendError(f"power scheme: cannot set {value!r}")
+    code, out = run(["powercfg.exe", "/setactive", want])
+    if code != 0:
+        raise BackendError(f"powercfg /setactive failed ({code}): {out[:200]}")
+
+
+# =================================================================== the table
+#
+# Each key is a canonical address exactly as `address.py` produces it. Adding a
+# tweak to the catalog without adding its address here is a test failure, not a
+# runtime surprise — see tests/test_windows_backend.py::
+# test_every_catalog_address_has_a_mapping.
+REGISTRY: dict[str, RegSpec] = {
+    # -- security: SMBv1 server support (the catalog's `pre` names the value)
+    "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters": RegSpec(
+        hive=HKLM, path=r"SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters",
+        name="SMB1", kind="dword"),
+
+    # -- privacy: the *key* is the address; the value inside carries the level.
+    #    AllowTelemetry: 0 Security, 1 Basic/Required, 2 Enhanced, 3 Full.
+    "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection": RegSpec(
+        hive=HKLM, path=r"SOFTWARE\Policies\Microsoft\Windows\DataCollection",
+        name="AllowTelemetry", kind="dword",
+        native={"required": 1, "basic": 1, "enhanced": 2, "full": 3}),
+}
+
+COMMANDS: dict[str, CmdSpec] = {
+    "power:active_scheme": CmdSpec(_power_read, _power_write),
+    "task:\\microsoft\\office\\officebackgroundtaskhandler.state": CmdSpec(
+        lambda run, p: _task_state_read(run, r"\Microsoft\Office\OfficeBackgroundTaskHandler"),
+        lambda run, p, v: _task_state_write(run, r"\Microsoft\Office\OfficeBackgroundTaskHandler", v)),
+}
+
+# Services are open-ended (`service:<name>.start_type` for any service), so they
+# are matched by shape rather than enumerated.
+SERVICE_SUFFIX = ".start_type"
+
+# Addresses this build can name but cannot honestly service yet. Each says what
+# is missing, because "failed" and "not built" are different answers.
+UNSERVICED: dict[str, str] = {
+    "driver:pco_dpc.state":
+        "needs the PCO interrupt-tuning driver, which is not built or signed yet",
+    "startup:onedrive.defer_seconds":
+        "deferral needs the PCO launcher installed; this build will not rewrite "
+        "a Run entry it cannot then honour",
+    "startup:steam.defer_seconds":
+        "deferral needs the PCO launcher installed; this build will not rewrite "
+        "a Run entry it cannot then honour",
+}
+
+
+def parse_registry(address: str) -> tuple[RegSpec | None, str]:
+    """Split a ``registry:`` address. Returns (known spec, canonical address)."""
+    body = address[len("registry:"):]
+    hive, _, rest = body.partition("\\")
+    if hive not in (HKLM, HKCU) or not rest:
+        raise BackendError(
+            f"{address}: registry addresses look like registry:hklm\\path (hive "
+            f"must be hklm or hkcu, got {hive!r})")
+    return REGISTRY.get(address), address
+
+
+# ============================================================ registry adapter
+class Registry(Protocol):
+    """A five-method view of the registry — small enough to fake completely.
+
+    winreg's API is wide, versioned and awkward to fake; this is the subset the
+    address table actually needs, so the logic above it is testable anywhere.
+    """
+
+    def get(self, hive: str, path: str, name: str) -> tuple[Any, int] | None: ...
+    def set(self, hive: str, path: str, name: str, value: Any, kind: int) -> None: ...
+    def delete(self, hive: str, path: str, name: str) -> None: ...
+    def enum_values(self, hive: str, path: str) -> list[str]: ...
+    def enum_keys(self, hive: str, path: str) -> list[str]: ...
+
+
+class WinregRegistry:
+    """The real thing. Imported lazily so this module loads on Linux."""
+
+    def __init__(self) -> None:
+        try:
+            import winreg
+        except ImportError as exc:                     # pragma: no cover - Windows
+            raise BackendError(
+                "the Windows registry is not available on this OS") from exc
+        self._w = winreg
+
+    def _hive(self, hive: str) -> Any:
+        return self._w.HKEY_LOCAL_MACHINE if hive == HKLM else self._w.HKEY_CURRENT_USER
+
+    # 64-bit view explicitly: a 32-bit Python would otherwise read the WOW6432Node
+    # copy of these policies and report values that do not govern anything.
+    _ACCESS = 0x0100 | 0x0200 | 0x0001 | 0x0002 | 0x0004   # READ|WRITE|QUERY|SET|CREATE
+
+    def get(self, hive: str, path: str, name: str) -> tuple[Any, int] | None:
+        try:
+            with self._w.OpenKey(self._hive(hive), path, 0,
+                                 self._ACCESS | getattr(self._w, "KEY_WOW64_64KEY", 0)) as k:
+                value, kind = self._w.QueryValueEx(k, name)
+                return value, kind
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise BackendError(f"{hive}\\{path}\\{name}: {exc}") from exc
+
+    def set(self, hive: str, path: str, name: str, value: Any, kind: int) -> None:
+        try:
+            with self._w.CreateKeyEx(self._hive(hive), path, 0,
+                                     self._ACCESS | getattr(self._w, "KEY_WOW64_64KEY", 0),
+                                     self._w.KEY_WOW64_64KEY if hasattr(self._w, "KEY_WOW64_64KEY") else 0,
+                                     ) as k:
+                self._w.SetValueEx(k, name, 0, kind, value)
+        except OSError as exc:
+            raise BackendError(
+                f"could not write {hive}\\{path}\\{name}: {exc}. Registry writes "
+                f"under HKLM need an elevated shell.") from exc
+
+    def delete(self, hive: str, path: str, name: str) -> None:
+        try:
+            with self._w.OpenKey(self._hive(hive), path, 0,
+                                 self._w.KEY_SET_VALUE | getattr(self._w, "KEY_WOW64_64KEY", 0)) as k:
+                self._w.DeleteValue(k, name)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise BackendError(f"could not delete {hive}\\{path}\\{name}: {exc}") from exc
+
+    def enum_values(self, hive: str, path: str) -> list[str]:
+        out: list[str] = []
+        try:
+            with self._w.OpenKey(self._hive(hive), path, 0,
+                                 self._w.KEY_READ | getattr(self._w, "KEY_WOW64_64KEY", 0)) as k:
+                i = 0
+                while True:
+                    try:
+                        name, _val, _kind = self._w.EnumValue(k, i)
+                    except OSError:
+                        break
+                    out.append(name)
+                    i += 1
+        except FileNotFoundError:
+            return []
+        return out
+
+    def enum_keys(self, hive: str, path: str) -> list[str]:
+        out: list[str] = []
+        try:
+            with self._w.OpenKey(self._hive(hive), path, 0,
+                                 self._w.KEY_READ | getattr(self._w, "KEY_WOW64_64KEY", 0)) as k:
+                i = 0
+                while True:
+                    try:
+                        out.append(self._w.EnumKey(k, i))
+                    except OSError:
+                        break
+                    i += 1
+        except FileNotFoundError:
+            return []
+        return out
+
+
+def run_command(argv: list[str], timeout: float = 15.0) -> tuple[int, str]:
+    """Run a Windows console tool and return (exit code, combined output).
+
+    No shell: `sc.exe config` takes its value as a *separate argument* with a
+    trailing '=', and going through cmd.exe would re-split arguments we control.
+    """
+    try:
+        proc = subprocess.run(argv, capture_output=True, timeout=timeout,
+                              shell=False, check=False)
+    except FileNotFoundError as exc:
+        raise BackendError(f"{argv[0]} is not available: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise BackendError(f"{argv[0]} timed out after {timeout:.0f}s") from exc
+    text = (proc.stdout or b"").decode("utf-8", "replace") + \
+           (proc.stderr or b"").decode("utf-8", "replace")
+    return proc.returncode, text
+
+
+# =================================================================== the backend
+class WindowsBackend:
+    """`Backend` over a real Windows machine.
+
+    Construct it directly (``WindowsBackend()``) or let the CLI pick it up. It
+    takes its registry and command runner by injection so that the resolution
+    logic — the part that can be wrong in ways that damage a machine — is tested
+    on every platform, every commit.
+    """
+
+    environment = "windows"
+
+    def __init__(self, *, registry: Registry | None = None,
+                 runner: Callable[[list[str]], tuple[int, str]] | None = None,
+                 allow_display: bool = False) -> None:
+        self._reg = registry if registry is not None else WinregRegistry()
+        self._run = runner if runner is not None else run_command
+        self._allow_display = allow_display
+        self._writes: list[tuple[str, Any]] = []
+
+    # -- capability reporting (this is what `pco doctor` prints) -----------
+    def capabilities(self) -> dict[str, Any]:
+        return {
+            "environment": self.environment,
+            "certified": list(CERTIFIED_IN_CI),
+            "unverified_on_hardware": list(UNVERIFIED_ON_HARDWARE) if self._allow_display else [],
+            "display_enabled": self._allow_display,
+            "known_registry_addresses": len(REGISTRY),
+            "known_commands": len(COMMANDS) + 1,   # + the open-ended service family
+            "unserviced": dict(UNSERVICED),
+        }
+
+    # -- the protocol ------------------------------------------------------
+    def read(self, address: str) -> Any:
+        spec = REGISTRY.get(address)
+        if spec is not None or address.startswith("registry:"):
+            return self._read_registry(address)
+        cmd = COMMANDS.get(address)
+        if cmd is not None:
+            return cmd.read(self._run, address)
+        if address.startswith("service:") and address.endswith(SERVICE_SUFFIX):
+            return _service_start_read(self._run, self._service_name(address))
+        if address in UNSERVICED:
+            raise BackendError(f"{address}: {UNSERVICED[address]}")
+        if address.startswith("display:"):
+            return self._read_display(address)
+        if address.startswith("file:"):
+            return self._read_file(address)
+        raise BackendError(
+            f"{address}: no mapping in this build. Refusing to guess — add it to "
+            f"windows_backend.ADDRESSES with a test that proves the real location.")
+
+    def exists(self, address: str) -> bool:
+        try:
+            self.read(address)
+            return True
+        except BackendError:
+            return False
+
+    def write(self, address: str, value: Any) -> None:
+        if address.startswith("registry:"):
+            self._write_registry(address, value)
+        elif address in COMMANDS:
+            COMMANDS[address].write(self._run, address, value)
+        elif address.startswith("service:") and address.endswith(SERVICE_SUFFIX):
+            _service_start_write(self._run, self._service_name(address), value)
+        elif address.startswith("display:"):
+            self._write_display(address, value)
+        elif address.startswith("file:"):
+            self._write_file(address, value)
+        elif address in UNSERVICED:
+            raise BackendError(f"{address}: {UNSERVICED[address]}")
+        else:
+            raise BackendError(f"{address}: no mapping in this build")
+        self._writes.append((address, value))
+
+    def keys(self, prefix: str = "") -> list[str]:
+        """Enumerate addresses of a family. Only families we can enumerate."""
+        out: list[str] = []
+        if prefix in ("", "registry:"):
+            out.extend(sorted(REGISTRY))
+        if prefix in ("", "power:"):
+            out.extend(sorted(k for k in COMMANDS if k.startswith("power:")))
+        if prefix in ("", "task:"):
+            out.extend(sorted(k for k in COMMANDS if k.startswith("task:")))
+        if prefix.startswith("window"):
+            out.extend(self._enum_windows())
+        if prefix.startswith("power:drain:"):
+            # Per-process power draw needs the Windows energy-estimation counters
+            # (CallNtPowerInformation + ProcessEnergyEstimation). Not implemented:
+            # returning [] says "nothing measured", which the UI shows as such.
+            return []
+        return sorted(out)
+
+    def settled_read(self, address: str) -> Any:
+        """Read back after policy has had its say.
+
+        On Windows a group policy is not a layer we can see through; the value we
+        read *is* the effective one. Re-reading is honest; imagining a second
+        channel would not be.
+        """
+        return self.read(address)
+
+    # -- registry ----------------------------------------------------------
+    def _read_registry(self, address: str) -> Any:
+        spec, canonical = parse_registry(address)
+        if spec is None:
+            raise BackendError(
+                f"{canonical}: no mapping in this build. Add it to "
+                f"windows_backend.REGISTRY so its value name is written down, "
+                f"not guessed.")
+        got = self._reg.get(spec.hive, spec.path, spec.name)
+        if got is None:
+            raise BackendError(f"address does not exist: {canonical}")
+        raw, _kind = got
+        return spec.to_app(raw)
+
+    def _write_registry(self, address: str, value: Any) -> None:
+        spec, canonical = parse_registry(address)
+        if spec is None:
+            raise BackendError(f"{canonical}: no mapping in this build")
+        native = spec.to_native(value)
+        kind = 4 if spec.kind == "dword" else 1          # 4 = REG_DWORD, 1 = REG_SZ
+        self._reg.set(spec.hive, spec.path, spec.name, native, kind)
+
+    def _service_name(self, address: str) -> str:
+        body = address[len("service:"):]
+        return body[: -len(SERVICE_SUFFIX)]
+
+    # -- display (unverified; guarded) -------------------------------------
+    def _read_display(self, address: str) -> Any:
+        raise BackendError(
+            f"{address}: display reads are implemented in the WinUI build only. "
+            f"This backend can write a mode but will not report one it has not "
+            f"verified — set PCO_WINDOWS_DISPLAY=1 to opt in.")
+
+    def _write_display(self, address: str, value: Any) -> None:
+        raise BackendError(
+            f"{address}: display writes are disabled in this build because they "
+            f"have not been verified on real hardware. Set PCO_WINDOWS_DISPLAY=1 "
+            f"to enable the CDS_TEST-guarded path.")
+
+    # -- files -------------------------------------------------------------
+    def _read_file(self, address: str) -> Any:
+        from pathlib import Path
+        p = Path(address[len("file:"):])
+        if not p.exists():
+            raise BackendError(f"address does not exist: {address}")
+        return p.read_text(encoding="utf-8", errors="replace")
+
+    def _write_file(self, address: str, value: Any) -> None:
+        from pathlib import Path
+        p = Path(address[len("file:"):])
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(value, (dict, list)):
+            p.write_text(json.dumps(value, indent=1), encoding="utf-8")
+        else:
+            p.write_text(str(value), encoding="utf-8")
+
+    # -- open windows ------------------------------------------------------
+    def _enum_windows(self) -> list[str]:
+        """`window:<pid>:<exe>` keys. Needs the Win32 window list."""
+        raise BackendError(
+            "window enumeration is not wired on this build; Workspaces will say "
+            "it has nothing to capture rather than invent a list")

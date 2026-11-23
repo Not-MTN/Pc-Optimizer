@@ -40,14 +40,37 @@ def _clock() -> int:
     return int(time.time() * 1000)
 
 
+def _windows_backend() -> Any:
+    """Imported lazily so this module stays importable on Linux."""
+    from .windows_backend import WindowsBackend
+    return WindowsBackend(allow_display=os.environ.get("PCO_WINDOWS_DISPLAY") == "1")
+
+
 def build(args) -> Engine:
     catalog = Catalog.load_dir(args.catalog)
-    if args.backend == "demo":
+    mode = getattr(args, "backend", "auto")
+    if mode == "demo":
         backend: Any = FakeBackend(DEMO_STATE)
+    elif mode == "windows":
+        try:
+            backend = _windows_backend()
+        except Exception as exc:      # noqa: BLE001 - the message is the feature
+            raise SystemExit(
+                f"--backend windows is not available here: {exc}\n"
+                f"This OS is {sys.platform}. Use --backend demo (simulated machine, "
+                f"identical engine) or run this on Windows 11.") from exc
+    elif mode == "auto":
+        # The honest default: the real machine when we are on one, the simulated
+        # machine everywhere else. Never silently write to a real machine because
+        # a flag was forgotten.
+        backend = _windows_backend() if sys.platform == "win32" else FakeBackend(DEMO_STATE)
     else:
         raise SystemExit(
-            "The real Windows backend lands in engine/pco_engine/win/\n"
-            "Until then use --backend demo, which runs the identical engine.")
+            f"unknown backend {mode!r} — use auto, demo or windows.\n"
+            "  auto    the real machine on Windows, the simulated one elsewhere "
+            "(default)\n"
+            "  demo    simulated machine, safe on every OS\n"
+            "  windows the real machine; refuses any address it cannot map")
     db = args.db or os.path.join(tempfile.gettempdir(), "pco-demo.db")
     if os.path.exists(db) and args.fresh:
         for suffix in ("", "-wal", "-shm"):
@@ -69,6 +92,75 @@ def out(obj: Any, as_json: bool, human: str | None = None) -> None:
 
 
 # --------------------------------------------------------------------- commands
+
+def cmd_doctor(eng: Engine, args) -> int:
+    """What this build can actually touch on *this* machine.
+
+    The one command that answers "is it safe to point this at my PC yet". It
+    reads nothing and writes nothing: it reports the backend, the mapping table,
+    and any address the catalog uses that this build cannot service.
+    """
+    caps = getattr(eng.backend, "capabilities", lambda: {
+        "environment": "simulated (FakeBackend)",
+        "certified": ["everything the demo machine models"],
+        "unverified_on_hardware": [],
+        "display_enabled": False,
+        "known_registry_addresses": 0,
+        "known_commands": 0,
+        "unserviced": {},
+    })()
+    # every address the catalog wants, and whether this backend claims it
+    covered, uncovered = [], []
+    for tweak in eng.catalog.all():
+        for address in tweak.addresses:
+            try:
+                eng.backend.read(address)
+                covered.append(address)
+            except Exception as exc:          # noqa: BLE001 - the reason is the point
+                uncovered.append((tweak.id, address, str(exc)))
+
+    raw = eng.backend.read
+    def _probe(address: str) -> str:
+        try:
+            raw(address)
+            return "readable"
+        except Exception as exc:              # noqa: BLE001
+            return str(exc)[:150]
+
+    smb1 = "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters"
+    payload = {
+        "backend": caps,
+        "catalog_addresses": len(covered) + len(uncovered),
+        "readable_now": len(covered),
+        "not_readable": [{"tweak": t, "address": a, "reason": r} for t, a, r in uncovered],
+        "smb1_probe": _probe(smb1),
+    }
+    lines = [
+        "PC Optimizer — doctor",
+        f"  backend        {caps.get('environment')}",
+        f"  display path   {'enabled' if caps.get('display_enabled') else 'refused until verified'}",
+        f"  catalog        {payload['catalog_addresses']} address(es), "
+        f"{payload['readable_now']} readable right now",
+    ]
+    if caps.get("unserviced"):
+        lines.append("  not built yet  (these will refuse, by name, never silently no-op)")
+        for address, why in caps["unserviced"].items():
+            lines.append(f"    · {address}\n      {why}")
+    if uncovered:
+        lines.append("  unreadable on this machine (the checkup will say so, not crash)")
+        for tweak_id, address, reason in uncovered:
+            lines.append(f"    · {tweak_id} → {address}\n      {reason}")
+    if eng.backend.__class__.__name__ == "FakeBackend":
+        lines.extend([
+            "",
+            "  This is the simulated machine. Every fix runs the identical engine,",
+            "  but nothing leaves the database. For the real thing:",
+            "      pco --backend windows doctor        (on Windows 11)",
+            "      pco --backend windows apply <tweak> (needs an elevated shell)",
+        ])
+    out(payload, args.json, "\n".join(lines))
+    return 0
+
 
 def cmd_status(eng: Engine, args) -> int:
     managed = eng.managed()
@@ -226,7 +318,10 @@ def cmd_crash(eng: Engine, args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="pco", description="PC Optimizer Guardian (reference engine)")
-    p.add_argument("--backend", default="demo", help="demo | windows (windows not implemented yet)")
+    p.add_argument("--backend", default=os.environ.get("PCO_BACKEND", "auto"),
+                   choices=["auto", "demo", "windows"],
+                   help="auto (default): the real machine on Windows, the simulated "
+                        "one everywhere else")
     p.add_argument("--catalog", default=DEFAULT_CATALOG)
     p.add_argument("--db", default=None)
     p.add_argument("--json", action="store_true")
@@ -234,6 +329,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("status"); s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("doctor", help="what this build can touch on this machine")
+    s.set_defaults(fn=cmd_doctor)
     s = sub.add_parser("catalog")
     s.set_defaults(fn=lambda e, a: (out([t.as_dict() for t in e.catalog.all()], a.json,
                                         "\n".join(f"{t.id:<34} {t.tier}  {t.risk:<7} {t.title}"
