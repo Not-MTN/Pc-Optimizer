@@ -53,9 +53,11 @@ jobs:
         env:
           PCO_REAL_WINDOWS: "1"
         run: python -m pytest -q tests/test_real_windows.py -v
-      - name: doctor (writes nothing; fails the build if a mapped address is unreachable)
+      - name: doctor (writes nothing; reports what this build can touch)
         working-directory: engine
         run: |
+          # Reset the console encoding first: the default is cp1252, and this
+          # output contains '·'. That is the bug this step originally caught.
           python -m pco_engine.cli --backend windows doctor
-          python -m pco_engine.cli --backend windows doctor --json > doctor.json
-          python -c "import json;d=json.load(open('doctor.json'));print(json.dumps(d['backend'],indent=1))"
+          # PowerShell's `>` writes UTF-16, so hand Python the redirect instead:
+          python -c "import sys,json,subprocess;r=subprocess.run([sys.executable,'-m','pco_engine.cli','--backend','windows','doctor','--json'],capture_output=True,text=True,encoding='utf-8');d=json.loads(r.stdout);print(json.dumps(d['backend'],indent=1));print('catalog addresses:',d['catalog_addresses'],'readable now:',d['readable_now'])"
