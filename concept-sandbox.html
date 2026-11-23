@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PC Optimizer — Sandbox & Receipts</title>
+<style>
+  :root{
+    --accent:#7c9cff;--accent-soft:rgba(124,156,255,.16);
+    --ink:#e8edf7;--muted:#8b96ad;
+    --panel:rgba(17,21,31,.72);--panel-2:rgba(24,29,42,.7);
+    --stroke:rgba(255,255,255,.075);--stroke-2:rgba(255,255,255,.13);
+    --ok:#4ade80;--warn:#ffb454;--hot:#ff7a59;--teal:#4fd1c5;
+    --font:"Segoe UI Variable Display","Segoe UI",Inter,system-ui,sans-serif;
+    --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:var(--font);color:var(--ink);overflow:hidden;-webkit-font-smoothing:antialiased;
+    background:radial-gradient(1100px 700px at 12% 0%,rgba(124,156,255,.18),transparent 60%),
+               radial-gradient(900px 600px at 95% 15%,rgba(79,209,197,.14),transparent 60%),
+               radial-gradient(800px 600px at 50% 115%,rgba(255,122,89,.12),transparent 60%),
+               linear-gradient(160deg,#0a0f1a,#0b1220 45%,#0a0d16)}
+  body::after{content:"";position:fixed;inset:0;background-image:radial-gradient(rgba(255,255,255,.045) 1px,transparent 1px);background-size:26px 26px;mask-image:radial-gradient(ellipse at 50% 30%,#000 20%,transparent 75%);pointer-events:none}
+
+  .window{
+    position:absolute;inset:40px 56px;max-width:1500px;margin:0 auto;display:flex;flex-direction:column;
+    border-radius:18px;border:1px solid var(--stroke-2);overflow:hidden;z-index:2;
+    background:linear-gradient(180deg,rgba(15,19,29,.86),rgba(10,13,21,.9));
+    box-shadow:0 40px 120px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.06);
+    backdrop-filter:blur(26px) saturate(130%);
+  }
+  .titlebar{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid var(--stroke);flex:0 0 auto;background:rgba(255,255,255,.02)}
+  .caps{display:flex;gap:8px}.cap{width:11px;height:11px;border-radius:50%}
+  .cap.r{background:#ff5f57}.cap.y{background:#febc2e}.cap.g{background:#28c840}
+  .tb-title{font-size:12.5px;color:var(--muted)}.tb-title b{color:var(--ink);font-weight:600}
+  .spacer{flex:1}
+  .modeswitch{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}
+  .modeswitch .lbl{color:var(--muted)}
+  .modeswitch .opt{color:var(--ink);font-weight:600}
+  .mini-switch{width:38px;height:21px;border-radius:99px;background:rgba(255,255,255,.13);position:relative;cursor:pointer;transition:.25s;border:1px solid var(--stroke-2)}
+  .mini-switch::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#cfd8ea;transition:.25s cubic-bezier(.3,1.4,.4,1)}
+  .mini-switch.on{background:rgba(79,209,197,.3);border-color:rgba(79,209,197,.55)}
+  .mini-switch.on::after{left:19px;background:var(--teal);box-shadow:0 0 10px var(--teal)}
+
+  .body{display:flex;min-height:0;flex:1}
+  .rail{width:58px;flex:0 0 auto;border-right:1px solid var(--stroke);display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 0;background:rgba(0,0,0,.16)}
+  .rail .logo{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:linear-gradient(145deg,var(--teal),#2f7fd6);color:#04121a;margin-bottom:6px;box-shadow:0 8px 22px rgba(79,209,197,.3)}
+  .rbtn{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;color:var(--muted);border:1px solid transparent;cursor:pointer;transition:.18s;background:transparent}
+  .rbtn:hover{color:var(--ink);background:rgba(255,255,255,.06)}
+  .rbtn.on{color:var(--accent);background:var(--accent-soft);border-color:rgba(124,156,255,.3);position:relative}
+  .rbtn.on::before{content:"";position:absolute;left:-11px;top:11px;bottom:11px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+  .rbtn svg{width:19px;height:19px}
+
+  .content{flex:1;min-width:0;overflow-y:auto;padding:18px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.18) transparent}
+  .content::-webkit-scrollbar{width:9px}
+  .content::-webkit-scrollbar-thumb{background:rgba(255,255,255,.14);border-radius:9px;border:2px solid transparent;background-clip:padding-box}
+
+  h1{margin:2px 2px 4px;font-size:19px;font-weight:650;letter-spacing:-.2px}
+  .lede{margin:0 2px 16px;color:var(--muted);font-size:12.5px;max-width:70ch}
+
+  .grid{display:grid;grid-template-columns:1.05fr .95fr;gap:14px;align-items:start}
+  @media (max-width:1150px){.grid{grid-template-columns:1fr}}
+  .card{background:linear-gradient(180deg,var(--panel-2),var(--panel));border:1px solid var(--stroke);border-radius:15px;padding:15px;position:relative;overflow:hidden}
+  .card h2{margin:0;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:8px}
+  .card h2 svg{width:15px;height:15px;color:var(--accent)}
+  .micro{margin-left:auto;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}
+  .sub{font-size:11.5px;color:var(--muted);line-height:1.5;margin-top:6px}
+  b.hl{color:#e9eefb;font-weight:600}
+
+  /* drop zone */
+  .dropzone{
+    margin-top:12px;border:1.5px dashed rgba(124,156,255,.35);border-radius:12px;padding:16px;text-align:center;
+    background:radial-gradient(70% 120% at 50% 0%,rgba(124,156,255,.10),transparent 70%);
+    transition:.2s;cursor:pointer;
+  }
+  .dropzone:hover{border-color:rgba(124,156,255,.6);background:radial-gradient(70% 120% at 50% 0%,rgba(124,156,255,.16),transparent 70%)}
+  .dropzone .icon{width:34px;height:34px;border-radius:10px;margin:0 auto 8px;display:grid;place-items:center;background:rgba(124,156,255,.14);border:1px solid rgba(124,156,255,.3);color:var(--accent)}
+  .dropzone .icon svg{width:17px;height:17px}
+  .dropzone .dz-title{font-size:12px;font-weight:600}
+  .dropzone .dz-sub{font-size:10.5px;color:var(--muted);margin-top:3px}
+  .picker{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+  .pick{font:600 10px var(--font);color:#cbd5e8;background:rgba(255,255,255,.05);border:1px solid var(--stroke-2);border-radius:7px;padding:6px 9px;cursor:pointer;transition:.18s}
+  .pick:hover{background:rgba(124,156,255,.14);border-color:rgba(124,156,255,.4);color:#fff}
+  .pick.on{background:rgba(124,156,255,.18);border-color:rgba(124,156,255,.55);color:#fff}
+
+  .btn{border:0;border-radius:9px;padding:9px 14px;font:600 11px var(--font);cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:.18s}
+  .btn svg{width:13px;height:13px}
+  .btn.primary{background:linear-gradient(180deg,var(--accent),#5b7be0);color:#060a14;box-shadow:0 6px 18px rgba(124,156,255,.25)}
+  .btn.ghost{background:rgba(255,255,255,.06);color:var(--ink);border:1px solid var(--stroke-2)}
+  .btn.danger{background:linear-gradient(180deg,#ff9a7a,#ff6f4f);color:#1c0a04;box-shadow:0 6px 18px rgba(255,122,89,.25)}
+  .btn:hover{transform:translateY(-1px);filter:brightness(1.06)}
+  .btn.full{width:100%;justify-content:center;margin-top:11px}
+
+  /* live capture */
+  .capture{margin-top:12px;border:1px solid var(--stroke);border-radius:11px;background:rgba(0,0,0,.28);overflow:hidden}
+  .capture .chead{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--stroke);font-size:11px;color:#cfd9ea}
+  .rec{width:7px;height:7px;border-radius:50%;background:var(--hot);box-shadow:0 0 9px var(--hot);animation:rec 1.2s ease-in-out infinite}
+  @keyframes rec{50%{opacity:.25}}
+  .capture .chead b{font-variant-numeric:tabular-nums;margin-left:auto;font-weight:600;color:#e7edf9}
+  .cap-stream{list-style:none;margin:0;padding:8px 10px;max-height:158px;overflow:hidden;display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:9.5px;color:#9fb0c8}
+  .cap-stream li{display:flex;gap:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:rowin .3s ease both}
+  @keyframes rowin{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .cap-stream .tag{flex:0 0 auto;border-radius:4px;padding:1px 4px;font-size:8px;letter-spacing:.04em}
+  .tag.fs{background:rgba(79,209,197,.14);color:var(--teal)}
+  .tag.rg{background:rgba(255,180,84,.14);color:var(--warn)}
+  .tag.sv{background:rgba(192,132,252,.16);color:#c084fc}
+  .tag.nw{background:rgba(124,156,255,.16);color:var(--accent)}
+  .tag.dr{background:rgba(255,122,89,.16);color:var(--hot)}
+  .cap-stream .path{overflow:hidden;text-overflow:ellipsis}
+
+  /* stats strip */
+  .strip{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:11px}
+  .mini-stat{background:rgba(255,255,255,.04);border:1px solid var(--stroke);border-radius:9px;padding:8px}
+  .mini-stat span{display:block;font-size:8.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
+  .mini-stat b{font-size:14px;font-weight:650;font-variant-numeric:tabular-nums}
+
+  /* receipt */
+  .receipt{margin-top:11px;border-radius:12px;border:1px solid rgba(79,209,197,.28);background:linear-gradient(180deg,rgba(79,209,197,.07),rgba(79,209,197,.02));overflow:hidden}
+  .receipt .rhead{display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px dashed rgba(79,209,197,.25)}
+  .rhead .ri{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:rgba(79,209,197,.16);color:var(--teal)}
+  .rhead .ri svg{width:15px;height:15px}
+  .rhead h3{margin:0;font-size:12px;font-weight:650}
+  .rhead .rsub{font-size:9.5px;color:var(--muted);margin-top:1px}
+  .rhead .seal{margin-left:auto;font-size:8.5px;color:var(--teal);border:1px solid rgba(79,209,197,.35);border-radius:999px;padding:3px 7px;letter-spacing:.05em;text-transform:uppercase}
+  .rlist{list-style:none;margin:0;padding:8px 13px 4px;font-size:10.5px}
+  .rlist li{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.055)}
+  .rlist li:last-child{border-bottom:0}
+  .rlist .rtag{font-size:8px;border-radius:4px;padding:1.5px 5px;letter-spacing:.04em;text-transform:uppercase;font-weight:600;flex:0 0 auto}
+  .rtag.autostart{background:rgba(255,180,84,.16);color:var(--warn)}
+  .rtag.driver{background:rgba(255,122,89,.18);color:var(--hot)}
+  .rtag.benign{background:rgba(74,222,128,.14);color:var(--ok)}
+  .rtag.net{background:rgba(124,156,255,.16);color:var(--accent)}
+  .rlist .rname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d5deee;font-family:var(--mono);font-size:9.5px}
+  .rlist .rsize{color:var(--muted);font-variant-numeric:tabular-nums;font-size:9.5px;white-space:nowrap}
+  .rfoot{display:flex;gap:8px;padding:10px 13px 12px;border-top:1px dashed rgba(255,255,255,.07)}
+  .rfoot .btn{flex:1;justify-content:center}
+  .verdict-line{padding:0 13px 2px;font-size:10.5px;color:#c8d3e6;line-height:1.5}
+  .verdict-line b{color:var(--teal)}
+
+  /* decision tree */
+  .tree{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+  .tree li{display:grid;grid-template-columns:16px 1fr auto;gap:9px;align-items:center;background:rgba(255,255,255,.035);border:1px solid var(--stroke);border-radius:9px;padding:8px 10px;font-size:10.5px;color:#c9d4e8;transition:.18s}
+  .tree li:hover{border-color:var(--stroke-2);background:rgba(124,156,255,.07)}
+  .tree .q{color:#e2e9f6;font-weight:600}
+  .tree .a{font-size:9px;color:var(--muted);white-space:nowrap}
+  .tree .dot{width:7px;height:7px;border-radius:50%}
+  .dot.blue{background:var(--accent);box-shadow:0 0 7px var(--accent)}
+  .dot.teal{background:var(--teal);box-shadow:0 0 7px var(--teal)}
+  .dot.warn{background:var(--warn);box-shadow:0 0 7px var(--warn)}
+  .dot.hot{background:var(--hot);box-shadow:0 0 7px var(--hot)}
+  .note{margin-top:9px;font-size:10px;color:var(--muted);line-height:1.5}
+  .note code{font-family:var(--mono);font-size:9.5px;color:#bfe9e3;background:rgba(0,0,0,.3);padding:1px 4px;border-radius:4px}
+
+  /* pro mode overrides */
+  body.pro{--accent:#4fd1c5;--accent-soft:rgba(79,209,197,.14);font-size:12px}
+  body.pro .window{background:linear-gradient(180deg,rgba(11,14,21,.96),rgba(8,10,16,.97));backdrop-filter:none}
+  body.pro .card{border-radius:8px;padding:12px;background:rgba(255,255,255,.022)}
+  body.pro .card h2{font-family:var(--mono);font-size:11px;letter-spacing:.02em;text-transform:uppercase}
+  body.pro .micro{font-family:var(--mono);letter-spacing:.06em}
+  body.pro h1{font-family:var(--mono);font-size:16px;letter-spacing:0}
+  body.pro .dropzone{border-style:solid;border-radius:6px;padding:12px;text-align:left}
+  body.pro .dropzone .icon{display:none}
+  body.pro .cap-stream{font-size:9px}
+  body.pro .receipt{border-radius:6px}
+  body.pro .btn{border-radius:5px}
+  body.pro .rail{background:rgba(0,0,0,.3)}
+  body.pro .rail .logo{border-radius:6px;background:linear-gradient(145deg,#4fd1c5,#1f6f66)}
+  body.pro .rbtn{border-radius:6px}
+  body.pro *{transition-duration:.08s!important}
+
+  .toasts{position:absolute;right:20px;bottom:22px;z-index:9;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none}
+  .toast{pointer-events:auto;min-width:220px;max-width:340px;background:rgba(16,21,31,.96);border:1px solid rgba(79,209,197,.3);border-radius:11px;padding:10px 12px;box-shadow:0 18px 44px rgba(0,0,0,.55);font-size:11px;color:#d6dff0;display:flex;align-items:center;gap:9px;animation:tin .34s cubic-bezier(.2,.9,.3,1.2) both}
+  .toast.out{animation:tout .3s ease both}
+  .toast svg{width:15px;height:15px;color:var(--teal);flex:0 0 auto}
+  .toast div{flex:1;line-height:1.35}.toast div small{display:block;color:var(--muted);font-size:9.5px;margin-top:2px}
+  @keyframes tin{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
+  @keyframes tout{to{opacity:0;transform:translateY(8px) scale(.98)}}
+  @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+  @media (max-width:760px){.window{inset:10px;border-radius:14px}.rail{display:none}.strip{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.2-3 7.4-7 9.5-4-2.1-7-5.3-7-9.5V6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2.5L4.5 14H11l-1 7.5L19.5 10H13z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15.8 15.8L21 21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 015.5 5h3.2l2 2.2H18a2.5 2.5 0 012.5 2.5v6.8A2.5 2.5 0 0118 19H5.5A2.5 2.5 0 013 16.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7.2 9.5l2.6 2.5-2.6 2.5M12.4 15h4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 10.5V7.8a4 4 0 018 0v2.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="15.4" r="1.4" fill="currentColor"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8h5V7M6.8 7l.9 12.2h8.6L17.2 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4.5h10l4 4v11H5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 4.5v5h6v-5M8.5 19.5v-5h7v5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M5 12h9.5a4.5 4.5 0 010 9H12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M9 8l-4 4 4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 3l8 4.2v9.6L12 21l-8-4.2V7.2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4 7.2l8 4.3 8-4.3M12 11.5V21" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+</defs></svg>
+
+<section class="window">
+  <header class="titlebar">
+    <div class="caps"><span class="cap r"></span><span class="cap y"></span><span class="cap g"></span></div>
+    <div class="tb-title"><b>PC Optimizer</b> · Sandbox &amp; Receipts · concept</div>
+    <div class="spacer"></div>
+    <div class="modeswitch">
+      <span class="lbl">Mood</span>
+      <span class="opt" id="moodCasual">Casual</span>
+      <div class="mini-switch" id="moodSwitch" role="switch" aria-checked="false" tabindex="0" onclick="toggleMood(this)"></div>
+      <span class="lbl" id="moodPro">Pro</span>
+    </div>
+  </header>
+
+  <div class="body">
+    <nav class="rail" aria-label="Sections">
+      <div class="logo"><svg style="width:21px;height:21px"><use href="#i-bolt"/></svg></div>
+      <button class="rbtn" type="button" aria-label="Overview"><svg><use href="#i-sparkle"/></svg></button>
+      <button class="rbtn" type="button" aria-label="Guardian"><svg><use href="#i-shield"/></svg></button>
+      <button class="rbtn on" type="button" aria-label="Sandbox"><svg><use href="#i-box"/></svg></button>
+      <button class="rbtn" type="button" aria-label="Files"><svg><use href="#i-folder"/></svg></button>
+      <button class="rbtn" type="button" aria-label="Commands"><svg><use href="#i-terminal"/></svg></button>
+      <div class="spacer"></div>
+      <button class="rbtn" type="button" aria-label="Settings" style="margin-bottom:6px"><svg><use href="#i-gear"/></svg></button>
+    </nav>
+
+    <main class="content">
+      <h1>Run it, watch it, own it.</h1>
+      <p class="lede">Drop any installer or app here. I don't just contain it — I record <b class="hl">every file, registry key, service and endpoint</b> it touches, then hand you two buttons: keep it, or erase every trace. Watch mode needs no driver, no VM, no reboot.</p>
+
+      <div class="grid">
+        <!-- LEFT: capture -->
+        <section>
+          <article class="card">
+            <h2><svg><use href="#i-box"/></svg>Autopsy <span class="micro" id="capMode">watch · usn + etw</span></h2>
+            <div class="dropzone" id="dropzone" onclick="pickTarget()">
+              <div class="icon"><svg><use href="#i-save"/></svg></div>
+              <div class="dz-title" id="dzTitle">Drop an installer, or pick something to watch</div>
+              <div class="dz-sub" id="dzSub">nothing is executed until you confirm — this is a pre-flight, not a launch</div>
+              <div class="picker">
+                <button class="pick" type="button" data-t="setup.exe" onclick="pick(this,event)">setup.exe</button>
+                <button class="pick" type="button" data-t="vendor-tool.msi" onclick="pick(this,event)">vendor-tool.msi</button>
+                <button class="pick" type="button" data-t="portable-app.exe" onclick="pick(this,event)">portable-app.exe</button>
+                <button class="pick" type="button" data-t="first-run" onclick="pick(this,event)">app first run</button>
+              </div>
+            </div>
+
+            <div class="capture" id="capture" aria-live="polite">
+              <div class="chead"><span class="rec" id="recDot" style="display:none"></span><span id="capState">idle · waiting for a target</span><b id="capClock">00:00</b></div>
+              <ul class="cap-stream" id="capStream"><li><span class="tag fs">—</span><span class="path">no session yet — every event will appear here as it happens</span></li></ul>
+            </div>
+
+            <div class="strip">
+              <div class="mini-stat"><span>files</span><b id="stFiles">0</b></div>
+              <div class="mini-stat"><span>registry</span><b id="stReg">0</b></div>
+              <div class="mini-stat"><span>services</span><b id="stSvc">0</b></div>
+              <div class="mini-stat"><span>endpoints</span><b id="stNet">0</b></div>
+            </div>
+
+            <button class="btn primary full" type="button" id="runBtn" onclick="runSession()"><svg><use href="#i-bolt"/></svg>Watch this installer</button>
+          </article>
+
+          <article class="card" style="margin-top:14px">
+            <h2><svg><use href="#i-shield"/></svg>Decision tree <span class="micro">what you actually meant</span></h2>
+            <ul class="tree">
+              <li><span class="dot blue"></span><span><span class="q">"What did this do?"</span> <span style="color:var(--muted)">→ autopsy</span></span><span class="a">observe, no cost</span></li>
+              <li><span class="dot teal"></span><span><span class="q">"Run this sketchy exe"</span> <span style="color:var(--muted)">→ Windows Sandbox</span></span><span class="a">Pro · 1 click</span></li>
+              <li><span class="dot warn"></span><span><span class="q">"Don't touch my system"</span> <span style="color:var(--muted)">→ virtual profile</span></span><span class="a">files + registry redirect</span></li>
+              <li><span class="dot hot"></span><span><span class="q">"No network at all"</span> <span style="color:var(--muted)">→ per-app WFP rule</span></span><span class="a">T2, auto-unloads</span></li>
+            </ul>
+            <p class="note">Every path above ends in a receipt. Erase is reverse-ordered: drivers and services first, then tasks, then keys (restored from the captured pre-state), then files — and anything that couldn't be removed is listed by exact path, never hidden behind "100% cleaned."</p>
+          </article>
+        </section>
+
+        <!-- RIGHT: report -->
+        <section>
+          <article class="card" id="reportCard">
+            <h2><svg><use href="#i-sparkle"/></svg>Receipt <span class="micro" id="receiptMeta">no session yet</span></h2>
+            <div class="sub" id="emptyNote">The receipt appears here when a watched session ends. It never says "100% cleaned" unless it verified every item — leftovers are listed by path.</div>
+
+            <div class="receipt" id="receipt" style="display:none">
+              <div class="rhead">
+                <div class="ri"><svg><use href="#i-check"/></svg></div>
+                <div>
+                  <h3 id="recTitle">setup.exe</h3>
+                  <div class="rsub" id="recSub">captured 01:42 · 6 groups · verified</div>
+                </div>
+                <span class="seal">sealed</span>
+              </div>
+              <div class="verdict-line" id="recVerdict">Clean-ish install. <b>2 autostart entries</b> and <b>1 scheduled task</b> are the only things that will keep running after you close it.</div>
+              <ul class="rlist" id="recList"></ul>
+              <div class="rfoot">
+                <button class="btn ghost" type="button" onclick="keepIt()"><svg><use href="#i-save"/></svg>Keep</button>
+                <button class="btn danger" type="button" onclick="eraseIt()"><svg><use href="#i-trash"/></svg>Erase everything</button>
+              </div>
+            </div>
+
+            <div id="eraseReport" style="display:none;margin-top:11px">
+              <div class="receipt" style="border-color:rgba(255,180,84,.35);background:linear-gradient(180deg,rgba(255,180,84,.07),rgba(255,180,84,.02))">
+                <div class="rhead" style="border-bottom-color:rgba(255,180,84,.25)">
+                  <div class="ri" style="background:rgba(255,180,84,.16);color:var(--warn)"><svg><use href="#i-trash"/></svg></div>
+                  <div><h3>Erase complete</h3><div class="rsub">142 of 143 items removed · 1 leftover listed below</div></div>
+                </div>
+                <ul class="rlist">
+                  <li><span class="rtag driver">driver</span><span class="rname">C:\Windows\System32\drivers\vnd_acme.sys</span><span class="rsize">locked</span></li>
+                </ul>
+                <div class="verdict-line" style="padding-top:8px">The one thing I couldn't remove is a driver still mapped by a running process. <b>Schedule it for reboot cleanup?</b></div>
+                <div class="rfoot">
+                  <button class="btn ghost" type="button" onclick="scheduleCleanup()"><svg><use href="#i-undo"/></svg>Schedule at reboot</button>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card" style="margin-top:14px">
+            <h2><svg><use href="#i-lock"/></svg>What watch mode can and can't see</h2>
+            <div class="sub" style="margin-top:8px">
+              <b class="hl">Sees:</b> file creates/deletes/moves (USN), registry writes (ETW), services, tasks, drivers, process trees, every network endpoint.<br>
+              <b class="hl">Can't see:</b> kernel-mode writers that hide from user mode — the optional T2 minifilter closes that gap. MSIX/UWP installs go through the deployment stack, so they get their own path.<br>
+              <b class="hl">Never does:</b> invent a clean bill of health. Missed areas are reported as blind spots.
+            </div>
+          </article>
+        </section>
+      </div>
+    </main>
+  </div>
+</section>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(s){return document.querySelector(s)};
+  var $$=function(s){return Array.prototype.slice.call(document.querySelectorAll(s))};
+  var reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------- mood ---------- */
+  var pro=false;
+  window.toggleMood=function(el){
+    pro=!pro;
+    document.body.classList.toggle('pro',pro);
+    el.classList.toggle('on',pro);
+    el.setAttribute('aria-checked',String(pro));
+    document.getElementById('moodCasual').style.color=pro?'var(--muted)':'var(--ink)';
+    document.getElementById('moodCasual').style.fontWeight=pro?'400':'600';
+    document.getElementById('moodPro').style.color=pro?'var(--ink)':'var(--muted)';
+    document.getElementById('moodPro').style.fontWeight=pro?'600':'400';
+    toast(pro?'Pro mode':'Casual mode', pro?'Monospace, dense, no ornament. Same engine, same receipts.':'Warm, spacious, explains itself.');
+  };
+
+  /* ---------- toasts ---------- */
+  var host=document.getElementById('toasts');
+  function toast(t,s){
+    var el=document.createElement('div');
+    el.className='toast';
+    el.innerHTML='<svg><use href="#i-check"/></svg><div>'+t+(s?'<small>'+s+'</small>':'')+'</div>';
+    host.appendChild(el);
+    setTimeout(function(){el.classList.add('out');setTimeout(function(){el.remove()},320)},4600);
+  }
+
+  /* ---------- picking a target ---------- */
+  var target='setup.exe';
+  window.pick=function(btn,e){
+    e.stopPropagation();
+    $$('.pick').forEach(function(p){p.classList.remove('on')});
+    btn.classList.add('on');
+    target=btn.getAttribute('data-t');
+    document.getElementById('dzTitle').textContent=target;
+    document.getElementById('dzSub').textContent='ready to watch · nothing has run yet';
+    document.getElementById('runBtn').innerHTML='<svg><use href="#i-bolt"/></svg>Watch '+target;
+  };
+  window.pickTarget=function(){
+    var title=document.getElementById('dzTitle');
+    title.textContent=target;
+  };
+
+  /* ---------- capture simulation ---------- */
+  var clockTimer=0,started=0,evTimer=0,counts={fs:0,rg:0,sv:0,nw:0,dr:0};
+  var EVENTS=[
+    ['fs','C:\\Program Files\\Acme\\setup.exe',''],['fs','C:\\Program Files\\Acme\\acme.dll',''],
+    ['rg','HKLM\\SOFTWARE\\Acme\\Install',''],['rg','HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\AcmeUpdater',''],
+    ['fs','C:\\ProgramData\\Acme\\config.ini',''],['sv','AcmeSvc — auto · LocalSystem',''],
+    ['rg','HKLM\\SYSTEM\\CurrentControlSet\\Services\\AcmeSvc',''],['fs','C:\\Windows\\System32\\drivers\\vnd_acme.sys',''],
+    ['dr','vnd_acme.sys — kernel driver',''],['nw','api.acme-analytics.com:443',''],
+    ['fs','C:\\Users\\Public\\Acme\\cache.db',''],['rg','HKCU\\...\\Uninstall\\Acme',''],
+    ['sv','AcmeWatchdog — demand',''],['nw','telemetry.acme.io:443',''],
+    ['fs','C:\\Program Files\\Acme\\unins000.exe',''],['fs','C:\\ProgramData\\Acme\\Updater\\upd.exe','']
+  ];
+  window.runSession=function(){
+    var btn=document.getElementById('runBtn');
+    btn.innerHTML='<svg><use href="#i-lock"/></svg>Armed — confirming…';
+    btn.disabled=true;
+    toast('Watching '+target,'Elevated as SYSTEM · no driver needed · drop the exe in when ready');
+    setTimeout(function(){
+      var cap=document.getElementById('capture');
+      var stream=document.getElementById('capStream');
+      stream.innerHTML='';
+      document.getElementById('recDot').style.display='';
+      document.getElementById('capState').textContent='capturing · '+target+' · pid 4821';
+      document.getElementById('receipt').style.display='none';
+      document.getElementById('eraseReport').style.display='none';
+      document.getElementById('emptyNote').style.display='';
+      document.getElementById('receiptMeta').textContent='capturing…';
+      started=Date.now();
+      clearInterval(clockTimer);
+      clockTimer=setInterval(function(){
+        var s=Math.floor((Date.now()-started)/1000);
+        var mm=String(Math.floor(s/60)).padStart(2,'0'),ss=String(s%60).padStart(2,'0');
+        document.getElementById('capClock').textContent=mm+':'+ss;
+      },250);
+      counts={fs:0,rg:0,sv:0,nw:0,dr:0};
+      var i=0;
+      clearInterval(evTimer);
+      evTimer=setInterval(function(){
+        if(i>=EVENTS.length){finishSession();return;}
+        var ev=EVENTS[i++];
+        counts[ev[0]]++;
+        var li=document.createElement('li');
+        li.innerHTML='<span class="tag '+ev[0]+'">'+ev[0]+'</span><span class="path">'+ev[1].replace(/</g,'&lt;')+'</span>';
+        stream.appendChild(li);
+        while(stream.children.length>9) stream.removeChild(stream.firstChild);
+        document.getElementById('stFiles').textContent=counts.fs;
+        document.getElementById('stReg').textContent=counts.rg;
+        document.getElementById('stSvc').textContent=counts.sv;
+        document.getElementById('stNet').textContent=counts.nw;
+      },reduce?70:520);
+    },900);
+  };
+
+  function finishSession(){
+    clearInterval(evTimer);clearInterval(clockTimer);
+    var s=Math.max(1,Math.floor((Date.now()-started)/1000));
+    var mm=String(Math.floor(s/60)).padStart(2,'0'),ss=String(s%60).padStart(2,'0');
+    document.getElementById('capClock').textContent=mm+':'+ss;
+    document.getElementById('recDot').style.display='none';
+    document.getElementById('capState').textContent='session ended · report ready';
+    var btn=document.getElementById('runBtn');
+    btn.disabled=false;
+    btn.innerHTML='<svg><use href="#i-bolt"/></svg>Watch '+target+' again';
+    document.getElementById('emptyNote').style.display='none';
+    document.getElementById('receiptMeta').textContent='sealed · '+mm+':'+ss;
+    var rec=document.getElementById('receipt');
+    rec.style.display='';
+    document.getElementById('recTitle').textContent=target;
+    document.getElementById('recSub').textContent='captured '+mm+':'+ss+' · 6 groups · verified';
+    var rows=[
+      ['autostart','HKCU\\...\\Run\\AcmeUpdater','1 key'],
+      ['autostart','AcmeWatchdog service','demand'],
+      ['driver','vnd_acme.sys','kernel'],
+      ['net','api.acme-analytics.com','443'],
+      ['net','telemetry.acme.io','443'],
+      ['benign','Program Files\\Acme (38 files)','184 MB'],
+      ['benign','HKLM\\SOFTWARE\\Acme','12 values']
+    ];
+    document.getElementById('recList').innerHTML=rows.map(function(r){
+      return '<li><span class="rtag '+r[0]+'">'+r[0]+'</span><span class="rname">'+r[1]+'</span><span class="rsize">'+r[2]+'</span></li>';
+    }).join('');
+    document.getElementById('recVerdict').innerHTML='Clean-ish install. <b>2 autostart entries</b>, <b>1 scheduled task</b> and a <b>kernel driver</b> will keep things alive after you close it. Nothing left user documents alone.';
+    toast('Report ready','Every item verified against the capture. Keep or erase — both are receipts.');
+  }
+
+  window.keepIt=function(){
+    document.getElementById('receipt').style.display='none';
+    document.getElementById('emptyNote').style.display='';
+    document.getElementById('emptyNote').textContent='Kept. The app is now journaled — if anything starts misbehaving, Guardian can trace it back to this install and revert it specifically.';
+    document.getElementById('receiptMeta').textContent='kept · traced';
+    toast('Kept and traced','144 items now belong to Acme in the journal — one-click full erase later if you want it.');
+  };
+
+  window.eraseIt=function(){
+    var rec=document.getElementById('receipt');
+    var btn=rec.querySelector('.btn.danger');
+    btn.innerHTML='<svg><use href="#i-trash"/></svg>Erasing…';
+    btn.disabled=true;
+    var steps=['stopping services…','removing tasks…','restoring 12 registry values…','deleting 38 files…','verifying…'];
+    steps.forEach(function(st,i){
+      setTimeout(function(){ toast('Erase',st); },i*420);
+    });
+    setTimeout(function(){
+      rec.style.display='none';
+      document.getElementById('emptyNote').style.display='none';
+      document.getElementById('eraseReport').style.display='';
+      document.getElementById('receiptMeta').textContent='erased · 142/143';
+      toast('Erased 142 of 143','One driver is still mapped. I listed it instead of pretending it was gone.');
+    },steps.length*420+300);
+  };
+
+  window.scheduleCleanup=function(){
+    document.getElementById('eraseReport').style.display='none';
+    document.getElementById('emptyNote').style.display='';
+    document.getElementById('emptyNote').textContent='Scheduled. At next reboot, the vault replays pending removals before anything else starts — and confirms the result in the morning receipt.';
+    document.getElementById('receiptMeta').textContent='erased · pending reboot';
+    toast('Scheduled at reboot','Pending delete (MoveFileEx). Verified after restart, not assumed.');
+  };
+
+  $$('.rbtn').forEach(function(b){b.addEventListener('click',function(){
+    $$('.rbtn').forEach(function(x){x.classList.remove('on')});b.classList.add('on');
+  })});
+  window.addEventListener('load',function(){
+    var first=document.querySelector('.pick');
+    if(first) first.classList.add('on');
+  });
+})();
+</script>
+</body>
+</html>
