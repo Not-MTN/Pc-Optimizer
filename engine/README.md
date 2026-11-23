@@ -500,6 +500,10 @@ CI does the same thing on every push. If the `package` job fails, download the
 command's output instead of exiting silently. It used to swallow the reason —
 which is bug 69 above.
 
+**If the installed app does not start**, the traceback is in
+`%LOCALAPPDATA%\Keel\crash.log`. With `console=False` there is nowhere else for
+it to go, and the error dialog loses its text when you close it.
+
 ## Porting to Rust (the contract)
 
 | Python | Rust |
