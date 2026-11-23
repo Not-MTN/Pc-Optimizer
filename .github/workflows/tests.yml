@@ -8,7 +8,10 @@ name: tests
 
 on:
   push:
+    # `branches:` filters OUT tags, so a `tags:` list is required. Without this a
+    # pushed tag runs nothing and the release keeps a body with no binaries on it.
     branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
