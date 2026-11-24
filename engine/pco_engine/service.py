@@ -10,6 +10,7 @@ verbs, one permission check, one receipt.
 from __future__ import annotations
 
 import json
+import sqlite3
 import os
 import time
 from pathlib import Path
@@ -298,12 +299,23 @@ class Service:
             if not isinstance(key, str):
                 raise ValueError("argument names must be strings")
             if value is None:
+                # A null identifier is a caller mistake, not "use the default".
+                # It used to reach `name.strip()` and `INSERT` and come back as
+                # AttributeError or a NOT NULL IntegrityError — a 500 for what
+                # is plainly a bad request.
+                if key == "id" or key.endswith(("_id", "_ids")):
+                    raise ValueError(f"'{key}' cannot be null")
                 continue
             if (key == "id" or key.endswith(("_id", "_ids"))) and not isinstance(
                     value, (str, int)):
                 raise ValueError(
                     f"'{key}' must be a string or a number, got "
                     f"{type(value).__name__}")
+            if isinstance(value, (list, dict, tuple)) and key in (
+                    "name", "sentence", "mode", "q", "look", "theme_id",
+                    "run_id", "tx_id", "install_id", "driver_id", "version"):
+                raise ValueError(
+                    f"'{key}' must be a string, got {type(value).__name__}")
             if len(str(value)) > 4096 and isinstance(value, str):
                 raise ValueError(f"'{key}' is {len(value)} characters; limit 4096")
         try:
@@ -313,6 +325,20 @@ class Service:
             if "unhashable" in str(exc) or "expected str" in str(exc):
                 raise ValueError(f"bad argument type: {exc}") from exc
             raise
+        except AttributeError as exc:
+            # None.lower() / None.strip() / None.items() — a caller sent null
+            # where a value was required. Caught by name so the message says
+            # whose fault it is; the traceback-stack detail stays in the log.
+            raise ValueError(
+                f"a required argument was null or the wrong type: {exc}") from exc
+        except sqlite3.InterfaceError as exc:
+            raise ValueError(f"an argument is not storable: {exc}") from exc
+        except sqlite3.ProgrammingError as exc:
+            raise ValueError(f"bad argument type: {exc}") from exc
+        except sqlite3.IntegrityError as exc:
+            # NOT NULL / FOREIGN KEY / UNIQUE. The request asked for a state the
+            # database will not hold; that is a conflict, not a crash.
+            raise ValueError(f"that change is not allowed: {exc}") from exc
 
     # ================================================================== modules
     def checkup(self, *, fix_safe: bool = False) -> dict[str, Any]:

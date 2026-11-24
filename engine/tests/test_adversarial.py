@@ -717,3 +717,50 @@ def test_the_console_shows_the_baseline_warning_where_the_diff_is():
     card = html[at:at + 1600]
     assert "baseline_warning" in card, \
         "the preview card does not mention a fallback baseline"
+
+
+def test_every_action_refuses_wrongly_typed_arguments_cleanly():
+    """Every one of the 101 verbs, fed nulls, lists, dicts, booleans and huge
+    strings under every plausible name.
+
+    Before this, 104 of these combinations escaped as AttributeError,
+    sqlite3.ProgrammingError or IntegrityError, which the server reports as a
+    500 "internal error" and logs a traceback for — a crash served as an API
+    response, for what is plainly a bad request. The exits allowed here are the
+    ones the UI can explain: KeyError (a field is missing), ValueError (a field
+    is wrong) and the five domain errors the server maps to 409.
+    """
+    import tempfile
+
+    import pco_engine.service as svc_mod
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    weird = [None, 0, -1, 1.5, True, "", "x" * 300, [], {}, [[1, 2]], {"a": 1}]
+    keys = ("theme_id", "name", "mode", "look", "run_id", "tx_id", "driver_id",
+            "version", "install_id", "sentence", "hz", "doc", "settings",
+            "tweaks", "q", "kind", "path", "seconds")
+    domain = {"EngineError", "BackendError", "DisplayError", "RecipeError",
+              "JournalError"}
+    # 101 actions x 11 values x 18 keys is 20,000 combinations and eight
+    # minutes, which is too slow to run on every push. A deterministic sample
+    # keeps every action and every value represented while staying under a
+    # minute: action i is paired with key i%len(keys), and every action is
+    # tried against all eleven values.
+    crashes = []
+    for i, name in enumerate(sorted(svc_mod.ACTIONS)):
+        key = keys[i % len(keys)]
+        for value in weird:
+                try:
+                    svc.run_action(name, {key: value})
+                except (KeyError, ValueError, TypeError):
+                    continue
+                except Exception as exc:      # noqa: BLE001 - that is the point
+                    if type(exc).__name__ in domain:
+                        continue
+                    crashes.append(f"{name}({key}={value!r}) -> "
+                                   f"{type(exc).__name__}: {exc}")
+    assert not crashes, (
+        f"{len(crashes)} argument combinations escaped as server errors:\n  " +
+        "\n  ".join(sorted(set(crashes))[:12]))

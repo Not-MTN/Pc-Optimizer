@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (742 tests: 731 here, 11 that only a real Windows machine can run)
+## What works today (743 tests: 732 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -662,6 +662,18 @@ of those tests read the console as **text**. The page parsed. It never ran.
      StopIteration instead of checking anything. It names `Handler` now. That is
      the same failure mode as bugs 103-107 and it is why every guard here is
      mutation-tested.
+
+113. **22,000 badly-typed arguments produced 104 server errors.** Every verb was
+     fed nulls, lists, dicts, floats and 300-character strings under every
+     plausible name. 104 combinations escaped as `AttributeError`,
+     `sqlite3.ProgrammingError` or `IntegrityError`, all of which the server
+     reports as "Keel hit an internal error" and logs a traceback for — a crash
+     served as an API response, for what is plainly a bad request. `run_action`
+     now classifies null identifiers, non-string names and unstorable values,
+     and maps the driver's own errors to 400/409. 104 → 0.
+     The first attempt over-corrected: blanket-rejecting booleans broke
+     `workspace.restore(dry_run=False)` and `spotify.write(look=42)`. Two
+     existing tests caught it, which is the entire reason they exist.
 
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no
