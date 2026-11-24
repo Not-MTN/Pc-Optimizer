@@ -166,6 +166,7 @@ def _service() -> Service:
 
 ROUTES: dict[str, str] = {
     "/api/status": "status",
+    "/api/elevate": "elevate",
     "/api/themes": "theme.gallery",
     "/api/themes/get": "theme.get",
     "/api/themes/validate": "theme.validate",
@@ -514,9 +515,12 @@ class Handler(BaseHTTPRequestHandler):
         r"delete|block|rollback|restore|create|import|capture|erase|begin|finish|"
         r"sample|inspect|scan|check|validate|preview|sweep|tune|clean|fix|"
         r"fix_safe|fix_all|apply_doc|enable|disable|mute|unmute|switch|reset|"
-        r"unblock|revoke|withdraw|clear)"
+        r"unblock|revoke|withdraw|clear|elevate)"
         r"$")
-    MUTATING = set()          # filled by _refresh_mutating() below
+    #: Actions with no dot in their name cannot match the verb regex, so they
+    #: are listed. `elevate` launches a process — it is not a read, and a page
+    #: must not be able to trigger it with a link.
+    MUTATING = {"elevate"}
 
     #: Reads despite the suffix (they compute, they do not persist).
     _READ_ONLY = {

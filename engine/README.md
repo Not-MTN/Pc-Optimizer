@@ -728,6 +728,30 @@ of those tests read the console as **text**. The page parsed. It never ran.
      nothing left to put back" — and the toast reports the count instead of one
      fixed sentence for four changes and for none.
 
+121. **ONE refused setting destroyed the entire theme — this is "themes dont
+     change anything, no one button aply".** `apply_customization` and
+     `apply` both did `_rollback()` + `raise` on the first `BackendError`. A
+     theme is a batch: on a standard-user Windows account some keys are writable
+     (HKCU) and some are not (HKLM). The unwritable one rolled back every key
+     that had already gone on, and the raise meant the caller never learned
+     which. Pressing apply on any theme produced an error and zero change,
+     permanently. Reproduced with a backend that denies one key: 4 changes in,
+     `EngineError` out, nothing applied.
+     Fixed by distinguishing a *permission refusal* (a property of the account —
+     keep the rest, name the refused item, stay undoable) from a *broken write*
+     (a property of the change — still all-or-nothing, 22 existing tests prove
+     it). After: `applied=4 refused=1`, message
+     "Partly applied — 2 change(s) on, 1 refused".
+122. **The app never asked for the privileges its writes need, and never said
+     so.** The installer is `PrivilegesRequired=lowest`, there is no manifest,
+     and nothing called `IsUserAnAdmin`. So it ran as a standard user, could
+     read everything (scanning worked) and was denied every machine-wide write
+     (fixing failed) — "you can just scan not fix anything", literally. Added:
+     `is_elevated()` via `IsUserAnAdmin`, `relaunch_elevated()` via
+     `ShellExecuteW(..., "runas", ...)`, `/api/elevate` (POST only — it launches
+     a process, so a GET must not reach it), a banner that appears **only** on a
+     real unelevated PC, and `status.backend.elevated` / `.can_write_system`.
+
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no
     `unhandledrejection`. A broken handler and a handler that worked looked

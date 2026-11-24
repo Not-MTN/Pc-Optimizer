@@ -842,3 +842,133 @@ def test_undoing_the_same_transaction_twice_does_not_claim_success():
     import re as _re
     assert not _re.search(r"\d{11,}", message), (
         f"no millisecond epoch in a message a person reads: {message}")
+
+
+class _RefusingBackend:
+    """A real backend whose HKLM writes are denied, like a standard-user account."""
+
+    environment = "windows"
+
+    def __init__(self, inner, refuse_suffix: str) -> None:
+        self.inner = inner
+        self.refuse_suffix = refuse_suffix
+        self.elevated = False
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+    def read(self, address, **kw):
+        return self.inner.read(address, **kw)
+
+    def write(self, address, value, **kw):
+        from pco_engine.backend import BackendError
+        if address.endswith(self.refuse_suffix):
+            raise BackendError(f"could not write {address}: [WinError 5] "
+                               "Access is denied. This needs an elevated shell.")
+        return self.inner.write(address, value, **kw)
+
+    def is_elevated(self) -> bool:
+        return self.elevated
+
+
+def _refusal_engine(tmp_path, refuse_suffix: str):
+    from pco_engine.service import Service
+    svc = Service(str(tmp_path / "refuse.db"), catalog_dir="catalog")
+    svc.engine.backend = _RefusingBackend(svc.engine.backend, refuse_suffix)
+    changes = [{"key": f"k{i}", "address": f"registry:hkcu\\software\\pco\\p\\{n}",
+                "value": i, "value_name": f"v{i}"}
+               for i, n in enumerate(["a", "b", "refuse", "d"])]
+    lookup = {c["address"]: c for c in changes}
+    inner_read = svc.engine.backend.inner.read
+    svc.engine._read = lambda a, value_name=None: (
+        lookup[a]["value"] if a in lookup else inner_read(a, value_name))
+    return svc, changes
+
+
+def test_one_refused_setting_does_not_undo_the_rest_of_a_theme(tmp_path):
+    """THE BUG THE USER HIT: "themes dont change anything, no one button aply".
+
+    A theme is a batch of settings. On a standard-user account some are allowed
+    (HKCU) and some are not (HKLM). The engine used to roll back every setting
+    that had already succeeded and then raise, so applying any theme produced an
+    error message and zero visible change — permanently.
+
+    Now the allowed settings land, the refused ones are named with a reason the
+    user can act on, and the transaction stays undoable.
+    """
+    svc, changes = _refusal_engine(tmp_path, refuse_suffix="refuse")
+    res = svc.engine.apply_customization(changes)
+
+    assert len(res.effects) == 4, "three allowed settings plus the bookkeeping"
+    assert len(res.refused) == 1, f"exactly one refusal expected: {res.refused}"
+    refusal = res.refused[0]
+    assert "administrator" in refusal["reason"].lower(), (
+        f"the reason must say what to do about it: {refusal['reason']}")
+    assert res.tx_id, "what did land must still be undoable"
+    assert "refused" in res.summary
+
+
+def test_a_broken_write_still_rolls_the_batch_back(tmp_path):
+    """A permission refusal is not the same as a broken write.
+
+    If a write fails for any other reason the batch is suspect and must be
+    undone — the original all-or-nothing guarantee. Dropping that while fixing
+    the refusal case would trade one bug for a worse one.
+    """
+    from pco_engine.backend import BackendError
+    from pco_engine.engine import EngineError
+    import pytest as _pytest
+
+    svc, changes = _refusal_engine(tmp_path, refuse_suffix="nothing-matches")
+    inner_write = svc.engine.backend.inner.write
+
+    def broken(address, value, **kw):
+        if address.endswith("refuse"):
+            raise BackendError("the registry returned garbage")
+        return inner_write(address, value, **kw)
+
+    svc.engine.backend.inner.write = broken
+    with _pytest.raises(EngineError):
+        svc.engine.apply_customization(changes)
+
+
+def test_status_says_when_it_cannot_write_system_settings(tmp_path):
+    """The window must be able to say "I am not allowed", not just fail."""
+    from pco_engine.service import Service
+
+    svc = Service(str(tmp_path / "s.db"), catalog_dir="catalog")
+    svc.backend = _RefusingBackend(svc.backend, refuse_suffix="zzz")
+    svc.backend.elevated = False
+    backend = svc.status()["backend"]
+    assert backend["elevated"] is False
+    assert backend["can_write_system"] is False
+
+
+def test_the_elevation_button_offers_a_real_remedy(tmp_path):
+    """"Access is denied" is true and useless; the button must offer the fix."""
+    from pco_engine.service import Service
+
+    svc = Service(str(tmp_path / "e.db"), catalog_dir="catalog")
+    svc.backend = _RefusingBackend(svc.backend, refuse_suffix="zzz")
+    called = []
+
+    def fake_relaunch(argv):
+        called.append(argv)
+        return {"launched": True, "reason": "A permission prompt should be on screen."}
+
+    svc.backend.relaunch_elevated = fake_relaunch
+    out = svc.elevate()
+    assert called, "elevate must actually ask Windows for a UAC prompt"
+    assert out["launched"] is True
+
+
+def test_the_console_shows_the_elevation_banner_and_a_refusal_list():
+    """Both must be on screen where the click happened, not in a log."""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parents[1] / "pco_engine" / "console.html"
+            ).read_text(encoding="utf-8")
+    assert 'id="elevBar"' in html, "no place for the 'not an administrator' banner"
+    assert "Restart as administrator" in html, "no button offering the remedy"
+    assert "/api/elevate" in html, "the button must call a route that exists"
+    assert "refused by Windows" in html or "Partly applied" in html, (
+        "a partial apply must be reported as partial, not as success or failure")

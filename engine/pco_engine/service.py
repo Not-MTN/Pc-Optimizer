@@ -753,10 +753,45 @@ class Service:
                          "reason": ("Explorer will pick this up on its next restart. "
                                     "Restarting it now would close your open folders.")
                          if plan["explorer_restart_needed"] else "not needed"}
-        return {"applied": True, "tx_id": tx.tx_id, "changes": plan["changes"],
-                "refused": plan["refused"], "explorer": restarted,
+        # Two kinds of refusal: ones the *plan* predicted (a setting this build
+        # knows Windows will ignore) and ones the *machine* made (Access Denied).
+        # The second kind used to be invisible here — the engine raised and the
+        # caller saw only an error, never which settings had landed.
+        refused = list(plan["refused"]) + list(getattr(tx, "refused", []) or [])
+        landed = len(getattr(tx, "effects", []) or [])
+        summary = plan["summary"]
+        if refused:
+            summary = f"{landed} change(s) applied · {len(refused)} refused by Windows"
+        return {"applied": landed > 0, "tx_id": tx.tx_id,
+                "changes": plan["changes"], "landed": landed,
+                "refused": refused, "explorer": restarted,
                 "already_set": plan.get("already", []),
-                "summary": plan["summary"]}
+                "summary": summary}
+
+    def elevate(self) -> dict[str, Any]:
+        """Ask Windows for administrator rights by relaunching this app.
+
+        Without this the only remedy for "Access is denied" was to find the exe
+        and right-click it, which nobody should have to work out. This raises
+        the UAC prompt; if the user declines, the app keeps running unelevated
+        and everything readable still works.
+        """
+        already = (self.backend.is_elevated()
+                   if hasattr(self.backend, "is_elevated") else None)
+        if already is None:
+            return {"elevated": False, "launched": False,
+                    "reason": "This build has no elevation support — it is the "
+                              "simulated backend, so there are no Windows "
+                              "permissions to ask for."}
+        if already:
+            return {"elevated": True, "launched": False,
+                    "reason": "Already running as administrator."}
+        if not hasattr(self.backend, "relaunch_elevated"):
+            return {"elevated": False, "launched": False,
+                    "reason": "This build cannot relaunch itself."}
+        import sys
+        out = self.backend.relaunch_elevated(sys.argv[1:])
+        return {"elevated": False, **out}
 
     def restart_explorer(self) -> dict[str, Any]:
         """Restart Explorer *safely*: kill, wait, and let Windows restart it.
@@ -1281,6 +1316,13 @@ class Service:
                 "real": env == "windows",
                 "label": ("This PC" if env == "windows"
                           else "Simulated PC — nothing here touches your computer"),
+                # A standard-user process can read everything and write almost
+                # nothing machine-wide. Saying so up front is the difference
+                # between "the app is broken" and "Windows needs permission".
+                "elevated": (self.backend.is_elevated()
+                             if hasattr(self.backend, "is_elevated") else True),
+                "can_write_system": (self.backend.is_elevated()
+                                     if hasattr(self.backend, "is_elevated") else True),
             },
             "engine": {
                 "journal_rows": rows, "journal_ok": ok, "journal_detail": detail,
@@ -1745,6 +1787,9 @@ ACTIONS = {
         temp_c=float(a["temp_c"]) if a.get("temp_c") is not None else None)},
     "boot.status": lambda s, a: s.boot_status(),
     "safety.panic": lambda s, a: s.panic(),
+    # Asks Windows for a UAC prompt. Changes nothing itself, so it is safe to
+    # retry; the button that calls it says what happened either way.
+    "elevate": lambda s, a: s.elevate(),
     "safety.tick": lambda s, a: s.tick(),
     "safety.confirm": lambda s, a: s.confirm(a["tx_id"]),
     "safety.pending": lambda s, a: {"pending": s.pending_confirmations()},

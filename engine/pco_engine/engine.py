@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .address import values_equal
@@ -44,6 +44,10 @@ class Applied:
     snapshot_id: str | None
     needs_reboot: bool
     armed_until: int | None = None
+    # What the machine would not do, and why. A partial apply is a normal
+    # outcome on a standard-user account, not an error: the rest of the theme
+    # went on and stays undoable.
+    refused: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def summary(self) -> str:
@@ -54,6 +58,8 @@ class Applied:
             bits.append("needs restart")
         if self.armed_until:
             bits.append("auto-revert armed")
+        if self.refused:
+            bits.append(f"{len(self.refused)} refused")
         return " · ".join(bits)
 
 
@@ -68,6 +74,45 @@ class Reverted:
         if self.failed:
             return f"{self.reverted} undone, {len(self.failed)} could not be undone"
         return f"{self.reverted} change(s) undone"
+
+
+def _privilege_reason(exc: BaseException) -> str:
+    """Turn a backend refusal into a sentence that tells the user what to do.
+
+    "Access is denied" is true and useless. The user needs to know it is a
+    permissions problem and that running as administrator is the remedy.
+    """
+    text = str(exc).lower()
+    if any(sig in text for sig in ("access is denied", "access denied",
+                                   "privilege", "elevat", "winerror 5",
+                                   "permission denied", "operation not permitted")):
+        return ("Windows refused: this needs administrator rights. "
+                "Use the “Restart as administrator” button, or run Keel as "
+                "administrator, to change machine-wide settings.")
+    if "not found" in text or "no such" in text:
+        return "Not present on this PC — nothing to change."
+    if "policy" in text or "blocked by" in text:
+        return "Blocked by a Windows policy on this PC; no app can override it."
+    return "This PC refused the change."
+
+
+def _is_permission_refusal(exc: BaseException) -> bool:
+    """Did the machine say "you may not", or did the write itself break?
+
+    This distinction decides whether the rest of a theme survives. A permission
+    refusal is a property of the *account*: no retry will fix it, the other
+    settings are unrelated, and destroying them helps nobody. A broken write is a
+    property of *this change*: the rest of the batch is suspect and must be
+    undone, which is the original all-or-nothing guarantee.
+
+    Before this, both were treated as broken writes, so on a standard-user
+    account every theme lost the settings that had already gone on.
+    """
+    text = str(exc).lower()
+    return any(sig in text for sig in (
+        "access is denied", "access denied", "winerror 5", "privilege",
+        "elevat", "permission denied", "operation not permitted",
+        "requires elevation", "requested registry access is not allowed"))
 
 
 def _canon(value: Any) -> str:
@@ -108,6 +153,10 @@ class Engine:
             raise EngineError("nothing to do: every value already matches")
 
         ordered = self._order(effective)
+        # Changes the machine refused (permission, policy, hardware). Collected
+        # rather than raised, so one refusal cannot destroy the rest of a theme.
+        refused: list[dict[str, Any]] = []
+        written_any = 0
         tx_id = new_id()
         started = self.clock()
 
@@ -131,11 +180,31 @@ class Engine:
                 self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id, phase="failed",
                                     prestate=pre, poststate={eff.address: eff.new},
                                     error=str(exc))
-                self._close_tx(tx_id, "failed")
-                # roll back whatever already landed in this transaction
-                self._rollback(tx_id, [eff.address])
-                raise EngineError(f"{eff.tweak_id} failed: {exc}") from exc
+                if not _is_permission_refusal(exc):
+                    # A write that BROKE is different from a write that was
+                    # forbidden. Broken: undo the batch, as before.
+                    self._close_tx(tx_id, "failed", note=str(exc))
+                    if refused or written_any:
+                        self._rollback(tx_id, [eff.address])
+                    raise EngineError(f"{eff.tweak_id} failed: {exc}") from exc
+                # DO NOT roll back what already worked.
+                #
+                # This used to call _rollback() here: it undid every change that
+                # had already succeeded, then raised. On a standard-user Windows
+                # account a theme is ~12 settings, 11 in HKCU (writable) and one
+                # in HKLM (needs admin). The HKLM write fails with Access Denied,
+                # the rollback wipes the 11 that worked, and the user is told
+                # "Could not apply". They press apply on every theme, get an error
+                # every time, and nothing ever changes — which is precisely the
+                # report: "themes dont change anything, no one button aply".
+                #
+                # Keep what landed, say which item was refused and why, and leave
+                # the working changes undoable through the normal journal path.
+                refused.append({"tweak_id": eff.tweak_id, "address": eff.address,
+                                "reason": _privilege_reason(exc), "detail": str(exc)})
+                continue
 
+            written_any += 1
             self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id, phase="applied",
                                 prestate=pre, poststate={eff.address: eff.new})
 
@@ -173,7 +242,7 @@ class Engine:
 
         return Applied(tx_id=tx_id, tweak_ids=ids, effects=ordered,
                        snapshot_id=snap_id, needs_reboot=plan.needs_reboot,
-                       armed_until=armed_until)
+                       armed_until=armed_until, refused=refused)
 
     # ================================================================= confirm
     def confirm(self, tx_id: str) -> None:
@@ -439,6 +508,10 @@ class Engine:
                                         source=source,
                                         note=note or "desktop customization")
         written = 0
+        # Settings the machine would not take. Collected, never raised: a
+        # standard-user account refuses some of every theme, and the rest must
+        # still land.
+        refused: list[dict[str, Any]] = []
         for eff in effects:
             pre = {eff.address: eff.old}
             self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id,
@@ -452,11 +525,24 @@ class Engine:
                                     phase="failed", prestate=pre,
                                     poststate={eff.address: eff.new},
                                     error=str(exc))
-                self._close_tx(tx_id, "failed", note=str(exc))
-                if written:
-                    self._rollback(tx_id, [eff.address])
-                raise EngineError(
-                    f"{eff.tweak_id} failed: {exc}") from exc
+                if not _is_permission_refusal(exc):
+                    self._close_tx(tx_id, "failed", note=str(exc))
+                    if written:
+                        self._rollback(tx_id, [eff.address])
+                    raise EngineError(f"{eff.tweak_id} failed: {exc}") from exc
+                # A refusal must not undo the neighbours.
+                #
+                # This used to call _rollback() and then raise, so ONE setting
+                # the account was not allowed to write destroyed every setting
+                # that had already gone through — and because it raised, the
+                # caller never learned which ones. On a standard-user account
+                # that is the whole of desktop customization: apply a theme, get
+                # an error, see nothing change. That is the report.
+                refused.append({"key": eff.tweak_id, "address": eff.address,
+                                "label": eff.tweak_id.replace("shell:", ""),
+                                "reason": _privilege_reason(exc),
+                                "detail": str(exc)})
+                continue
 
             self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id,
                                 phase="applied", prestate=pre,
@@ -489,7 +575,7 @@ class Engine:
             self._close_tx(tx_id, "failed", note="no value was accepted")
         return Applied(tx_id=tx_id, tweak_ids=[e.tweak_id for e in effects],
                        effects=effects if written else [], snapshot_id=None,
-                       needs_reboot=False, armed_until=None)
+                       needs_reboot=False, armed_until=None, refused=refused)
 
     # ---------------------------------------------------------------- factory
     @classmethod

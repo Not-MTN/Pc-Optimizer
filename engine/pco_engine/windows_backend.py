@@ -507,10 +507,52 @@ class WindowsBackend:
         self._allow_display = allow_display
         self._writes: list[tuple[str, Any]] = []
 
+    # -- privilege ---------------------------------------------------------
+    def is_elevated(self) -> bool:
+        """Is this process running as administrator?
+
+        Without this the app cannot tell "the setting did not stick" from "I was
+        never allowed to touch it". A standard-user install reads fine — scans
+        and checkups work — and every machine-wide write is denied, which is
+        precisely "you can just scan, not fix anything".
+        """
+        try:
+            import ctypes
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())   # type: ignore[attr-defined]
+        except Exception:            # noqa: BLE001 - not Windows, or no ctypes
+            return False
+
+    def relaunch_elevated(self, argv: list[str]) -> dict[str, Any]:
+        """Relaunch this executable as administrator via the UAC prompt.
+
+        Returns immediately: the current process stays alive while the user
+        answers the prompt, so the window does not vanish if they say no.
+        """
+        try:
+            import ctypes
+            import sys
+            exe = sys.executable
+            # When frozen, sys.executable is Keel.exe; the bootloader strips the
+            # extra argument itself. `runas` is what raises the UAC dialog.
+            params = " ".join(argv)
+            code = ctypes.windll.shell32.ShellExecuteW(   # type: ignore[attr-defined]
+                None, "runas", exe, params, None, 1)
+            if code <= 32:
+                return {"launched": False,
+                        "reason": "Windows did not show a permission prompt "
+                                  f"(ShellExecuteW returned {code}). If you said "
+                                  "no to the prompt, nothing changed."}
+            return {"launched": True,
+                    "reason": "A permission prompt should be on screen. Say yes "
+                              "and the elevated window opens."}
+        except Exception as exc:     # noqa: BLE001
+            return {"launched": False, "reason": f"could not ask Windows: {exc}"}
+
     # -- capability reporting (this is what `pco doctor` prints) -----------
     def capabilities(self) -> dict[str, Any]:
         return {
             "environment": self.environment,
+            "elevated": self.is_elevated(),
             "certified": list(CERTIFIED_IN_CI),
             "unverified_on_hardware": list(UNVERIFIED_ON_HARDWARE) if self._allow_display else [],
             "display_enabled": self._allow_display,

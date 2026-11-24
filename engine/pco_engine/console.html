@@ -233,6 +233,12 @@
       padding:1px 6px;font:inherit;font-size:11px;color:var(--dim)}
   @keyframes slide{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
   .sect{display:none} .sect.on{display:block;animation:rise var(--t3) both}
+  .elevbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+           padding:12px 16px;margin:0 0 18px;border-radius:12px;
+           background:linear-gradient(180deg,rgba(255,195,107,.10),rgba(255,195,107,.04));
+           border:1px solid rgba(255,195,107,.45);color:var(--ink);font-size:12.5px}
+  .elevbar .grow{flex:1 1 320px;min-width:220px}
+  .elevbar .elevmsg{flex:1 1 100%;color:var(--dim)}
   .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:12.5px;color:var(--dim)}
   .kv b{color:var(--ink);font-weight:600}
   label.field{display:block;font-size:11.5px;color:var(--faint);text-transform:uppercase;
@@ -316,6 +322,14 @@
     </header>
 
     <!-- ============ OVERVIEW ============ -->
+    <div class="elevbar" id="elevBar" style="display:none">
+      <span class="grow">Running without administrator rights — settings that
+        change Windows itself will be refused. Personal settings (colours,
+        taskbar, wallpaper) still work.</span>
+      <button class="btn primary" id="elevBtn">Restart as administrator</button>
+      <span class="sub elevmsg" id="elevMsg"></span>
+    </div>
+
     <section class="sect" id="view-gallery">
       <div class="hubIntro">
         <h2>Fifteen looks, one click</h2>
@@ -1281,7 +1295,35 @@ function renderMachine(st) {
     ? "Changes here are made to this computer and are journaled."
     : "DEMO MODE: nothing here affects your computer. Every number is invented.";
   document.body.classList.toggle("is-demo", !b.real);
+  renderElevation(b);
 }
+
+/* A standard-user process reads everything and writes almost nothing
+   machine-wide. That is not a crash — it is Windows — but the app used to show
+   only "Access is denied", so a working app looked broken. This says what is
+   wrong, in one sentence, and puts the fix one click away. */
+/* A standard-user process reads everything and writes almost nothing
+   machine-wide. That is Windows, not a crash — but the app used to show only
+   "Access is denied", so a working app looked broken. The banner is markup
+   (hidden by default): creating it at runtime meant `$("#elevBar")` could be
+   null at the moment a status poll landed. */
+function renderElevation(b) {
+  const bar = $("#elevBar");
+  if (!bar) return;
+  const show = b.real && b.elevated === false;
+  bar.style.display = show ? "" : "none";
+}
+
+$("#elevBtn")?.addEventListener("click", async (ev) => {
+  const go = ev.currentTarget;
+  busy(go, true);
+  try {
+    const r = await api("/api/elevate", {});
+    $("#elevMsg").textContent = r.reason || "";
+    if (r.elevated) go.disabled = true;
+  } catch (err) { toast(err.message, true); }
+  busy(go, false);
+});
 
 function renderStatus(st) {
   renderMachine(st);
@@ -3190,6 +3232,24 @@ $("#themeApplyActive")?.addEventListener("click", async (ev) => {
   await themeAction(ev.currentTarget, "Applying", async () => {
     const r = await api("/api/themes/apply", { theme_id: selectedTheme });
     if (!r.ok) { themeReport("Could not apply", r.reason || "unknown reason", true); return; }
+    // A partial apply is the normal outcome without administrator rights.
+    // Reporting "Could not apply" for it (or silently claiming success) is how
+    // "themes dont change anything, no one button aply" happened: some settings
+    // went on, some were refused, and the window said neither.
+    const shell = r.shell || {};
+    const refused = shell.refused || [];
+    const landed = shell.landed ?? (shell.changes || []).length;
+    if (refused.length) {
+      themeReport(
+        landed ? `Partly applied — ${landed} change(s) on, ${refused.length} refused`
+               : `Nothing applied — Windows refused all ${refused.length}`,
+        refused.slice(0, 6).map(x => "• " + (x.label || x.key || x.tweak_id)
+          + ": " + (x.reason || "refused")).join("\n")
+        + "\n\n" + (landed
+          ? "What did apply is journaled and can be undone from History."
+          : "Close Keel, right-click it, and choose “Run as administrator”."), !landed);
+      return;
+    }
     themeReport("Applied · " + r.summary,
       (r.warnings || []).join(" ") ||
       "The shell settings went through the normal journaled path, so Undo works.");

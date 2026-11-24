@@ -970,3 +970,29 @@ def test_twelve_threads_deleting_the_same_workspace_delete_it_once():
     assert counts["deleted"] == 1, f"the workspace must be deleted once: {dict(counts)}"
     assert sum(counts.values()) == 12
     assert len(counts) == 2, f"every other caller must be refused: {dict(counts)}"
+
+
+def test_elevation_cannot_be_triggered_by_a_link(base=None):
+    """`elevate` launches a process, so it must never be reachable by GET.
+
+    The verb regex anchors on a dot (`\\.(apply|run|...)`) and `elevate` has no
+    dot, so it slipped through and a plain GET started a UAC prompt. Dereived
+    rules do not cover every name; the gap has to be closed explicitly and
+    tested, not assumed.
+    """
+    from pco_engine.server import Handler
+
+    assert Handler._is_mutating("elevate") is True, (
+        "elevate changes the machine (it launches an elevated process)")
+
+
+def test_get_on_elevate_is_405(live_server):
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(live_server + "/api/elevate", timeout=20) as r:
+            code = r.status
+    except urllib.error.HTTPError as exc:
+        code = exc.code
+    assert code == 405, f"GET /api/elevate must be refused, got {code}"
