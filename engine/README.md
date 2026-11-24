@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (701 tests: 690 here, 11 that only a real Windows machine can run)
+## What works today (707 tests: 696 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -543,6 +543,25 @@ of those tests read the console as **text**. The page parsed. It never ran.
     it *before* setting the text, so where it is unavailable (old WebView2, a
     detached node) the throw took the message with it and the button appeared
     dead. It is now `reveal()`, which cannot throw.
+93. **The breadcrumb was a browser-default grey box.** `renderCrumbs()` builds
+    `<button>` elements; the reset rule targeted `.crumbs a`. A button inherits
+    no typography, no colour and no background, so it painted as the default
+    grey rectangle — the white box at the top of Home in the 0.5.1 screenshot.
+    The rule now names the element that is actually created, and a test compares
+    the two so they cannot drift apart again.
+94. **Feed timestamps were clipped by their own scrollbar** — every row read
+    "15h ag". `scrollbar-gutter:stable`, padding reserved, and `.time` fixed.
+95. **The column was capped at 1240px** on any window wider than that, leaving
+    the right third of a 1600px screen empty.
+96. **`prompt()`, `confirm()` and `alert()` are suppressed in WebView2**, the
+    runtime this app ships inside. Block-a-driver, Delete-a-recipe, Panic and
+    Verify-journal were silent no-ops in the shipped build while passing every
+    test. Replaced with in-window dialogs (`ask` / `confirmIt`) that support
+    Escape and Enter, a danger variant, and a toast for the journal result.
+97. **`window.open` is blocked there too**, so "Open printable report" did
+    nothing. The report is fetched and shown in an iframe with a Print button.
+
+93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no
     `unhandledrejection`. A broken handler and a handler that worked looked
     identical from the outside. Uncaught errors now toast on screen and POST to
