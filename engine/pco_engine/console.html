@@ -32,13 +32,25 @@
        color:var(--faint);border:1px solid transparent;background:none;transition:all var(--t2) ease}
   .nav:hover{color:var(--ink);background:var(--panel-2);transform:translateY(-1px)}
   .nav[aria-current="page"]{color:var(--lime);background:rgba(182,242,74,.08);border-color:rgba(182,242,74,.25)}
-  .nav svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.7;
+  /* The rail says its four names out loud. 48px was wide enough for a glyph and
+     nothing else, which left a new user guessing what a wrench does. */
+  .nav{width:64px;height:52px;grid-template-rows:auto auto;gap:2px;padding:6px 2px}
+  .navLabel{font-size:10px;letter-spacing:.02em;line-height:1;opacity:.85}
+  .nav[aria-current="page"] .navLabel{opacity:1}
+  .nav svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.7;
            stroke-linecap:round;stroke-linejoin:round}
   .rail .spacer{flex:1}
   .railSep{width:26px;height:1px;background:var(--line);margin:8px 0}
   .logoMark{width:26px;height:26px;display:block;border-radius:7px;
     background:var(--lime);clip-path:polygon(38% 0,58% 0,86% 100%,66% 100%);}
   .nav.more{color:var(--dim)}
+  /* A map, not a maze: Home › Look › Themes, with each part clickable. */
+  .crumbs{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--faint);
+          margin-bottom:6px;min-height:16px}
+  .crumbs a{color:var(--dim);cursor:pointer;text-decoration:none;border:none;
+            background:none;padding:0;font:inherit}
+  .crumbs a:hover{color:var(--lime)}
+  .crumbs .here{color:var(--ink)}
   .flyout{position:absolute;left:74px;top:50%;transform:translateY(-50%);z-index:60;
     display:none;flex-direction:column;gap:2px;min-width:210px;max-height:70vh;overflow:auto;
     background:#11151b;border:1px solid #2b3342;border-radius:13px;padding:8px;
@@ -213,20 +225,27 @@
     </div>
 
     <!-- Four places to be. Everything else is one click deeper, or Ctrl+K.
-         A rail of sixteen icons is the problem this app exists to avoid. -->
-    <button class="nav primary" data-view="home" aria-current="page" title="Home — is anything wrong?">
+         A rail of sixteen icons is the problem this app exists to avoid — but so
+         is a rail of four glyphs with no words under them, which is what shipped.
+         Each button carries its name now, and .navLabel is removed from the tab
+         order so the whole group is still one Tab stop per item. -->
+    <button class="nav primary" data-view="home" aria-label="Home" aria-current="page" title="Home — is anything wrong?">
       <svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>
+      <span class="navLabel" aria-hidden="true">Home</span>
     </button>
-    <button class="nav primary" data-view="look" title="Look — make it mine">
+    <button class="nav primary" data-view="look" aria-label="Look" title="Look — make it mine">
       <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18c1.5 0 2-1 2-2s-1-2 0-3 4-.5 4-3a9 9 0 00-6-10z"/>
         <circle cx="8.5" cy="10" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="15.5" cy="10" r="1"/></svg>
+      <span class="navLabel" aria-hidden="true">Look</span>
     </button>
-    <button class="nav primary" data-view="speed" title="Speed — make it faster">
+    <button class="nav primary" data-view="speed" aria-label="Speed" title="Speed — make it faster">
       <svg viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6z"/></svg>
+      <span class="navLabel" aria-hidden="true">Speed</span>
     </button>
-    <button class="nav primary" data-view="fix" title="Fix — something broke">
+    <button class="nav primary" data-view="fix" aria-label="Fix" title="Fix — something broke">
       <svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 105.3 5.3l-1.8-1.8-3.5 3.5"/>
         <path d="M11 13l-7 7"/><path d="M4 4l16 16"/></svg>
+      <span class="navLabel" aria-hidden="true">Fix</span>
     </button>
 
     <div class="railSep"></div>
@@ -245,6 +264,7 @@
   <main>
     <header class="top">
       <div>
+        <div class="crumbs" id="crumbs" aria-label="You are here"></div>
         <h1 id="title">Overview</h1>
         <div class="sub" id="subtitle">Loading the engine…</div>
       </div>
@@ -286,6 +306,13 @@
         <div id="themeDiffBody" class="sub"></div>
       </div>
       <div class="gallery" id="galleryGrid"></div>
+      <!-- The answer to picking a tile, directly under the tile. The Apply
+           buttons above the grid are out of view once you scroll to tile nine. -->
+      <div class="card" id="galleryPick"
+           style="display:none;margin-top:14px;position:sticky;bottom:12px;
+                  z-index:3;box-shadow:0 8px 28px rgba(0,0,0,.45)">
+        <div class="row between" style="flex-wrap:wrap;gap:10px"></div>
+      </div>
       <div class="card" style="margin-top:16px">
         <h2>Make your own</h2>
         <div class="sub">Paste a theme file someone shared. It is validated and
@@ -922,11 +949,42 @@ const $ = (s) => document.querySelector(s);
 const el = (t, c, txt) => { const n = document.createElement(t); if (c) n.className = c;
   if (txt != null) n.textContent = txt; return n; };
 const fmtGB = (b) => (b / 1e9).toFixed(b > 1e10 ? 0 : 1) + " GB";
+// scrollIntoView is optional and can throw (old WebView2, a detached node, a
+// stub in a test). It is a nicety; it must never take the caller's error
+// message with it, which is what happened when it was called before the text.
+const reveal = (node) => {
+  try { node?.scrollIntoView?.({ behavior: "smooth", block: "nearest" }); }
+  catch (_) { /* scrolling is not worth an exception */ }
+};
 const ago = (ms) => { const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 60) return "just now"; if (s < 3600) return Math.floor(s / 60) + "m ago";
   if (s < 86400) return Math.floor(s / 3600) + "h ago"; return Math.floor(s / 86400) + "d ago"; };
 let STATE = {};
 
+
+/* A screen that fails silently is the worst kind: the button moves, nothing
+   happens, and there is no way to tell whether it worked. The ten chained
+   .append() calls and the scrollIntoView throw were all invisible this way.
+   Anything uncaught now says so on screen and goes to the engine log. */
+const REPORTED = new Set();
+function reportJsError(what, err) {
+  const key = what + ":" + ((err && err.message) || err);
+  if (REPORTED.has(key)) return;          // do not spam the same failure
+  REPORTED.add(key);
+  const msg = (err && err.message) || String(err) || "unknown error";
+  toast("Something in the window failed: " + msg, true);
+  try {
+    fetch("/api/client-error", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ where: what, message: msg,
+                             stack: String((err && err.stack) || "").slice(0, 2000) }),
+    }).catch(() => {});
+  } catch (_) { /* the report is best-effort */ }
+}
+window.addEventListener("error", (e) =>
+  reportJsError((e.filename || "window") + ":" + (e.lineno || 0), e.error || e.message));
+window.addEventListener("unhandledrejection", (e) =>
+  reportJsError("promise", e.reason));
 
 async function api(path, body) {
   const opt = body ? { method: "POST", headers: { "content-type": "application/json" },
@@ -1018,6 +1076,7 @@ function show(view) {
     b.setAttribute("aria-current", b.dataset.view === parent ? "page" : "false"));
   $("#title").textContent = TITLES[view][0];
   $("#subtitle").textContent = TITLES[view][1];
+  renderCrumbs(view);
   if (view === "sens") loadSens();
   if (view === "space") loadSpace();
   if (view === "startup") loadStartup();
@@ -1046,6 +1105,31 @@ function renderHub(which) {
     card.onclick = () => show(v);
     box.append(card);
   });
+}
+
+const GROUP_NAME = { home: "Home", look: "Look", speed: "Speed", fix: "Fix" };
+
+function renderCrumbs(view) {
+  const box = $("#crumbs");
+  if (!box) return;
+  const parent = Object.entries(GROUPS)
+    .find(([, vs]) => vs.includes(view))?.[0] || view;
+  box.replaceChildren();
+  const crumb = (label, go) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (go && go !== view) b.onclick = () => openPrimary(go);
+    else b.className = "here";
+    return b;
+  };
+  const sep = () => { const i = document.createElement("span"); i.textContent = "›"; return i; };
+  const name = GROUP_NAME[parent] || "Home";
+  if (view === parent) {          // a group page: just its own name
+    box.append(crumb(name, null));
+    return;
+  }
+  // A leaf: Group › Page. The group part goes back to the hub.
+  box.append(crumb(name, parent), sep(), crumb(TITLES[view][0], null));
 }
 
 function openPrimary(which) {
@@ -1160,7 +1244,7 @@ function renderFindings(data) {
 async function loadReceipts() {
   const { receipts } = await api("/api/receipts");
   const tb = $("#receipts"); tb.replaceChildren();
-  if (!receipts.length) { tb.append(el("tr")).append(el("td", "empty", "Nothing yet.")); }
+  if (!receipts.length) { tb.append(el("tr"), el("td", "empty", "Nothing yet.")); }
   receipts.forEach((r) => {
     const tr = el("tr");
     tr.append(el("td", "mono", ago(r.at)), el("td", null, r.title),
@@ -1255,7 +1339,7 @@ async function fixSafe() {
 function renderVaultRuns(runs) {
   const tb = $("#vaultRuns"); tb.replaceChildren();
   if (!runs || !runs.length) {
-    tb.append(el("tr")).append(el("td", "empty", "Nothing in the vault."));
+    tb.append(el("tr"), el("td", "empty", "Nothing in the vault."));
     return;
   }
   runs.forEach((r) => {
@@ -1309,7 +1393,7 @@ async function scanClean(run) {
         rules.append(tr);
       });
     }
-    if (!rules.children.length) rules.append(el("tr")).append(el("td", "empty", "Scan to fill this."));
+    if (!rules.children.length) rules.append(el("tr"), el("td", "empty", "Scan to fill this."));
     await refreshAll();
   } catch (err) { toast(err.message, true); }
   busy(btn, false);
@@ -1333,7 +1417,7 @@ async function loadDns() {
         el("td", null, String(e.payload.hits || ""))); $("#dnsTop").append(tr);
     });
     if (!$("#dnsTop").children.length)
-      $("#dnsTop").append(el("tr")).append(el("td", "empty", "No hits yet."));
+      $("#dnsTop").append(el("tr"), el("td", "empty", "No hits yet."));
   } catch (err) { /* non-fatal */ }
 }
 
@@ -1423,7 +1507,7 @@ async function loadSpace() {
       : "Take two samples a day apart to get a forecast.";
     const tb = $("#spaceTable"); tb.replaceChildren();
     if (!grew.available || !grew.changed.length) {
-      tb.append(el("tr")).append(el("td", "empty", "Nothing changed in the window."));
+      tb.append(el("tr"), el("td", "empty", "Nothing changed in the window."));
     } else {
       grew.changed.forEach((d) => {
         const tr = el("tr");
@@ -1491,7 +1575,7 @@ async function loadStartup() {
       tb.append(tr);
     });
     if (!d.knowledge || !d.knowledge.length)
-      tb.append(el("tr")).append(el("td", "empty", "Nothing inventoried."));
+      tb.append(el("tr"), el("td", "empty", "Nothing inventoried."));
   } catch (err) { toast(err.message, true); }
 }
 
@@ -1551,7 +1635,7 @@ async function loadLab() {
     const d = await api("/api/peripheral");
     const tb = $("#labHistory"); tb.replaceChildren();
     if (!d.history || !d.history.length) {
-      tb.append(el("tr")).append(el("td", "empty", "No tests run yet."));
+      tb.append(el("tr"), el("td", "empty", "No tests run yet."));
       return;
     }
     d.history.forEach((t) => {
@@ -1671,7 +1755,7 @@ function renderSessionList(list) {
   const tb = $("#sessions"); tb.replaceChildren();
   sessionsRendered = true;
   if (!list || !list.length) {
-    tb.append(el("tr")).append(el("td", "empty", "No sessions yet — watch one."));
+    tb.append(el("tr"), el("td", "empty", "No sessions yet — watch one."));
     return;
   }
   list.forEach((s) => {
@@ -1781,7 +1865,7 @@ async function loadAutopsy() {
     const data = await api("/api/autopsy");
     const tb = $("#autopsyList"); tb.replaceChildren();
     if (!data.autopsies.length) {
-      tb.append(el("tr")).append(el("td", "empty", "Nothing watched yet."));
+      tb.append(el("tr"), el("td", "empty", "Nothing watched yet."));
       return;
     }
     data.autopsies.forEach((a) => {
@@ -2185,9 +2269,11 @@ async function loadRecipes() {
     const d = await api("/api/recipes");
     const tb = $("#recipeBody"); tb.replaceChildren();
     if (!d.recipes.length) {
-      tb.append(el("tr")).append(el("td", "empty",
-        "No recipes yet. Write a sentence on the left."));
-      tb.querySelector("td").colSpan = 5;
+      const tr = el("tr");
+      const td = el("td", "empty", "No recipes yet. Write a sentence on the left.");
+      td.colSpan = 5;
+      tr.append(td);
+      tb.append(tr);
       return;
     }
     d.recipes.forEach((r) => {
@@ -2596,6 +2682,30 @@ async function loadGallery() {
     card.onclick = () => {
       selectedTheme = t.id;
       grid.querySelectorAll(".tile").forEach((n) => n.classList.toggle("on", n === card));
+      // A highlight is not an answer. Before this, clicking a wallpaper changed
+      // the outline of the tile and nothing else, which reads as "the button
+      // does nothing" — the tile stays put, the wallpaper does not change, and
+      // the Apply button is above the grid, off-screen on a small window.
+      // Say what was selected and put the action directly under the tile.
+      const bar = $("#galleryPick");
+      if (bar) {
+        bar.replaceChildren();
+        const label = el("div");
+        label.append(el("b", null, t.name));
+        const note = el("div", "sub", t.note || "theme");
+        note.style.marginTop = "2px";
+        label.append(note);
+        bar.append(label);
+        const apply = el("button", "btn primary", "Use this look");
+        apply.style.marginLeft = "auto";
+        apply.onclick = (ev) => {
+          ev.stopPropagation();
+          $("#themeApplyActive")?.click();
+        };
+        bar.append(apply);
+        bar.style.display = "";
+      }
+      reveal(card);
     };
     grid.append(card);
   });
@@ -2617,7 +2727,7 @@ function spotifyReport(title, body, bad) {
   const box = $("#spotifyOutBody");
   box.style.whiteSpace = "pre-wrap";
   box.textContent = body || "";
-  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  reveal(card);
 }
 
 async function loadSpotify() {
@@ -2758,7 +2868,7 @@ $("#spotifyFull")?.addEventListener("click", async (ev) => {
     img.alt = "full-size preview";
     img.style.cssText = "width:100%;border-radius:12px;display:block;margin-top:6px";
     box.append(img);
-    card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    reveal(card);
   });
 });
 
@@ -2789,7 +2899,7 @@ $("#spotifyExport")?.addEventListener("click", async (ev) => {
     box.style.whiteSpace = "pre-wrap";
     box.textContent = (copied ? "Copied to the clipboard.\n\n" : "Clipboard blocked — select and copy below.\n\n")
       + r.install.join(" ") + "\n\n" + both;
-    card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    reveal(card);
   });
 });
 
@@ -2813,7 +2923,7 @@ function themeReport(title, body, bad) {
   box.textContent = body || "";
   // The card sits directly under the buttons now, but if the user has scrolled
   // into the grid it may still be above the fold.
-  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  reveal(card);
 }
 
 /* Runs one gallery action with a visible busy state and a single failure path.
@@ -3112,9 +3222,48 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { $("#psaChoices").style.display = "none"; }
 });
 
-refreshAll();
-loadDns();
-loadConsent();
+/* ------------------------------------------------------------------ boot
+   The first version called three loaders and stopped. Everything else — the
+   theme gallery, the cleaner, the shell switches, workspaces, Spotify — loaded
+   only when you happened to click the tab that needed it, so the window opened
+   on a nearly empty page whose hub panels were declared in the markup but never
+   filled in, under a subtitle that said "Loading the engine…" forever.
+
+   Now the home screen is complete before the user sees it: the hubs are drawn,
+   the subtitle says where they are, and the things the home screen displays are
+   fetched. The rest still loads on first visit to its tab, which keeps startup
+   cheap, but every tab shows a skeleton instead of an empty box while it does.
+*/
+function paintHubs() {
+  ["look", "speed", "fix"].forEach((which) => renderHub(which));
+}
+
+function setSubtitle(text) { $("#subtitle").textContent = text; }
+
+(async function boot() {
+  paintHubs();
+  renderCrumbs("home");
+  show("home");
+  setSubtitle("Reading this PC…");
+  try {
+    await refreshAll();            // status, receipts, every card on Home
+    await Promise.allSettled([loadDns(), loadConsent()]);
+    const st = STATE.status || {};
+    const ck = st.checkup;
+    setSubtitle(ck
+      ? "Nothing is running in the background. Pick a tab to look around."
+      : "No checkup yet. Home → Run a checkup tells you what is worth fixing.");
+  } catch (err) {
+    setSubtitle("The engine answered, but this page could not read it.");
+    toast(err.message, true);
+  }
+  // Say so if a click inside a tab never revealed anything.
+  document.querySelectorAll(".sect").forEach((sect) => {
+    if (!sect.querySelector(".skeleton") && !sect.children.length) {
+      sect.append(el("p", "sub", "Nothing to show here yet."));
+    }
+  });
+})();
 </script>
 </body>
 </html>

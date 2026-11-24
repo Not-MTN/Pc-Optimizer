@@ -28,3 +28,6 @@ Thumbs.db
 
 # Test-run artefact: app.py writes this when it cannot start.
 keel-startup-error.txt
+
+# Local browser harness for exercising the console (node/jsdom). Not shipped.
+.pwtest/

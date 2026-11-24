@@ -409,6 +409,23 @@ class Handler(BaseHTTPRequestHandler):
                                           source="console")
                 self._json(200 if out.get("applied") else 409, out)
                 return
+            if path == "/api/client-error":
+                # The window reports its own uncaught errors here. Without this a
+                # JS throw is invisible: the button moves and nothing happens,
+                # which is exactly how ten broken empty-state rows shipped.
+                where = str(args.get("where", "?"))[:200]
+                message = str(args.get("message", "?"))[:500]
+                stack = str(args.get("stack", ""))[:2000]
+                line = f"[client] {where}: {message}\n{stack}\n"
+                print(line, file=sys.stderr, flush=True)
+                try:
+                    from .app import log_path
+                    with open(log_path(), "a", encoding="utf-8") as fh:
+                        fh.write(line)
+                except Exception:      # noqa: BLE001 - reporting is best-effort
+                    pass
+                self._json(200, {"logged": True})
+                return
             if path == "/api/undo":
                 with _LOCK:
                     self._json(200, svc.undo(_ident(args, "tx_id")))
