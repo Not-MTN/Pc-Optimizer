@@ -560,3 +560,80 @@ def test_the_restore_toast_distinguishes_already_back_from_failed():
         "the restore button must say when there is nothing left to put back")
     assert "Nothing came back" in html, (
         "a restore where every item failed must not read like a quiet success")
+
+
+def test_no_button_returns_from_an_empty_field_without_saying_why():
+    """A handler that gives up on an empty input must say so on screen.
+
+    "Set refresh rate" with an empty box returned in silence: no toast, no note,
+    no change — the user clicks and the app is dead. That is the original
+    complaint ("nothing did anything") in its smallest form, and reading the
+    source did not find it; clicking every button did.
+
+    This is a text check with a deliberately small job: find guards that bail out
+    of a *user-initiated* handler without a message. Three exemptions, each
+    earned by a false positive during mutation testing:
+
+    * element guards — `const box = $("#hub-x"); if (!box) return;` — the screen
+      is absent from this build and there is nobody to tell;
+    * parameter guards — `function busy(btn, on) { if (!btn) return; }` — the
+      caller passed nothing to act on, and toasting there would be noise;
+    * delegates — `const doc = await checkImport(); if (!doc) return;` — the
+      awaited function already wrote its own message to the screen.
+
+    Anything else must have called toast() / set textContent / opened a dialog
+    earlier in the same function. Mutation-checked both ways against the real
+    bug: reintroducing `if (!hz) return;` fails this test, and the fixed file
+    passes it.
+    """
+    import re
+    html = (CONSOLE).read_text(encoding="utf-8")
+    lines = html.split("\n")
+    offenders = []
+    for m in re.finditer(r"^[ \t]*if \(!(\w+)\) return;", html, re.M):
+        name = m.group(1)
+        line_no = html[:m.start()].count("\n")
+        start = line_no
+        while start > 0 and not re.search(r"\bfunction\b[\w ]*\(|=>\s*\{",
+                                          lines[start]):
+            start -= 1
+        head = lines[start]
+        window = "\n".join(lines[start:line_no])
+        visible = any(sig in window for sig in
+                      ("toast(", "textContent =", "openDialog(",
+                       "await confirmIt(", "await ask("))
+        # `const box = $("#hub-x")` IS the element — if it is absent, so is the
+        # screen. `const q = $("#askBox").value.trim()` is a *value the user
+        # typed*; the element is right there and only the text is empty, so it
+        # needs a message. The `.value` is the whole difference.
+        element_guard = re.search(
+            rf"(?:const|let|var)\s+{re.escape(name)}\s*=\s*\$\w*\("
+            rf"[^()\n]*\)\s*;", window)
+        param_guard = bool(re.search(
+            rf"(?:function\s*\w*\s*|\()\s*(?:[\w, ]*\b)?{re.escape(name)}\b"
+            rf"\s*[,)]", head))
+        delegate = re.search(
+            rf"(?:const|let|var)\s+{re.escape(name)}\s*=\s*await\s", window)
+        if not (visible or element_guard or param_guard or delegate):
+            offenders.append(f"{name} (line {line_no + 1})")
+    assert not offenders, (
+        "these guards return from a click without telling the user anything: "
+        + ", ".join(offenders))
+
+
+def test_the_report_button_can_fail_and_says_so():
+    """"Build report" had no busy state and no catch.
+
+    If /api/report failed the click did nothing and said nothing. It also dumped
+    the payload as raw JSON, so "by kind" rendered as {"checkup":2,...} mashed
+    against the next label. Both are the same defect: output the user cannot
+    read and a failure the user cannot see.
+    """
+    html = (CONSOLE).read_text(encoding="utf-8")
+    start = html.index('$("#reportBtn").addEventListener')
+    block = html[start:start + 2200]
+    assert "busy(btn, true)" in block, "the button must show that it is working"
+    assert "catch (err)" in block, "a failed report must say so"
+    assert "toast(" in block, "the failure has to be visible"
+    assert "JSON.stringify(v)" not in block, (
+        "raw JSON is not a report; render the value readably")

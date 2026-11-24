@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (747 tests: 736 here, 11 that only a real Windows machine can run)
+## What works today (749 tests: 738 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -692,6 +692,22 @@ of those tests read the console as **text**. The page parsed. It never ran.
      naming the object, a missing argument is a **400** naming the field. An
      unknown palette command is a bad request, not a missing object, so it is a
      400 too.
+
+117. **Clicking every button found two silent ones the source did not show.**
+     "Set refresh rate" with an empty box did `if (!hz) return;` — no toast, no
+     note, no change. The ask box did the same with an empty question.
+118. **"Build report" had no busy state and no error path.** If `/api/report`
+     failed the click did nothing and said nothing; and the payload was dumped
+     as raw JSON, so "by kind" read as `{"checkup":2,...}` mashed against the
+     next label. It now shows a spinner, says why when it fails, and renders
+     `checkup: 2 · consent: 4 · clean: 1`.
+
+     The other four "silent" buttons the sweep reported — Save wallpaper, Set
+     as my wallpaper, Apply it, Record a click, Save recipe, Block — were all
+     working. The harness measured only card text and toasts, so it could not
+     see a dialog opening, a counter incrementing, or `themeReport` writing to
+     `#themeDiffCard`. The lesson is in the harness: when a check reports a
+     dead button, prove it dead before believing it. Two of six were real.
 
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no

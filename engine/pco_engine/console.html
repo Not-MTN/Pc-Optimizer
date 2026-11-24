@@ -1886,7 +1886,17 @@ async function runPalette(cmd) {
 
 async function askJournal() {
   const q = $("#askBox").value.trim();
-  if (!q) return;
+  // Enter on an empty box used to do nothing at all. The box is the first
+  // thing on the screen that looks like it should answer questions; a silent
+  // no-op there reads as "the app is broken".
+  if (!q) {
+    // A toast, not a corner of the overlay: #palList is the palette scrim, which
+    // is not on screen here, so writing to it would be the same silence.
+    toast("Type a question first — try \u201cwhat did I change today\u201d.", true);
+    $("#askBox").placeholder = "Type a question, e.g. what did I change today";
+    $("#askBox").focus();
+    return;
+  }
   try {
     const d = await api("/api/ask", { question: q });
     const box = $("#palList");
@@ -3326,8 +3336,24 @@ function startCountdown(seconds) {
 }
 
 $("#displayApply")?.addEventListener("click", async () => {
-  const hz = parseInt($("#displayHz").value || "0", 10);
-  if (!hz) return;
+  const raw = ($("#displayHz").value || "").trim();
+  const hz = parseInt(raw, 10);
+  // `if (!hz) return;` was a silent dead button: empty field, click, nothing
+  // anywhere — no toast, no note, no change. Say what is wrong and what to type.
+  if (!raw) {
+    $("#displayNote").textContent =
+      "Type the refresh rate you want in the box first — for example 144.";
+    toast("Enter a refresh rate first, for example 144.", true);
+    $("#displayHz").focus();
+    return;
+  }
+  if (!Number.isFinite(hz) || hz < 24 || hz > 500) {
+    $("#displayNote").textContent =
+      "\u201c" + raw + "\u201d is not a refresh rate. Use a whole number of Hz between 24 and 500.";
+    toast("Not a refresh rate: " + raw, true);
+    $("#displayHz").focus();
+    return;
+  }
   const r = await api("/api/display/set", { hz });
   if (!r.applied) { $("#displayNote").textContent = r.reason || "Windows refused it."; return; }
   startCountdown(r.confirm_within || 12);
@@ -3389,12 +3415,32 @@ $("#benchBtn").addEventListener("click", async () => {
   busy($("#benchBtn"), false);
 });
 $("#reportBtn").addEventListener("click", async () => {
-  const r = await api("/api/report");
-  const w = $("#week"); w.replaceChildren();
-  Object.entries(r).forEach(([k, v]) => {
-    w.append(el("b", null, k.replace(/_/g, " ")), el("span", null,
-      typeof v === "object" ? JSON.stringify(v) : String(v)));
-  });
+  // A button with no busy state and no error path. If /api/report failed, the
+  // click did nothing and said nothing; and the payload was dumped as raw JSON
+  // so "by kind" read as {"checkup":2,...} mashed against the next label.
+  const btn = $("#reportBtn");
+  busy(btn, true);
+  try {
+    const r = await api("/api/report");
+    const w = $("#week"); w.replaceChildren();
+    const readable = (v) => {
+      if (v === null || v === undefined) return "\u2014";
+      if (Array.isArray(v)) return v.length ? v.map(readable).join(", ") : "none";
+      if (typeof v === "object") {
+        const parts = Object.entries(v).map(([k2, v2]) =>
+          k2.replace(/[_-]/g, " ") + ": " + readable(v2));
+        return parts.length ? parts.join(" · ") : "none";
+      }
+      if (typeof v === "boolean") return v ? "yes" : "no";
+      return String(v);
+    };
+    Object.entries(r).forEach(([k, v]) => {
+      w.append(el("b", null, k.replace(/_/g, " ")), el("span", null, readable(v)));
+    });
+    toast("Report built from this machine's journal.");
+  } catch (err) {
+    toast("The report could not be built: " + err.message, true);
+  } finally { busy(btn, false); }
 });
 $("#watchBtn").addEventListener("click", watchGame);
 $("#spaceSample").addEventListener("click", async () => {
