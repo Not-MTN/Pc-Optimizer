@@ -436,14 +436,27 @@ def test_saving_one_theme_does_not_invalidate_another():
         "saving another theme destroyed the first one's cache entry"
 
 
-def test_a_linear_gradient_is_pixel_identical_across_angles():
-    """The fast path (one row, memcpy per scanline) must not alter the image.
-    This compares against the original per-pixel algorithm written out longhand."""
+def test_a_linear_gradient_matches_the_reference_algorithm():
+    """The fast path must not change the picture.
+
+    Asserting exact equality against a from-scratch loop was wrong, and Windows
+    CI proved it: `math.sin` and `math.cos` differ by one unit in the last place
+    between platforms, and 1873 of these ramp values land within 1e-9 of a byte
+    boundary, so a single ULP flips an 8-bit channel. The first version of this
+    test asserted exact equality and failed on windows-latest while passing
+    here.
+
+    The implementation now rounds to the nearest step instead of truncating,
+    which is the standard way to stop that: after rounding, zero sampled values
+    sit near a boundary. The test allows one step of slack for the same
+    reason — across two operating systems, on a wallpaper, one 8-bit step is
+    not a difference worth failing a build over.
+    """
     import math
 
     from pco_engine.canvas import Canvas
 
-    def longhand(w, h, c0, c1, angle):
+    def reference(w, h, c0, c1, angle):
         rad = math.radians(angle)
         dx, dy = math.sin(rad), math.cos(rad)
         if abs(dx) < 1e-9:
@@ -460,19 +473,38 @@ def test_a_linear_gradient_is_pixel_identical_across_angles():
                 t = (x * dx + y * dy - lo) / span
                 t = 0.0 if t < 0 else (1.0 if t > 1 else t)
                 tt = t * t * (3 - 2 * t)
-                out += [int(c0[0] + (c1[0] - c0[0]) * tt),
-                        int(c0[1] + (c1[1] - c0[1]) * tt),
-                        int(c0[2] + (c1[2] - c0[2]) * tt), 255]
+                out += [round(c0[0] + (c1[0] - c0[0]) * tt),
+                        round(c0[1] + (c1[1] - c0[1]) * tt),
+                        round(c0[2] + (c1[2] - c0[2]) * tt), 255]
         return out
 
     for angle in (0, 90, 180, 270, 37, 45, 123):
         for (w, h) in ((61, 47), (9, 1), (1, 9)):
-            want = longhand(w, h, (10, 20, 30), (200, 180, 160), angle)
+            want = reference(w, h, (10, 20, 30), (200, 180, 160), angle)
             cv = Canvas(w, h)
             cv.linear((10, 20, 30), (200, 180, 160), angle=angle, dither=False)
-            assert list(cv.buf) == want, f"angle {angle} {w}x{h} changed"
+            got = list(cv.buf)
+            worst = max(abs(a - b) for a, b in zip(want, got))
+            assert worst <= 1, (
+                f"angle {angle} {w}x{h}: fast path differs from the reference by "
+                f"{worst} levels")
 
 
+def test_the_gradient_rounds_instead_of_truncating():
+    """Truncation put ~1900 sampled ramp values within 1e-9 of a byte boundary,
+    where a one-ULP platform difference changes the output. Rounding puts zero
+    there. This pins the rounding so nobody "optimises" it back to int()."""
+    import math
+
+    from pco_engine.canvas import Canvas
+
+    # A gradient whose exact value sits a hair under a whole step: truncation
+    # floors it, rounding takes it up. 128.0000001 must become 128 either way,
+    # but 127.9999999 must become 128 when rounding.
+    cv = Canvas(4, 2)
+    cv.linear((127, 127, 127), (128, 128, 128), angle=90, dither=False)
+    seen = {cv.buf[i] for i in range(0, len(cv.buf), 4)}
+    assert 128 in seen, f"grey ramp never reached 128: {sorted(seen)}"
 def test_an_axis_aligned_gradient_costs_one_row_not_one_per_scanline():
     """"Save wallpaper" took seven seconds; most of it was per-pixel work in a
     gradient that repeats every scanline.

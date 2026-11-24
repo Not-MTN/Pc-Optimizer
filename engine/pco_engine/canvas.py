@@ -115,9 +115,16 @@ class Canvas:
             return t * t * (3 - 2 * t)
 
         def px(tt: float) -> bytes:
-            return bytes((int(c0[0] + (c1[0] - c0[0]) * tt),
-                          int(c0[1] + (c1[1] - c0[1]) * tt),
-                          int(c0[2] + (c1[2] - c0[2]) * tt), 255))
+            # round(), not int(). About one ramp value in a hundred lands within
+            # 1e-9 of a byte boundary, and Windows and Linux disagree in the last
+            # bit of sin/cos — so truncation produced a different 8-bit value on
+            # the two platforms for the same gradient. That is not a difference
+            # worth having: nothing about a wallpaper depends on which side of
+            # 127.99999999999997 a pixel falls. Rounding moves the decision to the
+            # nearest whole step, where a one-ULP difference cannot change it.
+            return bytes((round(c0[0] + (c1[0] - c0[0]) * tt),
+                          round(c0[1] + (c1[1] - c0[1]) * tt),
+                          round(c0[2] + (c1[2] - c0[2]) * tt), 255))
 
         # A linear gradient is separable. When it is axis-aligned one of the two
         # coordinates drops out entirely: a horizontal ramp has one row repeated
