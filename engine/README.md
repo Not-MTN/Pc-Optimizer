@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (694 tests: 683 here, 11 that only a real Windows machine can run)
+## What works today (701 tests: 690 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -508,6 +508,45 @@ button work?* It does. But following it exposed a blind spot in the fuzzing.
     number belongs, a NaN, an infinity, or a fractional DPI are all 400s that
     name the field. Fractional DPI is refused rather than truncated — silently
     turning 800.5 into 800 would change what the user asked for.
+
+Then the app was downloaded and used, and the report was:
+*"nothing did anything — you press buttons, select wallpapers, hit cleanup and
+nothing happens, the tabs and going around is bad and confusing."* Every word of
+that was true, and none of it was caught by 694 passing tests, because every one
+of those tests read the console as **text**. The page parsed. It never ran.
+
+88. **`Element.append()` returns `undefined`.** So
+    `tb.append(el("tr")).append(el("td", …))` throws `TypeError: Cannot read
+    properties of undefined`. There were **ten** of these, and every one was in
+    an *empty-state* branch — the branch that runs on a fresh install, on first
+    open, and immediately after cleaning. `loadReceipts()` threw inside
+    `refreshAll()`, so the second half of `renderStatus()` never executed:
+    the cleanup total stayed `—`, the journal count stayed `engine`, the digest
+    stayed `—`. That is what "nothing happens" looked like from outside.
+    Eight are now `append(a, b)`; two are explicit cells.
+89. **The window opened on three empty panels.** The `#hub-look`, `#hub-speed`
+    and `#hub-fix` containers were declared in the markup and filled in by
+    `openPrimary()` — which only runs when a nav button is clicked. On launch
+    there was no map at all: three blank boxes, and a subtitle reading
+    *"Loading the engine…"* that nothing ever replaced. Boot now paints the
+    hubs, sets a subtitle that says what to do next, and loads what Home shows.
+90. **The nav rail was four unlabelled glyphs.** A house, a palette, a lightning
+    bolt and a wrench, each 48px, with no words. You had to hover for a tooltip
+    or guess. Each now carries its name underneath, and there is a breadcrumb —
+    `Home › Look › Themes` — with every part clickable.
+91. **Picking a wallpaper applied nothing.** Clicking a tile set `selectedTheme`
+    and moved the outline; the Apply buttons sat *above* the fifteen-tile grid,
+    off-screen once you scrolled to the tile you wanted, and the result card
+    was below it. A ~1800px round trip. There is now a sticky pick bar directly
+    under the grid: theme name, description, and **Use this look**.
+92. **`scrollIntoView` could swallow the error message.** `themeReport()` called
+    it *before* setting the text, so where it is unavailable (old WebView2, a
+    detached node) the throw took the message with it and the button appeared
+    dead. It is now `reveal()`, which cannot throw.
+93. **A JavaScript throw was invisible.** No `window.onerror`, no
+    `unhandledrejection`. A broken handler and a handler that worked looked
+    identical from the outside. Uncaught errors now toast on screen and POST to
+    `/api/client-error`, which writes them to the engine log.
 
 ## The wallpaper engine
 
