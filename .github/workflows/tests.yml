@@ -1,0 +1,183 @@
+name: tests
+
+# The point of running on Windows is not "does Python work there". It is the one
+# thing this repo genuinely cannot prove on Linux: that the real registry, sc.exe,
+# schtasks.exe and powercfg.exe answer the way the mapping table assumes.
+#
+# The Linux job proves the *decisions*. The Windows job proves the *calls*.
+
+on:
+  push:
+    # `branches:` filters OUT tags, so a `tags:` list is required. Without this a
+    # pushed tag runs nothing and the release keeps a body with no binaries on it.
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# Attaching binaries to a release writes to the repository, and the default
+# GITHUB_TOKEN is read-only in that scope. Without this the build succeeds, the
+# release exists, and the upload fails with "Resource not accessible by
+# integration" — which looks like a code problem and is a permissions problem.
+permissions:
+  contents: write
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: engine · Linux (3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+      - name: test
+        working-directory: engine
+        run: python -m pytest -q
+
+  windows:
+    name: engine · Windows 11 + real registry
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+      - name: unit tests (mapping logic, same as Linux)
+        working-directory: engine
+        shell: pwsh
+        run: |
+          # Report which tests failed as an ::error:: annotation. The job log
+          # lives in blob storage and is not always reachable; annotations are
+          # served by the API. Without this a failure here is just "exit code 1".
+          python -m pytest -q --tb=line 2>&1 | Tee-Object -FilePath pytest-win.log
+          if ($LASTEXITCODE -ne 0) {
+            $bad = @(Get-Content pytest-win.log | Select-String -Pattern '^(FAILED|ERROR)' | Select-Object -First 8)
+            $msg = ($bad | ForEach-Object { $_.Line }) -join ' | '
+            if (-not $msg) { $msg = 'pytest failed; see artifact' }
+            if ($msg.Length -gt 850) { $msg = $msg.Substring(0, 850) }
+            Write-Output "::error title=Windows tests failed::$msg"
+            Write-Output "---- last 40 lines ----"
+            Get-Content pytest-win.log -Tail 40
+            exit 1
+          }
+
+      - name: keep the windows test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-log
+          path: engine/pytest-win.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: real-backend contract (the part Linux cannot run)
+        working-directory: engine
+        env:
+          PCO_REAL_WINDOWS: "1"
+        run: python -m pytest tests/test_real_windows.py -v -rs
+      - name: doctor (writes nothing; reports what this build can touch)
+        working-directory: engine
+        run: |
+          # Reset the console encoding first: the default is cp1252, and this
+          # output contains '·'. That is the bug this step originally caught.
+          python -m pco_engine.cli --backend windows doctor
+          # PowerShell's `>` writes UTF-16, so hand Python the redirect instead:
+          python -c "import sys,json,subprocess;r=subprocess.run([sys.executable,'-m','pco_engine.cli','--json','--backend','windows','doctor'],capture_output=True,text=True,encoding='utf-8');d=json.loads(r.stdout);print(json.dumps(d['backend'],indent=1));print('catalog addresses:',d['catalog_addresses'],'readable now:',d['readable_now'])"
+
+  # Builds the actual .exe and installer. Separate job so a packaging problem
+  # never masks a test failure, and so the artefacts are downloadable from the
+  # run page even on a pull request.
+  build:
+    name: package · Windows exe + installer
+    runs-on: windows-latest
+    needs: windows
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyinstaller pywebview
+
+      - name: install Inno Setup
+        run: |
+          choco install innosetup --no-progress -y
+          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+
+      - name: build
+        shell: pwsh
+        env:
+          # Pin the interpreter explicitly. `setup-python` puts 3.11 first on
+          # PATH, but build.ps1 used to probe `py -3` first, which resolves to
+          # the NEWEST install on the image — a different Python than the job
+          # selected, and the source of an opaque distutils failure on 3.12+.
+          KEEL_PYTHON: python
+        run: |
+          $ErrorActionPreference = 'Continue'
+          ./packaging/build.ps1 -SkipTests *>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            # The job log is only reachable through blob storage, which some
+            # clients cannot read. An ::error:: annotation is served by the API
+            # itself, so the reason travels even when the log does not.
+            $lines = @(Get-Content build.log)
+            $tail = ($lines | Select-Object -Last 10) -join " / "
+            if ($tail.Length -gt 850) { $tail = $tail.Substring(0, 850) }
+            Write-Output "::error title=build.ps1 failed::$tail"
+            Write-Output "---- last 60 lines ----"
+            $lines | Select-Object -Last 60 | ForEach-Object { Write-Output $_ }
+            exit $LASTEXITCODE
+          }
+
+      - name: keep the build log even when the build fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: verify the exe is a real PE32+ binary
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes("dist\Keel.exe")
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) { throw "not an MZ executable" }
+          $size = [math]::Round((Get-Item dist\Keel.exe).Length / 1MB, 1)
+          Write-Host "Keel.exe is a valid PE, $size MB"
+          if ($size -gt 40) { throw "exe is $size MB - something huge got bundled" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Keel-windows
+          path: |
+            dist/Keel.exe
+            dist/installer/*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      # Push a tag (or publish a release) and the binaries land on it by
+      # themselves. Workflow artifacts expire after 30 days and need a login to
+      # download; a release asset is a permanent, public download link, which is
+      # the thing a person who wants the app actually needs.
+      - name: attach the binaries to the release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Keel.exe
+            dist/installer/*.exe
+          fail_on_unmatched_files: true

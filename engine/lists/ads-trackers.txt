@@ -1,0 +1,106 @@
+# Keel — ad and tracker hosts
+# Selected, high-confidence entries only. A blocker that breaks a website is
+# worse than no blocker, and every one of these is a dedicated ad or analytics
+# endpoint, never a site's own domain.
+#
+# Format: one hostname or *.wildcard per line, as in the hosts-blocker world.
+# Regenerate anytime; nothing here is downloaded at runtime.
+
+# --- Google advertising & syndication (not google.com itself)
+*.doubleclick.net
+doubleclick.net
+*.googlesyndication.com
+googlesyndication.com
+*.googleadservices.com
+googleadservices.com
+*.google-analytics.com
+*.googletagmanager.com
+*.adservice.google.com
+*.partner.googleadservices.com
+*.2mdn.net
+pagead2.googlesyndication.com
+
+# --- Amazon advertising
+*.amazon-adsystem.com
+amazon-adsystem.com
+*.assoc-amazon.com
+
+# --- Meta / Facebook off-network tracking
+*.connect.facebook.net
+*.an.facebook.com
+*.pixel.facebook.com
+
+# --- X / Twitter ads
+*.ads-twitter.com
+*.analytics.twitter.com
+static.ads-twitter.com
+
+# --- Microsoft advertising + telemetry endpoints
+*.ads.msn.com
+*.adnxs.com
+adnxs.com
+*.bat.bing.com
+*.clarity.ms
+*.scorecardresearch.com
+scorecardresearch.com
+*.vortex.data.microsoft.com
+*.settings-win.data.microsoft.com
+telemetry.microsoft.com
+
+# --- Major ad exchanges & SSPs
+*.adsrvr.org
+adsrvr.org
+*.criteo.com
+criteo.com
+*.criteo.net
+*.taboola.com
+taboola.com
+*.outbrain.com
+outbrain.com
+*.pubmatic.com
+pubmatic.com
+*.rubiconproject.com
+rubiconproject.com
+*.openx.net
+openx.net
+*.casalemedia.com
+casalemedia.com
+*.smartadserver.com
+*.adform.net
+*.33across.com
+*.sharethrough.com
+*.teads.tv
+*.spotxchange.com
+*.yieldmo.com
+*.gumgum.com
+*.indexww.com
+*.sovrn.com
+*.lijit.com
+*.triplelift.com
+*.bidswitch.net
+*.turn.com
+*.mathtag.com
+*.rlcdn.com
+
+# --- Product analytics / session recording
+*.hotjar.com
+hotjar.com
+*.mixpanel.com
+mixpanel.com
+*.segment.io
+segment.io
+*.segment.com
+*.amplitude.com
+*.fullstory.com
+*.mouseflow.com
+*.inspectlet.com
+*.heap.io
+*.clarity.ms
+*.quantummetric.com
+*.newrelic.com
+bam.nr-data.net
+
+# --- Ad-block detection & fingerprinting
+*.adblockdetect.xyz
+*.fingerprintjs.com
+*.fpjs.io

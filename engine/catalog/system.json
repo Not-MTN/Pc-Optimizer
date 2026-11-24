@@ -1,0 +1,175 @@
+{
+  "tweaks": [
+    {
+      "id": "service.diagtrack.disable",
+      "module": "services",
+      "title": "Disable the Connected User Experiences and Telemetry service",
+      "plain": "Stops Windows' diagnostics upload service. Safe to disable; Feedback Hub stops working.",
+      "tier": "T1",
+      "risk": "medium",
+      "needs_reboot": true,
+      "blast_radius": "medium",
+      "knowledge_key": "service:DiagTrack",
+      "preconditions": [
+        {
+          "kind": "exists",
+          "what": "service:diagtrack.start_type"
+        }
+      ],
+      "effects": [
+        {
+          "kind": "service_start_type",
+          "target": "DiagTrack",
+          "to": "disabled"
+        }
+      ],
+      "measure": {
+        "metric": "service.start_type",
+        "expect": "disabled"
+      }
+    },
+    {
+      "id": "power.scheme.high",
+      "module": "power",
+      "title": "Switch to the High Performance power plan",
+      "plain": "Keeps the CPU at full speed. Fine on a desktop, costs battery on a laptop.",
+      "tier": "T1",
+      "risk": "low",
+      "blast_radius": "low",
+      "preconditions": [
+        {
+          "kind": "not_equals",
+          "what": "power:active_scheme",
+          "value": "high"
+        }
+      ],
+      "effects": [
+        {
+          "kind": "power_setting",
+          "target": "active_scheme",
+          "to": "high"
+        }
+      ]
+    },
+    {
+      "id": "startup.defer.onedrive",
+      "module": "startup",
+      "title": "Start OneDrive 60 seconds after login",
+      "plain": "It still starts, just after Windows has finished booting. Usually better than disabling it.",
+      "tier": "T1",
+      "risk": "low",
+      "blast_radius": "low",
+      "effects": [
+        {
+          "kind": "startup_defer",
+          "target": "onedrive",
+          "to": 60
+        }
+      ]
+    },
+    {
+      "id": "startup.defer.steam",
+      "module": "startup",
+      "title": "Start Steam 60 seconds after login",
+      "plain": "Steam's updater is a common cause of a slow first minute after login.",
+      "tier": "T1",
+      "risk": "low",
+      "blast_radius": "low",
+      "effects": [
+        {
+          "kind": "startup_defer",
+          "target": "steam",
+          "to": 60
+        }
+      ]
+    },
+    {
+      "id": "task.office.background.disable",
+      "module": "tasks",
+      "title": "Disable the Office background task",
+      "plain": "Runs Office housekeeping at login. Disabling it has no visible effect on Office.",
+      "tier": "T1",
+      "risk": "low",
+      "blast_radius": "low",
+      "effects": [
+        {
+          "kind": "scheduled_task_state",
+          "target": "\\Microsoft\\Office\\OfficeBackgroundTaskHandler",
+          "to": "disabled"
+        }
+      ]
+    },
+    {
+      "id": "security.smb1.disable",
+      "module": "security",
+      "title": "Disable SMBv1",
+      "plain": "A 1990s file-sharing protocol with real exploits. Almost nothing needs it in 2026.",
+      "tier": "T1",
+      "risk": "high",
+      "needs_reboot": true,
+      "blast_radius": "medium",
+      "knowledge_key": "smbv1",
+      "preconditions": [
+        {
+          "kind": "equals",
+          "what": "registry:hklm\\system\\currentcontrolset\\services\\lanmanserver\\parameters",
+          "value": 1
+        }
+      ],
+      "effects": [
+        {
+          "kind": "registry_value",
+          "target": "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters",
+          "pre": "SMB1",
+          "to": 0
+        }
+      ]
+    },
+    {
+      "id": "driver.t2.example",
+      "module": "kernel",
+      "title": "Load the interrupt-tuning driver",
+      "plain": "Deep latency tuning. Requires the optional kernel component.",
+      "tier": "T2",
+      "risk": "high",
+      "needs_reboot": true,
+      "blast_radius": "high",
+      "effects": [
+        {
+          "kind": "driver_action",
+          "target": "pco_dpc",
+          "to": "loaded"
+        }
+      ]
+    },
+    {
+      "id": "privacy.telemetry.minimum",
+      "module": "privacy",
+      "title": "Set diagnostic data to the minimum level",
+      "plain": "Changes the Windows diagnostic data setting from Full to Required only. Nothing is uploaded by this app; this only reduces what Windows itself sends.",
+      "tier": "T1",
+      "risk": "low",
+      "needs_reboot": false,
+      "blast_radius": "low",
+      "knowledge_key": "privacy:telemetry.level",
+      "preconditions": [
+        {
+          "kind": "not_equals",
+          "what": "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection",
+          "value": "required"
+        }
+      ],
+      "effects": [
+        {
+          "kind": "registry_value",
+          "target": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+          "to": "required"
+        }
+      ],
+      "measure": {
+        "metric": "registry:hklm\\software\\policies\\microsoft\\windows\\datacollection",
+        "expect": "required"
+      }
+    }
+  ]
+}

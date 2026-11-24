@@ -1,0 +1,8 @@
+Keel installs for this user only — there is no administrator prompt, and it
+cannot touch another account's settings.
+
+It will add about 12 MB to %LOCALAPPDATA%\Programs\Keel. Your data (journal,
+settings, undo history) goes in %LOCALAPPDATA%\Keel and survives upgrades.
+
+Keel needs Windows 11 (build 22000 or newer). It does not install a browser,
+a runtime, a driver or a service, and it makes no network connections.
