@@ -176,8 +176,15 @@ class Studio:
             self.conn.execute(
                 "INSERT INTO desktop_state(key,value) VALUES('active_theme',?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (theme_id,))
+        # This does NOT change the desktop. It records which theme document is
+        # the active cost profile; the window used to toast "Applied <name>" for
+        # it, which is a change the machine never sees. Say what it is.
         return {"applied": True, "theme": row[0], "cost_pct": round(cost, 2),
-                "cost": verdict.as_dict()}
+                "cost": verdict.as_dict(),
+                "changed_desktop": False,
+                "note": ("This sets the active theme profile and its cost budget. "
+                         "It does not change your wallpaper or taskbar — use "
+                         "Themes → “Apply the selected theme” for that.")}
 
     def import_doc(self, doc: dict[str, Any]) -> dict[str, Any]:
         """Import is validation + a governor verdict, never a silent apply."""

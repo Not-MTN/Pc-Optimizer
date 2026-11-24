@@ -216,21 +216,35 @@ class StartupSurgeon:
 
     # ------------------------------------------------------------------ actions
     def apply_plan(self, plan: dict[str, Any], *, mode: str = "defer") -> dict[str, Any]:
-        """Apply through the engine so every change is journaled and reversible."""
+        """Report what this build can actually do — which today is nothing.
+
+        This used to build `[{"item": ..., "action": "defer"}]` from the plan and
+        return it as `applied`. No write, no backend call, no verification. The
+        window then said "10 item(s) deferred" and the machine was untouched.
+        The docstring claimed it applied through the engine; it never did.
+
+        Deferral needs a launcher process Keel does not ship, so the honest
+        answer is zero applied plus the reason. A change that cannot be made must
+        say so; reporting ten imaginary successes is the "app says it worked and
+        nothing changed" complaint in its purest form.
+        """
         if self.backend is None:
             raise RuntimeError("no backend wired")
-        applied = []
-        for row in plan["rows"]:
-            if row["action"] == "keep":
-                continue
-            if mode == "defer" and not row["unattributed"]:
-                applied.append({"item": row["item"], "action": "defer",
-                                "seconds": row["do"]["defer"]})
-            elif mode == "disable":
-                applied.append({"item": row["item"], "action": "disable"})
-        return {"mode": mode, "applied": applied,
-                "note": "Each change is a journal transaction with a receipt; "
-                        "revert is one click."}
+        wanted = [row for row in plan["rows"] if row["action"] != "keep"]
+        return {
+            "mode": mode,
+            "applied": [],
+            "requested": len(wanted),
+            "refused": [{"item": row["item"],
+                         "reason": ("Deferring a startup entry needs the Keel "
+                                    "launcher, which this build does not ship. "
+                                    "Nothing was changed.")}
+                        for row in wanted],
+            "note": ("No startup entry was changed. Deferring one needs the Keel "
+                     "launcher, which this build does not ship, and Keel will not "
+                     "rewrite a Run entry it cannot then honour. To disable an "
+                     "entry yourself, use Windows' own Task Manager → Startup tab."),
+        }
 
     # ----------------------------------------------------------------- watchdog
     def watch_for_relapse(self, before: set[str], after: set[str]) -> list[dict[str, Any]]:

@@ -344,6 +344,7 @@ class Service:
     def checkup(self, *, fix_safe: bool = False) -> dict[str, Any]:
         result = self.checker.run(trigger="user")
         payload = result.as_dict()
+        self._name_unfixable(payload)
         self.sentinel.record(Event(
             kind="checkup", source="checker", severity="info",
             narrative=f"Checkup complete: {payload['counts']['total']} finding(s), "
@@ -353,6 +354,66 @@ class Service:
             payload["fix"] = self.fix_by_consent(result)
         payload["consent"] = self.consent.decision().as_dict()
         return payload
+
+    def _name_unfixable(self, payload: dict[str, Any]) -> None:
+        """Mark findings whose fix this build cannot carry out.
+
+        `startup.count` carries two `startup.defer.*` tweaks whose addresses are
+        in the Windows backend's UNSERVICED table — the launcher they need is not
+        shipped. The checkup offered "Fix this" anyway, the apply raised, the
+        finding stayed on screen, and the next scan found it again. Press, error,
+        press, error: the whole product looks broken because one row is.
+
+        The preflight already knows (it now reports `effect.unserviced`), so ask
+        it once per finding and report the truth to the caller instead of
+        advertising a repair that cannot happen.
+        """
+        for f in payload.get("findings", []):
+            tweaks = list(f.get("fix_tweaks") or [])
+            if not tweaks:
+                f["fixable"] = False
+                continue
+            try:
+                plan = self.engine.preflight.simulate(tweaks)
+            except Exception:                     # a preflight fault must not kill the scan
+                f["fixable"] = True               # let the press reveal the real answer
+                continue
+            blocking = [i.as_dict() for i in plan.issues if i.severity == "error"]
+            f["fixable"] = not blocking
+            if blocking:
+                f["fix_blocked_by"] = blocking[0]["message"]
+                f["fix_tweaks"] = []
+
+    def fix_finding(self, finding_id: str) -> dict[str, Any]:
+        """Fix exactly one finding, named by id.
+
+        `/api/checkup/fix` used to be wired to `checkup.fix_safe`, which applies
+        every auto-safe fix and ignores the request body. The per-finding button
+        therefore fixed six things and told you about one.
+        """
+        found = None
+        latest = self.checker.latest_run()
+        if latest is not None:
+            found = next((f for f in self.checker.findings_of(latest["run_id"])
+                          if f["id"] == finding_id), None)
+        if found is None:
+            return {"applied": False,
+                    "reason": ("That finding is no longer in this scan — "
+                               "re-run the checkup, then press Fix this again.")}
+        category, auto_safe = found["category"], bool(found["auto_safe"])
+        # findings_of already splits the stored list. Reading the raw column here
+        # yields a STRING, and `for t in fix_tweaks` then walks its characters —
+        # which preflight rejects one letter at a time ("unknown tweak: d").
+        tweaks = list(found["fix_tweaks"])
+        if not tweaks:
+            return {"applied": False,
+                    "reason": ("This finding has no automatic fix. Keel will not "
+                               "pretend to repair something it has no step for.")}
+        if not self.consent.allows(category, auto_safe=bool(auto_safe), has_fix=True):
+            return {"applied": False,
+                    "reason": (f"Your consent level does not permit fixing "
+                               f"{category} findings. Raise it below this list.")}
+        return self.apply_fixes(tweaks, finding_ids=[finding_id])
 
     def fix_by_consent(self, result=None) -> dict[str, Any]:
         """Apply exactly what the consent level permits — never more.
@@ -462,11 +523,24 @@ class Service:
             kind="fix", source="engine", severity="info",
             narrative=f"Applied {len(res.effects)} fix(es) — undo is one click.",
             payload={"tx_id": res.tx_id}, tx_id=res.tx_id))
-        return {"applied": True, **{k: v for k, v in {
+        # "applied" must mean the machine changed. A batch whose every write was
+        # put back by group policy did not apply anything, and saying True here
+        # made the window show a green box over zero real changes.
+        landed = bool(res.effects)
+        out = {"applied": landed, **{k: v for k, v in {
             "tx_id": res.tx_id, "summary": res.summary, "snapshot_id": res.snapshot_id,
             "needs_reboot": res.needs_reboot,
             "effects": [{"address": e.address, "old": e.old, "new": e.new}
                         for e in res.effects]}.items()}}
+        if res.not_stuck:
+            out["not_stuck"] = res.not_stuck
+            out["reason"] = (
+                f"{len(res.not_stuck)} setting(s) were written and then put back "
+                "by this PC's policy. A group policy or a vendor agent is "
+                "enforcing those values; Keel cannot override it.")
+        if res.refused:
+            out["refused"] = res.refused
+        return out
 
     def _write_receipt(self, *, kind: str, title: str, summary: str, tx_id: str | None,
                        detail: dict[str, Any]) -> str:
@@ -614,9 +688,12 @@ class Service:
             kind="startup", source="startup", severity="info",
             narrative=f"Startup plan applied ({mode}): {len(out['applied'])} item(s).",
             payload=out))
-        self._write_receipt(kind="startup", title="Startup Surgeon",
-                            summary=f"{len(out['applied'])} item(s) {mode}ed",
-                            tx_id=None, detail=out)
+        # Only write a receipt when something actually changed. A receipt for
+        # zero changes is a lie in the history, which is worse than no receipt.
+        if out.get("applied"):
+            self._write_receipt(kind="startup", title="Startup Surgeon",
+                                summary=f"{len(out['applied'])} item(s) {mode}ed",
+                                tx_id=None, detail=out)
         return out
 
     # ================================================================== ask/space
@@ -1697,6 +1774,7 @@ CLEAN_ROOTS = {
 ACTIONS = {
     "checkup.run": lambda s, a: s.checkup(),
     "checkup.fix_safe": lambda s, a: s.checkup(fix_safe=True),
+    "checkup.fix_one": lambda s, a: s.fix_finding(a["finding"]),
     "checkup.fix": lambda s, a: s.fix_by_consent(),
     "consent.set": lambda s, a: s.set_consent(level=a.get("level"),
                                               categories=a.get("categories"),

@@ -17,12 +17,12 @@ VSVersionInfo(
         '040904B0',
         [StringStruct('CompanyName', 'Keel'),
          StringStruct('FileDescription', 'Keel — PC optimizer with an undo button'),
-         StringStruct('FileVersion', '0.5.6.0'),
+         StringStruct('FileVersion', '0.5.7.0'),
          StringStruct('InternalName', 'Keel'),
          StringStruct('LegalCopyright', 'Local-only. No cloud, no telemetry.'),
          StringStruct('OriginalFilename', 'Keel.exe'),
          StringStruct('ProductName', 'Keel'),
-         StringStruct('ProductVersion', '0.5.6')])
+         StringStruct('ProductVersion', '0.5.7')])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
   ]

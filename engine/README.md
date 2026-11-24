@@ -759,6 +759,68 @@ of those tests read the console as **text**. The page parsed. It never ran.
      the copy path — which never needed Spicetify — is offered as *"Copy both
      files instead (always works)"*.
 
+### 0.5.7 — the audit that found four ways of saying "worked" when nothing did
+
+The report was *"other things don't work too"* — no screen named. The whole
+product was audited instead of guessing: 71 routes × 102 actions, every endpoint
+the console references against the dispatch table, a live GET sweep of 58
+endpoints, then a POST sweep with real payloads. **No dead route, no 5xx, no
+console call without a handler.** The failures were not in the wiring — they were
+in what the code *said* after doing nothing.
+
+124. **Startup Surgeon reported 12 changes and wrote nothing at all.**
+     `Startup.apply_plan` built `[{"item": …, "action": "defer"}]` from the plan
+     and returned it as `applied`. No backend call, no verification, and a receipt
+     in History saying twelve entries were deferred. Its own docstring said "apply
+     through the engine"; it never touched the engine. Deferral needs a launcher
+     this build does not ship (`UNSERVICED` says so explicitly), so the honest
+     answer is zero applied plus the reason. It now says *"Keel did not change any
+     startup entry — deferral needs a launcher this build does not ship. Use
+     Windows' Task Manager → Startup tab."* and writes no receipt for a no-op.
+
+125. **The checkup said "4 change(s)" when group policy had put all four back.**
+     The engine *did* detect it — it journaled `phase="failed", error="value did
+     not stick (policy override?)"` — but returned the effect anyway, and
+     `effects` drives the toast count, the receipt and the summary. `applied` was
+     hardcoded `True`. So a locked-down PC showed a green box over zero real
+     changes, and the next scan found the same four problems: *press fix, read
+     "fixed", nothing changed*. `Applied.effects` is now only what verified;
+     overridden writes are named in a new `not_stuck` list, the summary reads
+     *"0 change(s) · 4 put back by policy"*, and `applied` means the machine
+     changed.
+
+126. **The checkup advertised fixes the backend refuses every time.**
+     `Preflight._read` caught `BackendError` and returned `None`, so "this build
+     cannot do it" looked identical to "the value does not exist yet" — a harmless
+     warning, plan approved. On a real Windows profile that put a working-looking
+     **Fix this** button on `startup.count`, whose two `startup.defer.*` tweaks are
+     in `UNSERVICED`: the press raised, the row stayed on screen, the next scan
+     found it again. Unserviced addresses are now a distinct `effect.unserviced`
+     **error**, and the checkup marks every finding `fixable: true|false` with the
+     backend's own explanation, so the row says *"deferral needs the PCO launcher,
+     which this build does not ship"* instead of offering a button that cannot
+     work.
+
+127. **A third of the findings had no control at all.**
+     Findings with no fix step rendered as a row with no button. "Fix all" skips
+     them, so after the fix they looked exactly as red as before and read as *"the
+     fix did nothing"*. Every finding now has an action: **Fix this** (single
+     finding, via the new `/api/checkup/fix-one`, which fixes exactly one — the
+     old route applied six and reported one) or **Open <screen>**, routing to
+     Cleaner, Themes, Startup Surgeon, Installer Autopsy. A finding that genuinely
+     cannot be fixed says so in words.
+
+128. **`studio.apply` toasted "Applied <name>" and changed nothing.**
+     It wrote a database row marking which theme *profile* is active — no render,
+     no wallpaper, no shell. It now returns `changed_desktop: false` and the toast
+     reads *"Active profile: X (n% idle GPU). Nothing on the desktop changed — use
+     Themes → Apply the selected theme for that."*
+
+`/api/checkup/fix` was **not** redefined: it has meant "fix everything safe"
+since the first release and the bridge test pins that contract, so the
+single-finding path got its own route.
+
+
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no
     `unhandledrejection`. A broken handler and a handler that worked looked

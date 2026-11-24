@@ -660,3 +660,32 @@ def test_the_spotify_button_says_when_this_pc_cannot_take_a_theme():
         "the write button must name the blocker instead of inviting a refusal")
     assert "always works" in html, (
         "the copy path must be offered as the thing that does work")
+
+
+def test_the_startup_button_does_not_claim_imaginary_successes():
+    """`apply_plan` returned 10 "deferred" items without writing anything.
+
+    No backend call, no verification, and a receipt in the history saying ten
+    items were deferred. The window said "10 item(s) deferred" and the machine
+    was untouched — the purest form of "the app says it worked and nothing
+    changed". Deferral needs a launcher this build does not ship, so the honest
+    answer is zero applied plus the reason and a pointer to the control that
+    does work.
+    """
+    import tempfile
+
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    out = svc.run_action("startup.apply", {"mode": "defer"})
+    assert out["applied"] == [], (
+        "this build cannot defer a startup entry; reporting any applied is a lie")
+    assert out.get("refused"), "every requested item must be accounted for"
+    assert "launcher" in out["note"].lower(), (
+        "the note must say why, not just that nothing happened")
+
+    # And no receipt may be written for a change that did not happen.
+    receipts = svc.conn.execute(
+        "SELECT COUNT(*) FROM receipts WHERE kind='startup'").fetchone()[0]
+    assert receipts == 0, "a no-op must not appear in the history"

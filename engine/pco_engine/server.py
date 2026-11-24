@@ -192,6 +192,10 @@ ROUTES: dict[str, str] = {
     "/api/drift": "drift.check",
     "/api/report": "report.weekly",
     "/api/checkup/apply": "checkup.fix",
+    # One named finding. Separate from /api/checkup/fix, which has meant
+    # "fix everything safe" since the first release — redefining it broke
+    # the documented contract and the bridge test that pins it.
+    "/api/checkup/fix-one": "checkup.fix_one",
     "/api/studio/themes": "studio.themes",
     "/api/spotify/looks": "spotify.looks",
     "/api/spotify/write": "spotify.write",

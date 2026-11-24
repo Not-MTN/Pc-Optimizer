@@ -25,6 +25,20 @@ CATEGORIES = {"performance", "storage", "security", "privacy", "reliability"}
 SEVERITY_WEIGHT = {"high": 3.0, "medium": 1.6, "low": 0.6, "info": 0.0}
 
 
+# The view id (console.html `<section id="view-…">`) that can act on a
+# category. Only the ones with a genuinely working screen; everything else
+# stays None and the UI says so plainly instead of offering a dead end.
+_SCREEN_FOR_CHECK = {
+    "display.refresh": "look",       # Themes → refresh rate
+    "startup.count": "startup",      # Startup Surgeon
+    "storage.junk": "clean",         # Cleaner
+    "storage.duplicates": "clean",   # Cleaner
+    "power.scheme": "power",         # Performance → power plan
+    "privacy.telemetry": "speed",    # where the telemetry tweak lives
+    "reliability.crashes": "autopsy",  # Installer Autopsy reads crash reports
+}
+
+
 @dataclass
 class Finding:
     check_id: str
@@ -44,6 +58,13 @@ class Finding:
             "severity": self.severity, "title": self.title, "plain": self.plain,
             "evidence": self.evidence, "impact": self.impact,
             "auto_safe": self.auto_safe, "fix_tweaks": self.fix_tweaks,
+            # Where the work for this finding actually happens. A finding with no
+            # fix step used to render with no control at all, so the row stayed
+            # exactly as red after "Fix all" and read as "the fix did nothing".
+            # A category Keel has a screen for gets a button to that screen.
+            "screen": next((v for k, v in _SCREEN_FOR_CHECK.items()
+                            if self.check_id == k or self.check_id.startswith(k + ".")),
+                           None),
         }
 
 

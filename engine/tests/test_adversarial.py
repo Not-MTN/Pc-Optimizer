@@ -972,3 +972,154 @@ def test_the_console_shows_the_elevation_banner_and_a_refusal_list():
     assert "/api/elevate" in html, "the button must call a route that exists"
     assert "refused by Windows" in html or "Partly applied" in html, (
         "a partial apply must be reported as partial, not as success or failure")
+
+
+def test_a_write_that_windows_puts_back_is_not_reported_as_applied():
+    """Group policy re-imposes a value after the write succeeds.
+
+    The engine noticed — it journaled `phase="failed", error="value did not
+    stick"` — but it still returned the effect in `Applied.effects`, and
+    `effects` drives the toast count, the receipt and the summary. So the
+    checkup said "4 change(s)" when the machine had been put back to exactly
+    where it started. `applied=True` on top of that turned it into a green box.
+
+    This is indistinguishable to the user from a broken app: press Fix, read
+    "4 change(s)", machine unchanged, next scan finds the same four problems.
+    """
+    import tempfile
+
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    be = svc.engine.backend
+    run = svc.checker.run()
+    findings = [f.as_dict() for f in run.findings]
+    tweaks = [t for f in findings for t in (f.get("fix_tweaks") or [])]
+    assert tweaks, "fixture needs at least one fixable finding"
+
+    plan = svc.engine.preflight.simulate(tweaks)
+    for address in sorted({e.address for e in plan.effects}):
+        be.pin(address, be.read(address))       # policy enforces the old value
+
+    out = svc.fix_by_consent(run)
+
+    assert out["effects"] == [], (
+        "no effect may be reported as applied when the value did not stick")
+    assert out["applied"] is False, (
+        "applied must mean the machine changed; nothing changed")
+    assert out.get("not_stuck"), "the overridden writes must be named"
+    assert "policy" in out["reason"].lower(), (
+        "the user must be told the setting was put back, and by what")
+    assert "put back by policy" in out["summary"]
+
+
+def test_a_partly_overridden_batch_reports_only_what_stuck():
+    """One address overridden, the rest land: the count must be the real one."""
+    import tempfile
+
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    be = svc.engine.backend
+    run = svc.checker.run()
+    findings = [f.as_dict() for f in run.findings]
+    tweaks = [t for f in findings for t in (f.get("fix_tweaks") or [])]
+    plan = svc.engine.preflight.simulate(tweaks)
+    addresses = sorted({e.address for e in plan.effects})
+    assert len(addresses) >= 2, "fixture needs at least two distinct addresses"
+
+    be.pin(addresses[0], be.read(addresses[0]))   # exactly one is overridden
+    out = svc.fix_by_consent(run)
+
+    assert out["applied"] is True, "the writes that did land still applied"
+    applied_ids = [e["address"] for e in out["effects"]]
+    assert addresses[0] not in applied_ids, (
+        "the overridden address must not be listed as applied")
+    assert len(out["effects"]) < len(plan.effects), (
+        "the reported count must exclude what was put back")
+    assert out.get("not_stuck")
+
+
+def test_the_checkup_never_offers_a_fix_this_build_cannot_carry_out():
+    """`startup.count` proposed two `startup.defer.*` tweaks.
+
+    Both addresses are in the Windows backend's UNSERVICED table: deferral needs
+    a launcher Keel does not ship, so `write` raises every time. The checkup
+    still showed "Fix this", the press raised, the finding stayed on screen, and
+    the next scan found it again. On a real Windows profile that left the two
+    most prominent findings permanently unfixable while looking repairable.
+
+    The preflight must flag the address as unserviced (distinct from "the value
+    is missing"), and the checkup must stop advertising it.
+    """
+    import tempfile
+
+    from pco_engine import windows_backend as wb
+    from pco_engine.backend import BackendError
+    from pco_engine.service import Service
+
+    seen: dict[str, str] = {}
+
+    class Realish:
+        environment = "windows"
+
+        def read(self, address, **k):
+            if address in wb.UNSERVICED:
+                seen[address] = wb.UNSERVICED[address]
+                raise BackendError(f"{address}: {wb.UNSERVICED[address]}")
+            return 0
+
+        def write(self, address, value, **k):
+            if address in wb.UNSERVICED:
+                raise BackendError(f"{address}: {wb.UNSERVICED[address]}")
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    svc.engine.backend = Realish()
+    svc.engine.preflight.backend = Realish()
+
+    out = svc.checkup()
+    startup = next(f for f in out["findings"] if f["check_id"] == "startup.count")
+
+    assert seen, "the fixture must actually hit an UNSERVICED address"
+    assert startup["fixable"] is False, (
+        "a fix the backend refuses on every press must not be advertised")
+    assert startup["fix_tweaks"] == [], (
+        "no fix step may be offered once preflight proves it cannot run")
+    assert "launcher" in startup["fix_blocked_by"].lower(), (
+        "the row must say why, in the backend's own words")
+
+
+def test_an_unserviced_address_is_an_error_not_a_missing_value():
+    """"Does not exist yet" and "this build cannot do it" are different answers.
+
+    `_read` collapsed both to None, so preflight filed a harmless
+    `effect.new_value` warning and the plan looked applicable.
+    """
+    import tempfile
+
+    from pco_engine.backend import BackendError
+    from pco_engine.service import Service
+
+    class Refuser:
+        environment = "windows"
+
+        def read(self, address, **k):
+            raise BackendError(
+                f"{address}: no mapping in this build. Refusing to guess.")
+
+        def write(self, address, value, **k):
+            raise BackendError(f"{address}: no mapping in this build.")
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    svc.engine.preflight.backend = Refuser()
+
+    plan = svc.engine.preflight.simulate(["power.scheme.high"])
+    codes = [i.code for i in plan.issues]
+    assert "effect.unserviced" in codes, (
+        f"an unserviceable address must be an error, got {codes}")
+    assert all(i.severity == "error"
+               for i in plan.issues if i.code == "effect.unserviced")

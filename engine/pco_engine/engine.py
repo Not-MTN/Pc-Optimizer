@@ -48,6 +48,10 @@ class Applied:
     # outcome on a standard-user account, not an error: the rest of the theme
     # went on and stays undoable.
     refused: list[dict[str, Any]] = field(default_factory=list)
+    # Writes Windows accepted and then put back (group policy, vendor agent).
+    # Distinct from `refused`: a refusal throws, this one silently rewinds, which
+    # is why it used to look like success.
+    not_stuck: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def summary(self) -> str:
@@ -60,6 +64,8 @@ class Applied:
             bits.append("auto-revert armed")
         if self.refused:
             bits.append(f"{len(self.refused)} refused")
+        if self.not_stuck:
+            bits.append(f"{len(self.not_stuck)} put back by policy")
         return " · ".join(bits)
 
 
@@ -160,6 +166,9 @@ class Engine:
         tx_id = new_id()
         started = self.clock()
 
+        verified: list = []
+        not_stuck: list[dict] = []
+
         snap_id = None
         if snapshot and (plan.requires_confirmation or len(ordered) > 1):
             snap = self.snapshots.capture([e.address for e in ordered],
@@ -210,10 +219,18 @@ class Engine:
 
             actual = self._read(eff.address)
             if not values_equal(actual, eff.new):
+                # A write that Windows accepts and the policy engine re-imposes
+                # is the group-policy / vendor-agent case. The journal recorded
+                # it, but this effect must NOT go back to the caller as applied:
+                # `effects` drives both the toast count and the receipt, so
+                # leaving it in told the user "4 change(s)" when zero had stuck.
                 self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id, phase="failed",
                                     prestate=pre, poststate={eff.address: actual},
                                     error="value did not stick (policy override?)")
+                not_stuck.append({"tweak_id": eff.tweak_id, "address": eff.address,
+                                  "wrote": eff.new, "found": actual})
                 continue
+            verified.append(eff)
             self.journal.append(tx_id=tx_id, tweak_id=eff.tweak_id, phase="verified",
                                 prestate=pre, poststate={eff.address: actual})
 
@@ -240,9 +257,10 @@ class Engine:
         else:
             self._close_tx(tx_id, "committed")
 
-        return Applied(tx_id=tx_id, tweak_ids=ids, effects=ordered,
+        return Applied(tx_id=tx_id, tweak_ids=ids, effects=verified,
                        snapshot_id=snap_id, needs_reboot=plan.needs_reboot,
-                       armed_until=armed_until, refused=refused)
+                       armed_until=armed_until, refused=refused,
+                       not_stuck=not_stuck)
 
     # ================================================================= confirm
     def confirm(self, tx_id: str) -> None:

@@ -1407,6 +1407,43 @@ function renderFindings(data) {
     body.append(head, el("p", null, f.plain));
     if (f.impact) body.append(el("p", null, f.impact));
     body.lastChild.className = "sub";
+    // A finding with no fix step had no button at all. "Fix all" skips it, the
+    // row stays exactly as red as before, and the user concludes the fix did
+    // nothing — 43% of findings on a stock profile are in this state. Say which
+    // finds can be fixed here, and send the ones that need another screen to
+    // the screen that does the work.
+    // `fixable` comes from the server, which asked the preflight whether this
+    // build can actually carry the fix out. Trusting `fix_tweaks` alone put a
+    // "Fix this" button on `startup.count`, whose two tweaks need a launcher
+    // this build does not ship — the press raised every time and the row stayed.
+    const hasFix = f.fixable !== false
+      && Array.isArray(f.fix_tweaks) && f.fix_tweaks.length > 0;
+    if (hasFix) {
+      const one = el("button", "btn", "Fix this");
+      one.onclick = async () => {
+        busy(one, true);
+        try {
+          const out = await api("/api/checkup/fix-one", { finding: f.id });
+          if (out.applied) {
+            toast("Fixed " + ((out.effects || []).length || 1) + " change(s) — undo is one click.");
+          } else {
+            toast(out.reason || "Not applied.", true);
+          }
+          await runCheckup();
+        } catch (err) { toast(err.message, true); }
+        busy(one, false);
+      };
+      body.append(one);
+    } else if (f.screen) {
+      const go = el("button", "btn", "Open " + f.screen);
+      go.onclick = () => show(f.screen);
+      body.append(go);
+    } else if (f.fix_blocked_by) {
+      body.append(el("p", "sub", f.fix_blocked_by));
+    } else {
+      body.append(el("p", "sub", "Keel cannot fix this one for you; there is no "
+        + "button that would. It is reported so you know it was seen."));
+    }
     row.append(cat, body);
     box.append(row);
   });
@@ -1810,7 +1847,18 @@ async function deferStartup() {
   const b = $("#startupDefer"); busy(b, true);
   try {
     const out = await api("/api/startup/apply", { mode: "defer" });
-    toast((out.applied ? out.applied.length : 0) + " item(s) deferred");
+    // "0 item(s) deferred" is true and tells the user nothing. Say what
+    // happened and where the working control is.
+    const n = (out.applied || []).length;
+    if (n) {
+      toast(n + " item(s) deferred.");
+    } else if ((out.refused || []).length) {
+      toast("Keel did not change any startup entry — deferral needs a launcher "
+            + "this build does not ship. Use Windows' Task Manager → Startup "
+            + "tab to disable one.", true);
+    } else {
+      toast(out.note || "Nothing to change on this machine.", true);
+    }
     await loadStartup(); await refreshAll();
   } catch (err) { toast(err.message, true); }
   busy(b, false);
@@ -2203,7 +2251,14 @@ async function loadStudio() {
         busy(b, true);
         try {
           const out = await api("/api/studio/apply", { theme_id: t.id });
-          toast(out.applied ? "Applied " + t.name : out.message, !out.applied);
+          // "Applied <name>" claimed a desktop change that never happened.
+          if (out.applied) {
+            toast("Active profile: " + t.name + " (" + out.cost_pct
+                  + "% idle GPU). Nothing on the desktop changed — use Themes → "
+                  + "“Apply the selected theme” for that.");
+          } else {
+            toast(out.message || out.note || "Not applied.", true);
+          }
           await loadStudio();
         } catch (err) { toast(err.message, true); }
         busy(b, false);

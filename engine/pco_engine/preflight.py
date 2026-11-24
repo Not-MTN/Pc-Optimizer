@@ -88,16 +88,39 @@ class Plan:
                 "requires_confirmation": self.requires_confirmation}
 
 
+def _looks_unserviced(exc: BaseException) -> bool:
+    """True when the backend is saying 'this build has no mapping', not
+    'the value is missing'. The Windows backend words it as
+    '... : no mapping in this build' or with the UNSERVICED explanation."""
+    text = str(exc).lower()
+    return ("no mapping in this build" in text
+            or "this build will not" in text
+            or "is not built or signed yet" in text
+            or "not built or signed yet" in text)
+
+
 class Preflight:
+    #: address -> reason, for addresses this build cannot service at all.
+    #: Kept apart from "does not exist yet": one is a warning that will resolve
+    #: on apply, the other is a promise the product cannot keep. Collapsing them
+    #: put a working-looking Fix button on `startup.defer.*`, whose addresses are
+    #: in the backend's UNSERVICED table — so the checkup offered a repair that
+    #: raised every single time, and the finding never went away.
+    _unserviced: dict[str, str]
+
     def __init__(self, catalog: Catalog, backend: Backend) -> None:
         self.catalog = catalog
         self.backend = backend
+        self._unserviced = {}
 
     # ------------------------------------------------------------------ read
+
     def _read(self, address: str) -> Any:
         try:
             return self.backend.read(address)
-        except BackendError:
+        except BackendError as exc:
+            if _looks_unserviced(exc):
+                self._unserviced.setdefault(address, str(exc))
             return None
 
     # ------------------------------------------------------- preconditions
@@ -199,6 +222,7 @@ class Preflight:
     def simulate(self, tweak_ids: list[str], *, allow_tier: set[str] | None = None) -> Plan:
         """Project a batch onto a virtual state graph. Read-only."""
         allow_tier = allow_tier or {"T0", "T1", "T2", "T3"}
+        self._unserviced = {}
         plan = Plan()
         # virtual overlay: address -> (value, owner tweak)
         overlay: dict[str, tuple[Any, str]] = {}
@@ -259,6 +283,16 @@ class Preflight:
 
         # b. compare with the real machine
         current = self._read(addr)
+
+        # This build cannot read OR write the address at all. Applying it would
+        # fail every time while the row stayed on screen inviting another press.
+        if addr in self._unserviced:
+            plan.issues.append(Issue(
+                "error", "effect.unserviced",
+                f"{tweak.title}: {self._unserviced[addr]}",
+                tweak.id, addr))
+            return
+
         if current is None:
             if eff.pre is None:
                 plan.issues.append(Issue(
