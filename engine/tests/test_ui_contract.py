@@ -246,7 +246,7 @@ def test_json_errors_never_leak_a_traceback_to_the_ui(handler):
 def _html() -> str:
     from pathlib import Path
     return (Path(__file__).resolve().parent.parent / "pco_engine" /
-            "console.html").read_text()
+            "console.html").read_text(encoding="utf-8")
 
 
 def test_a_buttons_result_is_not_placed_further_down_the_page():
@@ -306,7 +306,7 @@ def test_the_gallery_does_not_blank_itself_before_it_has_an_answer():
 def test_the_frozen_entry_point_has_no_relative_imports():
     from pathlib import Path
     app = Path(__file__).resolve().parent.parent / "pco_engine" / "app.py"
-    text = app.read_text()
+    text = app.read_text(encoding="utf-8")
     offenders = [
         f"{i}: {line.strip()}"
         for i, line in enumerate(text.splitlines(), 1)
@@ -489,3 +489,55 @@ def test_demo_mode_is_visible_in_the_window():
     assert "body.is-demo" in text, "no visual for demo mode"
     assert ["DEMO MODE"] or "DEMO MODE" in text
     assert 'id="machinePill"' in text
+
+
+def test_no_source_file_is_read_without_an_explicit_encoding():
+    """On Windows, `read_text` with no encoding decodes as cp1252.
+
+    The console is full of middle dots, em dashes and arrows. A test that reads
+    it implicitly works on Linux and fails on Windows, which is exactly what the
+    Windows job reported at position 65533 of a file that is valid UTF-8.
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    offenders = []
+    for path in list(root.glob("pco_engine/*.py")) + list(root.glob("tests/*.py")):
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+        # Docstrings only. Skipping every string literal was wrong: a line like
+        # `Path("engine") / "app.py").read_text()` contains literals but IS a
+        # call, and the first version of this check silently skipped it — a
+        # guard that could never fire.
+        string_lines = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.ClassDef)):
+                body = getattr(node, "body", [])
+                if body and isinstance(body[0], ast.Expr) and \
+                   isinstance(body[0].value, ast.Constant) and \
+                   isinstance(body[0].value.value, str):
+                    d = body[0]
+                    for ln in range(d.lineno, (d.end_lineno or d.lineno) + 1):
+                        string_lines.add(ln)
+        for n, line in enumerate(text.splitlines(), 1):
+            if n in string_lines:
+                continue
+            code = line.split(" #")[0]
+            if re.search(r"\bread_text\(\s*\)", code):
+                offenders.append(f"{path.name}:{n}: {code.strip()[:70]}")
+            if "console.html" in code and re.search(r"\bopen\(", code) \
+               and "encoding" not in code:
+                offenders.append(f"{path.name}:{n}: {code.strip()[:70]}")
+    assert not offenders, offenders
+
+
+def test_every_utf8_character_in_the_console_survives_utf8():
+    """The file must be valid UTF-8 and must contain the characters that make
+    an implicit cp1252 read fail, so the test above is not vacuous."""
+    from pathlib import Path
+    raw = (Path(srv.__file__).parent / "console.html").read_bytes()
+    text = raw.decode("utf-8")          # raises if it is not valid UTF-8
+    assert any(ord(c) > 127 for c in text), "no non-ASCII to trip over"

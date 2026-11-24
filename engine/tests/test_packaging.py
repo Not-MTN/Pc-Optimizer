@@ -28,7 +28,7 @@ ASSETS = ROOT / "assets"
 
 def test_entry_point_imports():
     """`app.py` is the exe's entry point; a syntax error ships as a dead exe."""
-    src = (ROOT / "engine" / "pco_engine" / "app.py").read_text()
+    src = (ROOT / "engine" / "pco_engine" / "app.py").read_text(encoding="utf-8")
     ast.parse(src)                     # raises on a syntax error
     assert "def main(" in src
     assert 'if __name__ == "__main__":' in src
@@ -37,7 +37,7 @@ def test_entry_point_imports():
 def test_spec_bundles_only_files_that_exist():
     """A datas entry pointing at a vanished file fails the build — or worse,
     succeeds and produces an app that crashes on first launch."""
-    spec = (PKG / "keel.spec").read_text()
+    spec = (PKG / "keel.spec").read_text(encoding="utf-8")
     engine = ROOT / "engine"
 
     # The spec builds these with Path objects, so check the sources directly.
@@ -73,7 +73,7 @@ def test_icon_is_a_valid_ico_with_a_large_frame():
 
 def test_installer_script_references_existing_files():
     """Inno paths are relative to the .iss file. Stale paths fail at release."""
-    iss = (PKG / "keel.iss").read_text()
+    iss = (PKG / "keel.iss").read_text(encoding="utf-8")
     refs = re.findall(r'(?:Source|SetupIconFile|InfoBeforeFile):\s*"?([^"\n\r;]+)', iss)
     for ref in refs:
         ref = ref.strip().strip('"')
@@ -86,7 +86,7 @@ def test_installer_script_references_existing_files():
 def test_installer_is_per_user_and_reversible():
     """Two promises the installer must keep, asserted so they cannot drift:
     no admin prompt, and uninstalling does not delete the journal by default."""
-    iss = (PKG / "keel.iss").read_text()
+    iss = (PKG / "keel.iss").read_text(encoding="utf-8")
     assert "PrivilegesRequired=lowest" in iss, "installer would demand admin rights"
     assert "{localappdata}\\Programs" in iss, "install path should be per-user"
     # Data deletion must be behind an explicit prompt, never automatic.
@@ -97,7 +97,7 @@ def test_installer_is_per_user_and_reversible():
 
 def test_build_script_refuses_to_build_from_a_red_suite():
     """Shipping an installer from failing tests is how bad builds escape."""
-    ps1 = (PKG / "build.ps1").read_text()
+    ps1 = (PKG / "build.ps1").read_text(encoding="utf-8")
     assert "pytest" in ps1
     assert "tests failed" in ps1.lower() or "Fail" in ps1
     # PyInstaller cannot cross-compile; the script must say so and check.
@@ -107,7 +107,7 @@ def test_build_script_refuses_to_build_from_a_red_suite():
 
 def test_no_console_window_in_the_build():
     """A terminal flashing on launch reads as malware."""
-    spec = (PKG / "keel.spec").read_text()
+    spec = (PKG / "keel.spec").read_text(encoding="utf-8")
     assert "console=False" in spec
     assert "upx=False" in spec, "UPX is a false-positive magnet for Defender"
 
