@@ -391,9 +391,21 @@ def test_a_real_machine_gets_no_demo_data(tmp_path):
     svc = _real_service(tmp_path)
     assert svc._demo is False
 
-    # no demo blocklists pushed into a real user's blocker
+    # The bundled lists DO ship to a real machine — that is the point of them.
+    # What must never happen is demo-only fixtures or invented block counts.
+    # Before 0.5.9 this asserted zero lists, which pinned the bug being fixed:
+    # a real PC had nothing to block and the DNS screen offered a switch with
+    # nothing behind it.
     dns = svc.status()["dns"]
-    assert dns["lists"] == 0 and dns["patterns"] == 0
+    assert dns["lists"] >= 1, "bundled lists must reach a real machine"
+    assert dns["patterns"] > 0, "a list with no hostnames in it blocks nothing"
+    assert dns["enforced"] == 0, (
+        "nothing may be in the hosts file before the user switches it on")
+    # Ads and telemetry are opt-in: a fresh install must not silently rewrite
+    # the user's hosts file with 83 tracker entries.
+    enabled = [L for L in svc.run_action("dns.lists", {})["lists"] if L["enabled"]]
+    assert {L["group"] for L in enabled} <= {"malware", "phishing"}, (
+        f"only malware lists may default on, got {[L['group'] for L in enabled]}")
     # no invented junk/dup GB: the only findings are the two the fake registry
     # and runner genuinely support (telemetry=3, Balanced power plan)
     ck = svc.checkup()

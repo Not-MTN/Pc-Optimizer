@@ -64,6 +64,40 @@ DEFAULT_RULES = [
          note="Installer downloads you have already used"),
 ]
 
+#: (id, display name, group, file in `lists/`). Malware and phishing are on by
+#: default because blocking them cannot break a working program; ads and
+#: telemetry are opt-in, because they can.
+BUNDLED_LISTS = [
+    ("keel-ads", "Ads and trackers", "ads", "ads-trackers.txt"),
+    ("keel-telemetry", "Telemetry and background reporting", "telemetry",
+     "trackers-telemetry.txt"),
+    ("keel-malware", "Malware and phishing", "malware", "malware-phishing.txt"),
+]
+
+
+def _lists_dir() -> Path:
+    """`lists/` beside the package, or beside the frozen exe."""
+    here = Path(__file__).resolve().parent
+    for candidate in (here.parent / "lists", here / "lists") :
+        if candidate.is_dir():
+            return candidate
+    return here.parent / "lists"
+
+
+def _read_list_file(filename: str) -> list[str]:
+    path = _lists_dir() / filename
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            out.append(line)
+    return out
+
+
 DEMO_LIST = """# a tiny, honest sample list (real builds ship compiled lists)
 ads.doubleclick.net
 *.googlesyndication.com
@@ -124,8 +158,11 @@ class Service:
         # The backend is passed in: without it, `on()` had no way to reach an
         # adapter and quietly reported success while changing nothing.
         self.dns = DnsBlocker(self.conn, self.clock, backend=self.backend)
-        if self._demo:
-            self._install_demo_lists()
+        # Bundled lists are installed on every machine. Before this, they were
+        # seeded only for the demo backend, so a real PC had zero patterns and
+        # "Turn on" had nothing to block — the screen offered a switch with no
+        # contents behind it.
+        self._install_bundled_lists()
         self.recipes = Recipes(self.conn, self.clock, run_action=self.run_action)
         self.sens = SensLab(self.conn, self.clock)
         self.gaming = Gaming(self.conn, self.clock)
@@ -1686,12 +1723,26 @@ class Service:
                 "cache": str(base / "cache"), "logs": str(base / "logs"),
                 "downloads": str(base / "downloads")}
 
+    def _install_bundled_lists(self) -> None:
+        """Ship the lists that live in `lists/`. Idempotent, and never destructive.
+
+        An existing list the user has customised is left alone: these are
+        defaults, and a reinstall must not silently re-enable something the user
+        turned off.
+        """
+        existing = {row[0] for row in self.conn.execute(
+            "SELECT key FROM dns_state WHERE key LIKE 'list.%'").fetchall()}
+        for list_id, name, grp, filename in BUNDLED_LISTS:
+            if f"list.{list_id}" in existing:
+                continue
+            patterns = _read_list_file(filename)
+            if not patterns:
+                continue
+            self.dns.install_list(list_id, name, grp, patterns,
+                                  enabled=grp in {"malware", "phishing"})
+
     def _install_demo_lists(self) -> None:
-        if self.dns.total_blocked() == 0:
-            self.dns.install_list("pco-ads", "PCO ads + trackers", "ads",
-                                  DEMO_LIST.splitlines(), enabled=True)
-            self.dns.install_list("pco-malware", "Malware + phishing", "malware",
-                                  ["*.malware.test", "*.phishing.test"], enabled=True)
+        self._install_bundled_lists()
 
     def weekly_report(self) -> dict[str, Any]:
         feed = self.sentinel.since(int(time.time() * 1000) - 7 * 86_400_000)
@@ -1930,6 +1981,9 @@ ACTIONS = {
     "dns.pause": lambda s, a: {"paused_until": s.dns.pause(int(a.get("minutes", 30)))},
     "dns.resume": lambda s, a: (s.dns.resume(), {"paused": False})[1],
     "dns.allow": lambda s, a: (s.dns.allow(a["domain"], a.get("app", "*")), {"ok": True})[1],
+    "dns.lists": lambda s, a: {"lists": s.dns.lists(),
+                               "status": s.dns.status()},
+    "dns.list.set": lambda s, a: s.dns.set_list(a["id"], bool(a.get("enabled"))),
     "status": lambda s, a: s.status(),
     "report.weekly": lambda s, a: s.weekly_report(),
     "drift.check": lambda s, a: s.engine.check_drift(),

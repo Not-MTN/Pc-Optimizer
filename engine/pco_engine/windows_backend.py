@@ -608,9 +608,9 @@ class WindowsBackend:
                 "Service start types (e.g. DiagTrack)",
                 "Security and telemetry policy values (needs administrator)",
                 "Cleaning TEMP and cache files (moved to a restorable vault)",
+                "DNS blocking — writes real entries into your hosts file",
             ],
             "does_not_change_the_machine": [
-                "DNS blocking — needs a local resolver this build does not start",
                 "Startup deferral — needs a launcher this build does not ship",
                 "Gaming frame capture — shows a simulated session, labelled as such",
                 "Spotify — blocked until Spicetify can inject again",

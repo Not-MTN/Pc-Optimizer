@@ -882,6 +882,64 @@ anything.** `status.backend` carries `changes_the_machine` (6 entries) and
 `does_not_change_the_machine` (4 entries) straight from the backend that would do
 the work, and Home renders both lists. No dead end requires discovering it first.
 
+### 0.5.9 — DNS blocking now actually blocks
+
+Explaining that a feature does not work is not the same as making it work. The
+three screens listed under "does not change the machine" are being turned into
+real features. DNS is first, because it was the most broken: the switch was a row
+in our own database.
+
+**What it does now.** `on()` writes a managed block into the system hosts file —
+`C:\Windows\System32\drivers\etc\hosts`. Windows consults that file before it
+asks any resolver, so a listed hostname is dead for every application on the
+machine, whether Keel is running or not. That is a real block, not a flag.
+
+133. **Wildcards were silently dropped, so a 14-pattern list blocked 2 things.**
+     A hosts entry matches one exact name, so `*.doubleclick.net` cannot be
+     written literally. The first version skipped anything with a `*` — which
+     meant the app reported "blocking on" while thirteen of its own rules did
+     nothing. Patterns are now expanded to real hostnames, and a wildcard a hosts
+     file cannot express (`*.*.bad`) is skipped rather than approximated into
+     something that blocks the wrong thing.
+
+134. **Turning blocking off left the block in place.** `off()` cleared a mode
+     string and returned. Release now rewrites the file without the managed
+     block, and the test asserts the result is **byte-identical** to what the user
+     had. Their own lines are never touched, and a one-time `hosts.keel-backup`
+     is kept.
+
+135. **A write that did not land was reported as success.** The old code wrote
+     the file and assumed it took. Verification now re-reads the file and refuses
+     to report success it cannot see — which is what catches a security suite or
+     Windows resetting the file underneath us.
+
+136. **A real PC had no blocklists at all.** `DEMO_LIST` was seeded only on the
+     demo backend, and its own comment admitted "real builds ship compiled
+     lists" — this build did not. So even a working hosts engine had nothing to
+     write. Three lists now ship in `lists/` (106 distinct hostnames): ads and
+     trackers (83 patterns), telemetry and background reporting (27), and
+     malware and phishing (18). Malware is on by default because blocking it
+     cannot break a working program; ads and telemetry are **opt-in**, because
+     they can, and a fresh install must not rewrite someone's hosts file behind
+     their back.
+
+137. **The DNS screen could not enable a list.** There was no action for it at
+     all — the screen showed a mode and three buttons. `/api/dns/lists` and
+     `/api/dns/list/set` now exist, the screen has a Lists table with per-list
+     switches, and toggling a list while blocking is on **re-enforces
+     immediately**: the count goes 18 → 83 in the file, not at next restart.
+
+138. **`status.dns.enforced` is separate from `patterns`.** The number that
+     matters is what is in the hosts file right now; the old status reported only
+     how many patterns the lists held, which is how "blocking on" coexisted with
+     an empty file.
+
+**Permission is handled honestly.** Writing that file needs administrator. Without
+it the operation refuses with *"Writing the hosts file needs administrator rights.
+Nothing was changed — press 'Restart as administrator' in the banner, then try
+again."* and the file is left untouched.
+
+93 was:
 93 was:
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no

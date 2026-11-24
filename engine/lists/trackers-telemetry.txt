@@ -1,0 +1,41 @@
+# Keel — telemetry and background reporting
+# Endpoints that exist purely to report on you. Kept separate from the ad list so
+# it can be switched independently: some of these are also used by Windows
+# Update diagnostics, and a user may want the ads gone but the diagnostics kept.
+
+# --- Windows telemetry / compatibility
+*.telemetry.microsoft.com
+*.vortex.data.microsoft.com
+*.settings-win.data.microsoft.com
+*.watson.telemetry.microsoft.com
+*.diagnostics.support.microsoft.com
+*.compatlogger.office.com
+*.browser.events.data.microsoft.com
+*.dc.services.visualstudio.com
+*.mobile.events.data.microsoft.com
+
+# --- Office / OneDrive telemetry
+*.telemetry.officeapps.live.com
+*.nexus.officeapps.live.com
+
+# --- Device-vendor analytics
+*.metrics.nvidia.com
+*.telemetry.nvidia.com
+*.gfe.nvidia.com
+*.amd.com.akadns.net
+*.metrics.amd.com
+
+# --- Crash / usage reporting SDKs bundled in apps
+*.sentry.io
+*.bugsnag.com
+*.instabug.com
+*.appcenter.ms
+*.hockeyapp.net
+*.crashlytics.com
+*.rollbar.com
+
+# --- Location / device graph
+*.mmtro.com
+*.scorecardresearch.com
+*.imrworldwide.com
+*.nielsen.com

@@ -22,6 +22,9 @@ ENGINE = ROOT / "engine"
 datas = [
     (str(ENGINE / "pco_engine" / "console.html"), "pco_engine"),
     (str(ENGINE / "catalog"), "catalog"),
+    # Real blocklists. Without these the DNS screen has nothing to block on a
+    # clean machine — the lists are data, so they must ship like the catalog.
+    (str(ENGINE / "lists"), "lists"),
 ]
 datas += [(str(p), ".") for p in sorted(ENGINE.glob("schema*.sql"))]
 

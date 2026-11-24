@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from .backend import BackendError
+from .hostsfile import HostsFile
 
 GROUPS = {"ads", "trackers", "telemetry", "malware", "phishing", "regional", "adult"}
 MODES = {"off", "on", "strict"}
@@ -104,6 +105,7 @@ class DnsBlocker:
         self.backend = backend
         self.listener = listener
         self._engaged_on: str | None = None
+        self.hosts = HostsFile(backend=backend)
         self._matcher: Matcher | None = None
         self._lists: dict[str, ListSource] = {}
         self._load_state()
@@ -130,11 +132,25 @@ class DnsBlocker:
                          enabled=enabled)
         self._lists[list_id] = src
         self._matcher = None        # recompile lazily
+        # The domains are part of the list. Storing only the name|group|enabled
+        # header meant a fresh process had lists with no contents: the matcher
+        # compiled to nothing, nothing was blocked, and `decide()` said "allowed"
+        # for every domain on the machine while the window showed a full list.
         with self.conn:
             self.conn.execute(
                 "INSERT OR REPLACE INTO dns_state(key,value) VALUES(?,?)",
                 (f"list.{list_id}", f"{name}|{grp}|{int(enabled)}"))
+            self.conn.execute(
+                "INSERT OR REPLACE INTO dns_state(key,value) VALUES(?,?)",
+                (f"domains.{list_id}", "\n".join(src.domains)))
         return len(src.domains)
+
+    def _domains_of(self, list_id: str) -> list[str]:
+        row = self.conn.execute(
+            "SELECT value FROM dns_state WHERE key=?", (f"domains.{list_id}",)).fetchone()
+        if row is None or not row[0]:
+            return []
+        return [d for d in str(row[0]).split("\n") if d]
 
     def _compile(self) -> Matcher:
         m = Matcher()
@@ -191,45 +207,72 @@ class DnsBlocker:
         if getattr(backend, "environment", "demo") != "windows":
             # A simulated machine: the pill already says nothing here is real.
             return ""
-        if listener is None or not getattr(listener, "running", False):
-            return ("Blocking needs Keel's local DNS resolver, which this build "
-                    "does not start. Nothing was blocked — your network settings "
-                    "are unchanged.")
-        adapters = getattr(backend, "dns_adapters", None)
-        setter = getattr(backend, "dns_set", None)
-        if adapters is None or setter is None:
-            # No adapter API at all means a simulated machine. There is nothing
-            # to change and nothing to warn about: the pill already says the
-            # whole session is simulated.
-            if getattr(backend, "environment", "demo") != "windows":
-                return ""
-            return ("This build cannot change network adapters, so blocking "
-                    "cannot be switched on. Your DNS is unchanged.")
-        servers = getattr(listener, "addresses", None) or []
-        if not servers:
-            return "The local resolver reported no address; nothing was blocked."
-        targets = [a for a in adapters() if a]
-        if not targets:
-            return ("No network adapter could be found to point at the resolver. "
-                    "Your DNS is unchanged.")
-        out = setter(targets[0], servers)
-        if not out.get("ok"):
-            return (f"Windows would not take the DNS change on '{targets[0]}': "
-                    f"{out.get('reason') or 'no reason given'}. Your DNS is unchanged.")
-        flush = getattr(backend, "dns_flush", None)
-        if flush is not None:
-            flush()
-        self._engaged_on = targets[0]
+        # The real mechanism: one managed block in the system hosts file.
+        # Windows consults that file before it asks any resolver, so a name in
+        # there is dead for every application whether Keel is running or not.
+        names = self.blocklist_domains()
+        out = self.hosts.apply(names)
+        if not out.ok:
+            return out.reason
+        self._engaged_on = out.path
+        self._engage_servers(listener)
         return ""
 
-    def _release(self) -> None:
+    def _engage_servers(self, listener) -> None:
+        """Optionally point an adapter at a resolver we control.
+
+        Not required for the hosts block to work, so nothing here may fail the
+        blocking operation: the hosts entry is already written and is what
+        actually blocks. Only a resolver that is running and reports an address
+        is worth pointing an adapter at.
+        """
         backend = getattr(self, "backend", None)
-        adapter = getattr(self, "_engaged_on", None)
-        if backend is None or not adapter:
+        if backend is None or listener is None:
             return
-        clear = getattr(backend, "dns_clear", None)
-        if clear is not None:
-            clear(adapter)
+        if not getattr(listener, "running", False):
+            return
+        adapters = getattr(backend, "dns_adapters", None)
+        setter = getattr(backend, "dns_set", None)
+        servers = getattr(listener, "addresses", None) or []
+        if adapters is None or setter is None or not servers:
+            return
+        try:
+            targets = [a for a in adapters() if a]
+            if targets:
+                setter(targets[0], servers)
+                flush = getattr(backend, "dns_flush", None)
+                if flush is not None:
+                    flush()
+        except Exception:
+            # A resolver-side nicety failing must never undo the block.
+            pass
+
+    def blocklist_domains(self) -> list[str]:
+        """Every hostname in every enabled list — what the hosts block writes."""
+        out: list[str] = []
+        for src in self._lists.values():
+            if not src.enabled:
+                continue
+            out.extend(src.domains)
+        if not out:
+            # Not installed in memory (fresh process): reload from the database.
+            out = self._domains_from_db()
+        return out
+
+    def _domains_from_db(self) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT key,value FROM dns_state WHERE key LIKE 'list.%'").fetchall()
+        out: list[str] = []
+        for key, value in rows:
+            parts = str(value).split("|")
+            if len(parts) >= 3 and parts[2] == "1":
+                out.extend(self._domains_of(key[len("list."):]))
+        return out
+
+    def _release(self) -> None:
+        out = self.hosts.clear()
+        if not out.ok:
+            raise BackendError(out.reason)
         self._engaged_on = None
 
     def toggle(self) -> str:
@@ -307,6 +350,56 @@ class DnsBlocker:
         return [{"domain": r[0], "app": r[1], "blocked": r[2], "last_at": r[3]}
                 for r in rows]
 
+    # ------------------------------------------------------------------ lists
+    def lists(self) -> list[dict[str, Any]]:
+        """Every installed list with what it holds and whether it is enforced."""
+        rows = self.conn.execute(
+            "SELECT key,value FROM dns_state WHERE key LIKE 'list.%'").fetchall()
+        out = []
+        for key, value in rows:
+            list_id = str(key)[len("list."):]
+            parts = str(value).split("|")
+            name = parts[0] if parts else list_id
+            grp = parts[1] if len(parts) > 1 else "ads"
+            enabled = len(parts) > 2 and parts[2] == "1"
+            out.append({"id": list_id, "name": name, "group": grp,
+                        "enabled": enabled,
+                        "patterns": len(self._domains_of(list_id))})
+        return sorted(out, key=lambda r: (r["group"], r["name"]))
+
+    def set_list(self, list_id: str, enabled: bool) -> dict[str, Any]:
+        """Enable or disable one list, and re-enforce if blocking is on.
+
+        Toggling a list while blocking is on must change what the machine
+        blocks, not wait for the next restart. The hosts block is rewritten
+        immediately, and the write is verified by the hosts engine.
+        """
+        row = self.conn.execute(
+            "SELECT value FROM dns_state WHERE key=?", (f"list.{list_id}",)).fetchone()
+        if row is None:
+            raise BackendError(f"no list called {list_id!r} on this machine")
+        parts = str(row[0]).split("|")
+        while len(parts) < 3:
+            parts.append("0")
+        parts[2] = "1" if enabled else "0"
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO dns_state(key,value) VALUES(?,?)",
+                (f"list.{list_id}", "|".join(parts)))
+        src = self._lists.get(list_id)
+        if src is not None:
+            src.enabled = bool(enabled)
+        self._matcher = None
+        out: dict[str, Any] = {"id": list_id, "enabled": bool(enabled),
+                              "reenforced": False}
+        if self.mode != "off":
+            reason = self._engage()
+            if reason:
+                raise BackendError(reason)
+            out["reenforced"] = True
+        out["enforced"] = self.hosts.status().get("blocked", 0)
+        return out
+
     def total_blocked(self) -> int:
         row = self.conn.execute(
             "SELECT COALESCE(SUM(blocked),0) FROM dns_counters").fetchone()
@@ -314,8 +407,15 @@ class DnsBlocker:
 
     def status(self) -> dict[str, Any]:
         live = [src for src in self._lists.values() if src.enabled]
+        hf = self.hosts.status()
         return {"mode": self.mode, "paused": self.is_paused(),
                 "pause_remaining_s": self.pause_remaining_s(),
                 "lists": len(live),
                 "patterns": sum(len(src.domains) for src in live),
-                "blocked_total": self.total_blocked()}
+                "blocked_total": self.total_blocked(),
+                # What is actually in the hosts file right now, which is the only
+                # number that means the machine is blocking something.
+                "enforced": hf.get("blocked", 0),
+                "hosts_path": hf.get("path", ""),
+                "hosts_available": hf.get("available", False),
+                "hosts_reason": hf.get("reason", "")}

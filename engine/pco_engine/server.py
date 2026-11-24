@@ -189,6 +189,8 @@ ROUTES: dict[str, str] = {
     "/api/dns/off": "dns.off",
     "/api/dns/toggle": "dns.toggle",
     "/api/dns/pause": "dns.pause",
+    "/api/dns/lists": "dns.lists",
+    "/api/dns/list/set": "dns.list.set",
     "/api/drift": "drift.check",
     "/api/report": "report.weekly",
     "/api/checkup/apply": "checkup.fix",
