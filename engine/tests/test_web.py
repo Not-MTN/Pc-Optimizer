@@ -772,3 +772,142 @@ def test_keel_still_works_from_its_own_window(live_server):
     code, _ = _raw(live_server, "/api/dns/on", origin=live_server, method="POST",
                    body={})
     assert code == 200, "the console's own POST was refused"
+
+
+def test_a_long_read_does_not_block_another_read():
+    """One exclusive lock around every service call stopped the whole app.
+
+    Rendering a wallpaper takes seconds of pure Python, and it was a POST, so
+    it took the write lock — but so did everything else, including the two-second
+    poll behind the machine pill. Measured before the fix: /api/status waited 4.5
+    seconds behind a 5 second render.
+
+    The distinction that matters: a reader must wait for an in-flight *writer*
+    (that is what keeps SQLite consistent), but a render is a read — it touches
+    no database row — so it must not block other readers. My first version of
+    this test asserted the wrong thing entirely and failed against correct code.
+    """
+    import threading
+    import time
+
+    from pco_engine.server import _LOCK
+
+    slow_done = threading.Event()
+    reads: list[float] = []
+
+    def slow_read() -> None:
+        with _LOCK.read():
+            time.sleep(0.8)          # a stand-in for a wallpaper render
+            slow_done.set()
+
+    def quick_read() -> None:
+        time.sleep(0.05)             # let the slow reader get in first
+        t0 = time.perf_counter()
+        with _LOCK.read():
+            pass
+        reads.append(time.perf_counter() - t0)
+
+    a = threading.Thread(target=slow_read)
+    b = threading.Thread(target=quick_read)
+    a.start(); b.start(); a.join(); b.join()
+    assert reads, "the quick read never ran"
+    assert reads[0] < 0.5, (
+        f"a read waited {reads[0]:.2f}s behind another read — readers are "
+        f"serialised, so any slow operation freezes the window")
+
+
+def test_a_writer_still_excludes_readers():
+    """The other half: a state change must not overlap a read, or SQLite and
+    the in-memory caches disagree. A guard that only tests the permissive
+    direction is how a read/write lock becomes no lock at all."""
+    import threading
+    import time
+
+    from pco_engine.server import _LOCK
+
+    inside = {"writer": False, "violation": False}
+
+    def writer() -> None:
+        with _LOCK.write():
+            inside["writer"] = True
+            time.sleep(0.4)
+            inside["writer"] = False
+
+    def reader() -> None:
+        time.sleep(0.1)
+        with _LOCK.read():
+            if inside["writer"]:
+                inside["violation"] = True
+
+    a = threading.Thread(target=writer)
+    b = threading.Thread(target=reader)
+    a.start(); b.start(); a.join(); b.join()
+    assert not inside["violation"], "a read ran while a write was in progress"
+
+
+def test_reads_run_concurrently():
+    """Two status polls must not queue behind each other."""
+    import threading
+    import time
+
+    from pco_engine.server import _LOCK
+
+    seen: list[float] = []
+    gate = threading.Event()
+
+    def reader() -> None:
+        with _LOCK.read():
+            gate.set()
+            time.sleep(0.4)          # both readers are inside at the same time
+            seen.append(time.perf_counter())
+
+    t0 = time.perf_counter()
+    threads = [threading.Thread(target=reader) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    total = time.perf_counter() - t0
+    assert total < 0.8, f"3 reads took {total:.2f}s; they are serialised"
+
+
+def test_the_lock_objects_are_usable_with_or_without_a_call():
+    """The RW change broke 20 handlers silently: `with _LOCK:` on an object with
+    no __enter__ raises TypeError, and the special-cased routes that still used
+    the old form returned 500s. This pins that both forms exist and that a bare
+    `_LOCK` is never used as a context manager again."""
+    import inspect
+
+    from pco_engine import server as srv
+
+    assert hasattr(srv._LOCK, "read") and hasattr(srv._LOCK, "write")
+    src = inspect.getsource(srv)
+    assert "with _LOCK:" not in src, "a handler still uses the old bare lock"
+    for method in ("read", "write"):
+        guard = getattr(srv._LOCK, method)()
+        assert hasattr(guard, "__enter__") and hasattr(guard, "__exit__")
+
+
+def test_a_wallpaper_render_does_not_take_the_write_lock():
+    """The render is a pure function of the document it was given.
+
+    It writes a PNG and touches no database row, no registry key, no service.
+    Treating it as a state change made /api/status wait behind it — measured at
+    4.76s during a 5.29s render, i.e. the window was frozen for the whole
+    render. Classified as file-only, the same render leaves status answering in
+    0.23s.
+    """
+    from pco_engine.server import Handler, ROUTES
+
+    for action in Handler._FILE_ONLY:
+        # Every file-only action must still be POST: a link must not be able to
+        # spend five seconds of CPU by being rendered.
+        assert Handler._is_mutating(action), (
+            f"{action} is file-only but reachable by GET")
+    assert Handler._heavy_but_stateless("wallpaper.save")
+
+    # The genuinely dangerous ones must NOT be in the file-only set.
+    for action in ("clean.run", "theme.apply", "safety.panic", "startup.apply",
+                   "dns.on", "safety.confirm"):
+        assert not Handler._heavy_but_stateless(action), (
+            f"{action} changes the machine and must take the write lock")

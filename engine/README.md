@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (730 tests: 719 here, 11 that only a real Windows machine can run)
+## What works today (742 tests: 731 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -625,6 +625,43 @@ of those tests read the console as **text**. The page parsed. It never ran.
      counted slice assignments and every branch fills row-at-a-time. Guards that
      cannot fail are the theme of this release: three of this batch's first
      drafts passed with the bug reintroduced.
+
+108. **The cleaner followed a link out of the folder it was cleaning.** A symlink
+     dropped in %TEMP% pointing at a document was reported as 16 bytes of temp
+     junk — `os.path.isfile` resolves links — and then moved into the vault as a
+     live pointer to the real file. No data was lost in the move, but the vault
+     then held a reference outside its own roots, one restore-or-purge away from
+     touching a file the user never offered. The walker now reports a link as a
+     link (its own size) and never reports its target.
+109. **Blocking a driver was a one-way door.** The console listed blocked drivers
+     and offered no way to lift one; `drivers.rollback` existed server-side the
+     whole time and nothing called it. A mistaken block stayed forever, and the
+     only remedy was editing the SQLite file by hand. Blocks now have an Unblock
+     button, next to the block, with a toast that says which version Windows will
+     offer again. This is bug 6's shape again: the endpoint existed, the button
+     did not — and no test compared the two.
+110. **A theme preview could diff against the wrong baseline, silently.**
+     `active_theme_doc` returned the built-in default both when nothing had been
+     applied and when the record of what *had* been applied could not be read.
+     The preview then described changes relative to a starting point the machine
+     was not at: three changes claimed where there were eleven. It now returns
+     where the baseline came from, and a fallback baseline is stated in the same
+     card as the diff.
+111. **A wallpaper render froze the whole window for five seconds.** One
+     `threading.Lock` surrounded every service call, so `/api/status` — the poll
+     behind the machine pill and every counter — queued behind a render.
+     Measured: 4.76s of freeze during a 5.29s render. Replaced with a
+     read/write lock: readers run together, writers are exclusive, a render is a
+     read because it touches no database row. Status now answers in 0.23s during
+     the same render.
+112. **The read/write change broke twenty handlers silently, and one test hid
+     it.** `with _LOCK:` on an object without `__enter__` raises TypeError, so
+     `/api/undo` and `/api/clean/restore` returned 500s — the round-trip test
+     caught that. But the traceback-leak test found `Handler` by taking "the
+     first ClassDef in the module", and `_RWLock` was now first: it failed with
+     StopIteration instead of checking anything. It names `Handler` now. That is
+     the same failure mode as bugs 103-107 and it is why every guard here is
+     mutation-tested.
 
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no

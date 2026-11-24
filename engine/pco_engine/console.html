@@ -150,7 +150,18 @@
                      box-shadow:0 8px 24px -14px var(--lime)}
   button.btn.primary:hover{background:linear-gradient(180deg,#d4ff7a,#b4f04a)}
   button.btn.ghost{background:transparent}
+  button.btn.small{padding:5px 10px;font-size:12px;border-radius:8px}
   button.btn[disabled]{opacity:.5;cursor:progress}
+  /* One blocked driver: the id and reason on the left, the way back on the
+     right. Without this the row rendered as bare inline text with the button
+     jammed against the reason. */
+  .blockrow{display:flex;align-items:center;gap:10px;padding:8px 0;
+            border-bottom:1px solid var(--line)}
+  .blockrow:last-child{border-bottom:0}
+  .blockrow b{font-weight:600;white-space:nowrap}
+  .blockrow .sub{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+                 white-space:nowrap}
+  .blockrow button{margin-left:auto;flex:none}
   .btn.danger{color:var(--red);border-color:#3a2626}
   /* ---------------- lists ---------------- */
   .finding{display:flex;gap:14px;padding:13px 14px;border:1px solid var(--line);border-radius:12px;
@@ -2405,7 +2416,28 @@ async function loadDrivers() {
     const blocks = d.blocks || [];
     if (!blocks.length) bk.append(el("div", "empty", "Nothing blocked."));
     blocks.forEach((b) => {
-      bk.append(el("b", null, b.driver_id + " " + b.version), el("span", null, b.reason));
+      // A block you cannot lift is a trap, not a setting. Blocking was
+      // one-way: the list showed entries and offered no way back.
+      const row = el("div", "blockrow");
+      row.append(el("b", null, b.driver_id + " " + b.version),
+                 el("span", "sub", b.reason));
+      const undo = el("button", "btn ghost small", "Unblock");
+      undo.addEventListener("click", async () => {
+        undo.disabled = true;
+        try {
+          const r = await api("/api/drivers/unblock",
+            { driver_id: b.driver_id, version: b.version });
+          toast(r.unblocked
+            ? "Unblocked " + b.driver_id + " " + b.version + " — Windows Update will offer it again."
+            : r.note || "That block was already gone.");
+          await loadDrivers();
+        } catch (err) {
+          undo.disabled = false;
+          toast(err.message, true);
+        }
+      });
+      row.append(undo);
+      bk.append(row);
     });
   } catch (err) { toast(err.message, true); }
 }
@@ -3155,13 +3187,17 @@ $("#themePreviewBtn")?.addEventListener("click", async (ev) => {
       // like a failure.
       themeReport("Nothing to change",
         `${r.summary}\n\nThis theme already matches what your machine is doing, ` +
-        `so there is no diff to show.`);
+        `so there is no diff to show.` +
+        (r.baseline_warning ? "\n\n" + r.baseline_warning : ""));
       return;
     }
     const rows = r.changes.slice(0, 40).map((c) =>
       `${c.key}: ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`);
+    // The diff is only as trustworthy as the baseline it was taken against, so
+    // a fallback baseline is stated in the same card as the diff itself.
     themeReport(`${r.count} change${r.count === 1 ? "" : "s"} · ${r.summary}`,
-      rows.join("\n") + (r.count > 40 ? `\n…and ${r.count - 40} more` : ""));
+      rows.join("\n") + (r.count > 40 ? `\n…and ${r.count - 40} more` : "") +
+      (r.baseline_warning ? "\n\n" + r.baseline_warning : ""));
   });
 });
 

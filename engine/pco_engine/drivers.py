@@ -146,6 +146,31 @@ class DriverManager:
             "SELECT driver_id,version,reason,blocked_at FROM driver_blocks "
             "ORDER BY blocked_at DESC").fetchall()]
 
+    def unblock(self, driver_id: str, version: str) -> dict[str, Any]:
+        """Lift a block.
+
+        Blocking was a one-way door: the console listed blocks and offered no
+        way to remove one, so a mistake made months ago stayed forever and the
+        only remedy was editing the database by hand. A control you cannot undo
+        is not a control, it is a trap.
+        """
+        with self.conn:
+            cur = self.conn.execute(
+                "DELETE FROM driver_blocks WHERE driver_id=? AND version=?",
+                (driver_id, version))
+            left = self.conn.execute(
+                "SELECT COUNT(*) FROM driver_blocks WHERE driver_id=?",
+                (driver_id,)).fetchone()[0]
+            if not left:
+                self.conn.execute(
+                    "UPDATE drivers SET blocked_at=NULL WHERE id=?", (driver_id,))
+        return {"driver_id": driver_id, "version": version,
+                "unblocked": cur.rowcount > 0,
+                "still_blocked": left,
+                "note": ("Removed from the local policy store. Windows Update "
+                         "will offer this version again.") if cur.rowcount else
+                        ("That block was already gone; nothing changed.")}
+
     def rollback(self, install_id: str) -> dict[str, Any]:
         """Honest rollback: settings from the snapshot, version marked blocked."""
         row = self.conn.execute(

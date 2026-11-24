@@ -855,24 +855,44 @@ class Service:
         problems = themes.validate(doc)
         if problems:
             return {"ok": False, "problems": problems}
-        current = self.active_theme_doc()
+        current, baseline = self.active_theme()
         changes = themes.diff(current, doc)
-        return {"ok": True, "changes": changes, "count": len(changes),
-                "summary": themes.summary(doc),
-                "warnings": themes.widget_warnings(doc)}
+        out = {"ok": True, "changes": changes, "count": len(changes),
+               "summary": themes.summary(doc),
+               "warnings": themes.widget_warnings(doc),
+               "baseline": baseline}
+        if baseline.startswith("unreadable"):
+            out["baseline_warning"] = (
+                "The record of your currently applied theme could not be read, so "
+                "this diff compares against the built-in default instead. Some "
+                "changes listed here may already be in place.")
+        return out
 
     def active_theme_doc(self) -> dict[str, Any]:
         """The theme currently applied, or the house default."""
+        return self.active_theme()[0]
+
+    def active_theme(self) -> tuple[dict[str, Any], str]:
+        """The applied theme and where that answer came from.
+
+        Two different situations used to return the same document with no way to
+        tell them apart: "you have not applied a theme, so here is the default"
+        and "the record of what you applied could not be read, so here is the
+        default". The second one is the dangerous one — `theme_preview` diffs
+        against this document, so a failed read produced a diff against the wrong
+        baseline: the screen would say a theme changes three things when it
+        changes eleven.
+        """
         from . import themes
         try:
             row = self.conn.execute(
                 "SELECT doc_json FROM desktop_themes WHERE applied_at IS NOT NULL "
                 "ORDER BY applied_at DESC LIMIT 1").fetchone()
             if row:
-                return json.loads(row[0])
-        except Exception:                    # noqa: BLE001 - table may be absent
-            pass
-        return themes.get("keel")
+                return json.loads(row[0]), "applied"
+        except Exception as exc:             # noqa: BLE001 - table may be absent
+            return themes.get("keel"), f"unreadable: {exc}"
+        return themes.get("keel"), "default (nothing applied yet)"
 
     def theme_apply(self, theme_id: str) -> dict[str, Any]:
         """Apply a built-in theme: journal the visual change, then render it."""
@@ -1639,6 +1659,7 @@ ACTIONS = {
     "drivers.list": lambda s, a: s.driver_inventory(),
     "drivers.block": lambda s, a: s.drivers.block(a["driver_id"], a["version"], reason=a["reason"]),
     "drivers.rollback": lambda s, a: s.drivers.rollback(a["install_id"]),
+    "drivers.unblock": lambda s, a: s.drivers.unblock(a["driver_id"], a["version"]),
     "recipe.parse": lambda s, a: s.nl_recipe(a["sentence"]),
     "recipe.create": lambda s, a: s.create_recipe_from_text(a["sentence"]),
     "recipe.list": lambda s, a: {"recipes": s.recipes_list()},

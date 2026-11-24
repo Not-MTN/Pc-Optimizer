@@ -308,12 +308,31 @@ def _glob_walk(pattern: str):
         candidates = [p for p in glob.glob(pattern) if os.path.isfile(p)]
     else:
         candidates = []
+    root_real = os.path.realpath(root)
     for full in candidates:
-        if os.path.isfile(full):
+        # Never follow a link out of the folder being cleaned. `os.path.isfile`
+        # resolves the link, so a symlink dropped in %TEMP% pointing at a
+        # document was reported as 16 bytes of junk in the temp folder; it was
+        # then moved into the vault as a *live link* to the real file — no data
+        # was lost immediately, but the vault then held a pointer to something
+        # outside its roots, and restoring or deleting the vault entry would
+        # have touched it. A symlink is junk in its own right; report it as such
+        # and never report the thing it points at.
+        if os.path.islink(full):
             try:
-                yield full, os.path.getsize(full)
+                yield full, os.lstat(full).st_size
             except OSError:
                 continue
+            continue
+        if not os.path.isfile(full):
+            continue
+        real = os.path.realpath(full)
+        if not (real == root_real or real.startswith(root_real + os.sep)):
+            continue
+        try:
+            yield full, os.path.getsize(full)
+        except OSError:
+            continue
 
 
 def _walk(root: str):

@@ -37,7 +37,65 @@ from .recipes import RecipeError
 from .store import StoreError
 from .service import Service
 
-_LOCK = threading.Lock()
+class _RWLock:
+    """One writer at a time; any number of readers alongside each other.
+
+    There used to be a single lock around every service call, which meant one
+    slow operation stopped the whole app. Rendering a wallpaper takes five
+    seconds, and /api/status -- the call the window makes on a timer, the one
+    that feeds the machine pill and every counter -- blocked behind it for four
+    and a half of those seconds. The UI froze for the length of any render.
+
+    SQLite allows concurrent readers and serialises writers itself, so the only
+    thing a process-level lock has to add is protection against two writers
+    racing on one connection.
+    """
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._readers = 0
+        self._writer = False
+        self._waiting = 0
+
+    def read(self):
+        return _Guard(self, write=False)
+
+    def write(self):
+        return _Guard(self, write=True)
+
+
+class _Guard:
+    def __init__(self, lock, *, write):
+        self.lock = lock
+        self.write = write
+
+    def __enter__(self):
+        c = self.lock._cond
+        with c:
+            if self.write:
+                self.lock._waiting += 1
+                while self.lock._writer or self.lock._readers:
+                    c.wait()
+                self.lock._waiting -= 1
+                self.lock._writer = True
+            else:
+                # A waiting writer holds back new readers, so a steady stream of
+                # status polls cannot starve a mutation.
+                while self.lock._writer or self.lock._waiting:
+                    c.wait()
+                self.lock._readers += 1
+
+    def __exit__(self, *exc):
+        c = self.lock._cond
+        with c:
+            if self.write:
+                self.lock._writer = False
+            else:
+                self.lock._readers -= 1
+            c.notify_all()
+
+
+_LOCK = _RWLock()
 
 # The console is served by this process, so "same origin" is 127.0.0.1 or
 # localhost on whatever port we bound. Anything else is a web page that has no
@@ -167,6 +225,7 @@ ROUTES: dict[str, str] = {
     "/api/workspace/restore": "workspace.restore",
     "/api/drivers/block": "drivers.block",
     "/api/drivers/rollback": "drivers.rollback",
+    "/api/drivers/unblock": "drivers.unblock",
     "/api/drivers/before-install": "drivers.before_install",
     "/api/recipe/parse": "recipe.parse",
     "/api/recipe/create": "recipe.create",
@@ -360,54 +419,57 @@ class Handler(BaseHTTPRequestHandler):
                                      "path": path})
                     return
                 query = {k: v[0] for k, v in urlparse_qs(parsed.query).items() if v}
-                with _LOCK:
+                # Read lock: every mutating verb was refused a few lines up, so
+                # everything reachable here is a query. A slow render in another
+                # request must not freeze the status poll that feeds the window.
+                with _LOCK.read():
                     # run_action defaults args to {}, so a verb that takes nothing
                     # needs no special case here.
                     result = svc.run_action(ROUTES[path], query)
                 self._json(200, result)
                 return
             if path == "/api/sens":
-                with _LOCK:
+                with _LOCK.read():
                     self._json(200, {"games": list_game_table(svc)})
                 return
             if path == "/api/receipts":
-                with _LOCK:
+                with _LOCK.read():
                     self._json(200, {"receipts": svc.receipts(25)})
                 return
             if path == "/api/feed":
-                with _LOCK:
+                with _LOCK.read():
                     self._json(200, {"feed": svc.sentinel.feed(25)})
                 return
             if path == "/api/games/library":
-                with _LOCK:
+                with _LOCK.read():
                     self._json(200, {"games": svc.gaming.games()})
                 return
             if path == "/api/palette":
-                with _LOCK:
+                with _LOCK.read():
                     q = ""
                     if "?" in self.path:
                         q = urlparse_qs(urlparse(self.path).query).get("q", [""])[0]
                     self._json(200, {"results": svc.palette.search(q)})
                 return
             if path == "/api/palette/all":
-                with _LOCK:
+                with _LOCK.read():
                     self._json(200, {"commands": [c.as_dict() for c in svc.palette.commands()]})
                 return
             if path == "/api/peripheral":
-                with _LOCK:
+                with _LOCK.read():
                     self._json(200, {"summary": svc.peripheral.summary(),
                                      "history": svc.peripheral.history(10)})
                 return
             if path == "/api/consent":
-                with _LOCK:
+                with _LOCK.read():
                     self._json(200, svc.consent.decision().as_dict())
                 return
             if path == "/api/autopsy":
-                with _LOCK:
+                with _LOCK.read():
                     self._json(200, {"autopsies": svc.autopsy.list(20)})
                 return
             if path == "/api/catalog":
-                with _LOCK:
+                with _LOCK.read():
                     self._json(200, {"tweaks": [
                         {"id": t.id, "module": t.module, "title": t.title,
                          "plain": t.plain, "tier": t.tier, "risk": t.risk}
@@ -443,7 +505,8 @@ class Handler(BaseHTTPRequestHandler):
         r"\.(apply|run|on|off|toggle|fire|panic|set|confirm|revert|save|write|"
         r"delete|block|rollback|restore|create|import|capture|erase|begin|finish|"
         r"sample|inspect|scan|check|validate|preview|sweep|tune|clean|fix|"
-        r"fix_safe|fix_all|apply_doc|enable|disable|mute|unmute|switch|reset)"
+        r"fix_safe|fix_all|apply_doc|enable|disable|mute|unmute|switch|reset|"
+        r"unblock|revoke|withdraw|clear)"
         r"$")
     MUTATING = set()          # filled by _refresh_mutating() below
 
@@ -464,6 +527,23 @@ class Handler(BaseHTTPRequestHandler):
         # been a lie about what they do.
         "theme.export", "spotify.export",
     }
+
+    #: Actions that write a file or a directory but touch no database row and
+    #: no registry key. They are POST (a link-fetch must not be able to spend
+    #: five seconds of CPU) but they take the READ lock, because serialising
+    #: them against /api/status is what froze the window for the length of a
+    #: render. A render is a pure function of its input document.
+    _FILE_ONLY = {
+        # POST (they cost seconds or write a file) but they change no database
+        # row, no registry key and no service, so they need not exclude the
+        # status poll. Anything that touches the machine belongs outside this
+        # set — see the test that pins that list.
+        "wallpaper.save", "spotify.write",
+    }
+
+    @classmethod
+    def _heavy_but_stateless(cls, action: str) -> bool:
+        return action in cls._FILE_ONLY
 
     @classmethod
     def _is_mutating(cls, action: str) -> bool:
@@ -498,7 +578,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             svc = _service()
             if path == "/api/apply":
-                with _LOCK:
+                with _LOCK.write():
                     out = svc.apply_fixes(args.get("tweaks", []),
                                           finding_ids=args.get("finding_ids"),
                                           source="console")
@@ -522,109 +602,120 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"logged": True})
                 return
             if path == "/api/undo":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, svc.undo(_ident(args, "tx_id")))
                 return
             if path == "/api/clean/restore":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, svc.clean_restore(_ident(args, "run_id")))
                 return
             if path == "/api/dns/pause":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, {"paused_until": svc.dns.pause(_int(args, "minutes", default=30))})
                 return
             if path == "/api/sens/save":
-                with _LOCK:
+                with _LOCK.write():
                     prof = svc.sens.save(cm360=_num(args, "cm360"),
                                          dpi=_int(args, "dpi"))
                 self._json(200, prof.as_dict())
                 return
             if path == "/api/sens/from-game":
-                with _LOCK:
+                with _LOCK.write():
                     prof = svc.sens.from_game(_ident(args, "game"), _num(args, "sens"),
                                               _int(args, "dpi"))
                 self._json(200, {"profile": prof.as_dict(),
                                  "table": svc.sens.table()})
                 return
             if path == "/api/sens/psa/start":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, svc.sens.psa_start())
                 return
             if path == "/api/sens/psa/step":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, svc.sens.psa_step(_ident(args, "state"), bool(args["better"])))
                 return
             if path == "/api/consent/set":
-                with _LOCK:
+                with _LOCK.write():
                     out = svc.set_consent(level=args.get("level"),
                                           categories=args.get("categories"),
                                           trust_everything=bool(args.get("trust_everything")))
                 self._json(200, out)
                 return
             if path == "/api/game/watch":
-                with _LOCK:
+                with _LOCK.write():
                     out = svc.gaming.capture(_ident(args, "game"),
                                              seconds=_num(args, "seconds", default=45))
                 self._json(200, out)
                 return
             if path == "/api/game/plan":
-                with _LOCK:
+                with _LOCK.write():
                     out = svc.gaming.plan(_ident(args, "game"), args.get("session_id"))
                 self._json(200, out)
                 return
             if path == "/api/game/profile/save":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, svc.gaming.save_profile(_ident(args, "game"),
                                              _obj(args, "settings")))
                 return
             if path == "/api/studio/apply":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, svc.studio.apply(_ident(args, "theme_id"),
                                                      force=bool(args.get("force"))))
                 return
             if path == "/api/studio/save":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, svc.studio.save(_obj(args, "doc"), name=args.get("name")))
                 return
             if path == "/api/studio/import":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, svc.studio.import_doc(_obj(args, "doc")))
                 return
             if path == "/api/palette/run":
-                with _LOCK:
+                with _LOCK.read():
                     out = svc.palette.execute(_ident(args, "verb"), args.get("args"))
                 self._json(200, out)
                 return
             if path == "/api/peripheral/test":
-                with _LOCK:
+                with _LOCK.write():
                     out = svc.peripheral_run(_ident(args, "kind"),
                                        _obj(args, "payload", default={}))
                 self._json(200, out)
                 return
             if path == "/api/autopsy/note":
-                with _LOCK:
+                with _LOCK.write():
                     items = svc.autopsy.note(_ident(args, "autopsy_id"),
                                             _obj(args, "items", default=[], kind=list))
                 self._json(200, {"recorded": len(items),
                                  "autopsy": svc.autopsy.get(_ident(args, "autopsy_id")).as_dict()})
                 return
             if path == "/api/autopsy/finish":
-                with _LOCK:
+                with _LOCK.write():
                     au = svc.autopsy.finish(_ident(args, "autopsy_id"))
                 self._json(200, au.as_dict())
                 return
             if path == "/api/autopsy/erase":
-                with _LOCK:
+                with _LOCK.write():
                     out = svc.autopsy.erase(_ident(args, "autopsy_id"))
                 self._json(200, out)
                 return
             if path == "/api/autopsy/begin":
-                with _LOCK:
+                with _LOCK.write():
                     self._json(200, {"autopsy_id": svc.autopsy.begin(
                         str(args.get("installer", "unknown.exe"))[:260])})
                 return
             if path in ROUTES:
-                with _LOCK:
+                # A POST exists to change something, so it takes the write lock
+                # and waits for readers to finish. In-flight reads are short
+                # (status, inventory) by design; the long ones are renders and
+                # they are POST too, so they serialise against each other rather
+                # than against every poll.
+                if self._heavy_but_stateless(ROUTES[path]):
+                    lock = _LOCK.read()
+                elif self._is_mutating(ROUTES[path]):
+                    lock = _LOCK.write()
+                else:
+                    lock = _LOCK.read()
+                with lock:
                     out = svc.run_action(ROUTES[path], args)
                 self._json(200, out)
                 return

@@ -224,8 +224,12 @@ def test_json_errors_never_leak_a_traceback_to_the_ui(handler):
 
     text = Path(srv.__file__).read_text(encoding="utf-8")
     tree = ast.parse(text)
+    # The Handler class, by name. Taking "the first ClassDef in the module" was
+    # silently coupled to file layout: adding _RWLock above Handler made this
+    # test look for do_POST on the lock class and fail with StopIteration —
+    # a green-looking refactor away from checking nothing at all.
     cls = next(n for n in tree.body
-               if isinstance(n, ast.ClassDef))
+               if isinstance(n, ast.ClassDef) and n.name == "Handler")
     node = next(n for n in cls.body
                 if isinstance(n, ast.FunctionDef) and n.name == handler)
     # Source of *this method only*. Slicing the file to the next "\n    def "

@@ -570,3 +570,150 @@ def test_asking_for_the_real_machine_on_the_wrong_os_is_an_error():
             os.environ.pop("PCO_BACKEND", None)
         else:
             os.environ["PCO_BACKEND"] = old
+
+
+def test_the_cleaner_never_follows_a_link_out_of_its_folder():
+    """A symlink dropped in %TEMP% is not a file in %TEMP%.
+
+    `os.path.isfile` resolves it, so a link pointing at a document was reported
+    as a few bytes of temp junk and moved into the vault — as a *live link* to
+    the real file. Nothing was destroyed during the move, but the vault then
+    held a pointer outside its own roots, which is one restore-or-purge away
+    from touching a file the user never offered.
+    """
+    import os
+    import tempfile
+
+    from pco_engine.cleaner import _glob_walk
+
+    root = tempfile.mkdtemp()
+    outside = tempfile.mkdtemp()
+    precious = os.path.join(outside, "IMPORTANT.docx")
+    with open(precious, "w", encoding="utf-8") as fh:
+        fh.write("x" * 500)
+    link = os.path.join(root, "innocent.tmp")
+    try:
+        os.symlink(precious, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("this platform cannot create symlinks here")
+    real = os.path.join(root, "genuine.tmp")
+    with open(real, "w", encoding="utf-8") as fh:
+        fh.write("y" * 40)
+
+    offered = dict(_glob_walk(os.path.join(root, "*")))
+    assert real in offered, "a real file in the root was skipped"
+    assert offered[real] == 40
+    if link in offered:
+        # Reporting the link itself is fine, but never its target's size.
+        assert offered[link] != 500, "the link was reported at the target's size"
+    # And nothing offered may resolve outside the root.
+    root_real = os.path.realpath(root)
+    for path in offered:
+        resolved = os.path.realpath(path)
+        if os.path.islink(path):
+            continue
+        assert resolved.startswith(root_real + os.sep) or resolved == root_real, \
+            f"{path} resolves outside the folder being cleaned"
+
+
+def test_clean_run_cannot_delete_outside_the_configured_roots():
+    """The API takes no paths: clean_run re-scans and moves only what the scan
+    found. This pins that, because a future 'resume this run' feature would
+    reintroduce a path parameter if nobody wrote the rule down."""
+    import inspect
+
+    from pco_engine import service as svc_mod
+
+    src = inspect.getsource(svc_mod.Service.clean_run)
+    assert "self.cleaner.scan(" in src, "clean_run stopped re-scanning"
+    # It must take no path-shaped input at all. (`payload=` in the sentinel
+    # Event below is telemetry, not input — the first version of this check
+    # matched that substring and failed against correct code.)
+    sig = inspect.signature(svc_mod.Service.clean_run)
+    assert list(sig.parameters) == ["self"], (
+        f"clean_run grew parameters {list(sig.parameters)}; if one of them is a "
+        f"path, the API can name a file outside the scanned roots")
+    assert "candidates=" not in src.split("def ")[0], "no caller-supplied candidates"
+
+
+def test_a_blocked_driver_can_be_unblocked():
+    """Blocking was a one-way door.
+
+    The console listed blocked drivers and offered no way to remove one, so a
+    mistaken block stayed forever and the only remedy was editing the SQLite
+    file by hand. A control with no undo is a trap. `drivers.rollback` existed
+    server-side the whole time and nothing ever called it, which is how the gap
+    survived: the endpoint existed, the button did not.
+    """
+    import tempfile
+
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    svc.drivers.block("dl:test", "1.0", reason="crashes")
+    assert [b["driver_id"] for b in svc.drivers.blocks()] == ["dl:test"]
+
+    out = svc.drivers.unblock("dl:test", "1.0")
+    assert out["unblocked"] is True
+    assert svc.drivers.blocks() == [], "the block survived unblocking"
+
+    again = svc.drivers.unblock("dl:test", "1.0")
+    assert again["unblocked"] is False, "a second unblock claimed success"
+    assert "already gone" in again["note"], again["note"]
+
+
+def test_the_console_offers_a_way_to_undo_every_block_it_lists():
+    """The list and the undo have to be in the same place. If the console ever
+    renders blocks without an unblock control again, this fails."""
+    import re
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "pco_engine" /
+            "console.html").read_text(encoding="utf-8")
+    assert "drvBlocks" in html, "the blocked-driver list disappeared"
+    body = html[html.index("const bk = $(\"#drvBlocks\")"):]
+    body = body[:body.index("} catch (err)")]
+    assert "drivers/unblock" in body, "blocks are listed with no way to lift them"
+    assert re.search(r"Unblock", body), "no visible label for the undo"
+
+    # And every state-changing action the UI can reach must be POST-only.
+    from pco_engine.server import Handler
+    assert Handler._is_mutating("drivers.unblock")
+
+
+def test_a_theme_preview_says_which_baseline_it_diffed_against():
+    """A diff against the wrong baseline is a confident lie.
+
+    `active_theme_doc` returned the built-in default both when nothing had been
+    applied and when the record of what HAD been applied could not be read. The
+    preview then listed changes relative to the wrong starting point: it would
+    claim a theme changes three things when it changes eleven. The two cases are
+    now distinguishable.
+    """
+    import tempfile
+
+    from pco_engine import themes
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    fresh = svc.theme_preview(themes.get("dusk"))
+    assert fresh["baseline"].startswith("default"), fresh["baseline"]
+    assert not fresh.get("baseline_warning"), "warned about a baseline that is fine"
+
+    svc.conn.execute("DROP TABLE desktop_themes")
+    svc.conn.commit()
+    broken = svc.theme_preview(themes.get("dusk"))
+    assert broken["baseline"].startswith("unreadable"), broken["baseline"]
+    assert broken.get("baseline_warning"), \
+        "an unreadable baseline was presented as a normal diff"
+
+
+def test_the_console_shows_the_baseline_warning_where_the_diff_is():
+    from pathlib import Path
+    html = (Path(__file__).resolve().parent.parent / "pco_engine" /
+            "console.html").read_text(encoding="utf-8")
+    at = html.index('api("/api/themes/preview"')
+    card = html[at:at + 1600]
+    assert "baseline_warning" in card, \
+        "the preview card does not mention a fallback baseline"

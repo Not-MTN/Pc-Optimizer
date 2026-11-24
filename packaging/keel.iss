@@ -16,7 +16,7 @@
 ;      loss they did not ask for.
 
 #define AppName "Keel"
-#define AppVersion "0.5.4"
+#define AppVersion "0.5.5"
 #define AppPublisher "Keel"
 #define AppExe "Keel.exe"
 #define AppUrl "https://github.com/Not-MTN/Pc-Optimizer"
