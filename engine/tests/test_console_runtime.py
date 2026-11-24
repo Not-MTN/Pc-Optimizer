@@ -28,6 +28,43 @@ def _node() -> str | None:
     return shutil.which("node")
 
 
+def _base_rule(css: str, selector: str) -> str:
+    """The first rule for `selector` that is NOT inside an @media block.
+
+    A mobile override (`@media (max-width:660px){main{...}}`) appears earlier in
+    the text than nothing but is not the rule that applies to a desktop window;
+    matching it made this assertion test the wrong line.
+    """
+    depth, i, n = 0, 0, len(css)
+    starts = []
+    while i < n:
+        if css.startswith("@media", i):
+            j = css.index("{", i)
+            d = 1
+            k = j + 1
+            while k < n and d:
+                if css[k] == "{":
+                    d += 1
+                elif css[k] == "}":
+                    d -= 1
+                k += 1
+            i = k
+            continue
+        if css.startswith(selector + "{", i) or css.startswith(selector + ",", i):
+            j = css.index("{", i)
+            d = 1
+            k = j + 1
+            while k < n and d:
+                if css[k] == "{":
+                    d += 1
+                elif css[k] == "}":
+                    d -= 1
+                k += 1
+            return css[i:k]
+        i += 1
+    return ""
+
+
 def _needs_jsdom() -> str:
     node = _node()
     if node is None:
@@ -132,3 +169,94 @@ def test_a_retired_route_is_not_called():
             continue
         missing.append(clean)
     assert not missing, sorted(set(missing))
+
+
+# ------------------------------------------------- dialogs, crumbs and defaults
+def test_no_native_browser_dialogs_are_used():
+    """prompt/confirm/alert are suppressed in WebView2, the runtime this app
+    ships against. A prompt() that returns null silently makes the button look
+    dead — which is the failure the whole 0.5.1 pass was about."""
+    import re
+    # Strip comments first: the explanatory block that says "prompt() is
+    # suppressed in WebView2" contains all three words.
+    code, in_block = [], False
+    for line in JS.splitlines():
+        t = line.strip()
+        if in_block:
+            if "*/" in t:
+                in_block = False
+            continue
+        if t.startswith("/*"):
+            in_block = "*/" not in t
+            continue
+        if t.startswith("//") or t.startswith("*"):
+            continue
+        code.append(line.split("//")[0] if "//" in line and '"' not in line.split("//")[0] else line)
+    code = "\n".join(code)
+    forbidden = []
+    for pattern, what in (
+        (r"(?<![\w.])prompt\s*\(", "prompt"),
+        (r"(?<![\w.])confirm\s*\(", "confirm"),
+        (r"(?<![\w.])alert\s*\(", "alert"),
+        (r"window\.open\s*\(", "window.open"),
+    ):
+        for m in re.finditer(pattern, code):
+            line = code[:m.start()].count("\n") + 1
+            forbidden.append(f"{what} at JS line {line}")
+    assert not forbidden, forbidden
+
+
+def test_the_app_has_its_own_dialog_for_each_native_one_it_replaced():
+    text = CONSOLE.read_text(encoding="utf-8")
+    assert 'id="dlgScrim"' in text
+    assert "function openDialog" in text
+    assert "function showReport" in text
+
+
+def test_the_breadcrumb_style_matches_the_element_it_builds():
+    """The crumb is a <button>. The first version styled `.crumbs a`, so it
+    rendered as a browser-default grey rectangle — the white box on screen."""
+    text = CONSOLE.read_text(encoding="utf-8")
+    css = text.split("<style>")[1].split("</style>")[0]
+    build = JS.split("function renderCrumbs", 1)[1].split("\n}", 1)[0]
+    created = "button" if 'createElement("button")' in build else "a"
+    # Any rule whose selector list mentions the element type we actually build.
+    rules = [b for b in css.split("}") if ".crumbs" in b and "{" in b
+             and "hover" not in b.split("{")[0]]
+    selectors = " ".join(b.split("{")[0] for b in rules)
+    assert f".crumbs {created}" in selectors, (
+        f"crumbs are <{created}> but no rule targets it: {selectors.strip()[:160]}")
+
+
+def test_the_feed_reserves_space_for_its_scrollbar():
+    """The timestamps read "15h ag" because the scrollbar covered them."""
+    css = CONSOLE.read_text(encoding="utf-8").split("<style>")[1].split("</style>")[0]
+    rule = _base_rule(css, ".feed")
+    assert rule, "no base .feed rule"
+    assert "scrollbar-gutter" in rule, rule[:140]
+
+
+def test_the_main_column_is_not_capped_to_one_monitor_width():
+    """A fixed 1240px left a third of a 1600px window empty."""
+    css = CONSOLE.read_text(encoding="utf-8").split("<style>")[1].split("</style>")[0]
+    base = _base_rule(css, "main")
+    assert base, "no base main rule"
+    assert "max-width:1240px" not in base, base[:140]
+    assert "max-width" in base, base[:140]
+
+
+def test_no_class_is_used_in_the_ui_without_a_style():
+    import re
+    text = CONSOLE.read_text(encoding="utf-8")
+    css = text.split("<style>")[1].split("</style>")[0]
+    js = text.split("<script>")[1]
+    used = set()
+    for m in re.finditer(r'el\(\s*"[a-z]+"\s*,\s*"([^"]+)"', js):
+        used.update(m.group(1).split())
+    for m in re.finditer(r'class="([^"]+)"', text.split("<script>")[0]):
+        used.update(m.group(1).split())
+    styled = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
+    # Structural classes that carry no styling of their own by design.
+    allowed = {"on", "here", "row", "col", "mono", "big", "empty"}
+    unstyled = sorted(c for c in used if c and c not in styled and c not in allowed)
+    assert not unstyled, f"classes with no rule: {unstyled}"

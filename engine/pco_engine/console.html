@@ -47,10 +47,15 @@
   /* A map, not a maze: Home › Look › Themes, with each part clickable. */
   .crumbs{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--faint);
           margin-bottom:6px;min-height:16px}
-  .crumbs a{color:var(--dim);cursor:pointer;text-decoration:none;border:none;
-            background:none;padding:0;font:inherit}
-  .crumbs a:hover{color:var(--lime)}
-  .crumbs .here{color:var(--ink)}
+  /* These are <button>s, not <a>s. A button does not inherit font, colour or
+     background from its parent, so without an explicit reset it renders as a
+     browser-default grey rectangle — which is exactly what shipped. */
+  .crumbs a,.crumbs button{color:var(--dim);cursor:pointer;text-decoration:none;
+            border:none;background:none;padding:0;margin:0;font:inherit;
+            font-size:11px;line-height:1.2;appearance:none}
+  .crumbs a:hover,.crumbs button:not(.here):hover{color:var(--lime)}
+  .crumbs .here{color:var(--ink);cursor:default}
+  .crumbs button.here:hover{color:var(--ink)}
   .flyout{position:absolute;left:74px;top:50%;transform:translateY(-50%);z-index:60;
     display:none;flex-direction:column;gap:2px;min-width:210px;max-height:70vh;overflow:auto;
     background:#11151b;border:1px solid #2b3342;border-radius:13px;padding:8px;
@@ -97,8 +102,14 @@
   .tileCost.paid{color:#FFC36B}
   .hubBlurb{color:var(--dim);font-size:12.5px;line-height:1.55}
   /* ---------------- shell ---------------- */
-  main{padding:26px 30px 70px;max-width:1240px}
-  header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:22px}
+  /* 1240px was a fixed cap: on a 1600px screen the whole app stopped two-thirds
+     of the way across and the right third was empty. Cap by measurement, not by
+     a number that only suits one monitor: the grid is what should be bounded,
+     and it is. Prose-heavy cards stay readable because .sub carries its own
+     measure. */
+  main{padding:26px 30px 70px;max-width:1680px;width:100%}
+  header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;
+             margin-bottom:22px;flex-wrap:wrap}
   h1{margin:0;font-size:24px;letter-spacing:-.02em;font-weight:700}
   .sub{color:var(--dim);font-size:13px;margin-top:3px}
   .pill{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;
@@ -157,13 +168,17 @@
   .tag.safe{color:var(--lime);border-color:rgba(182,242,74,.3);background:rgba(182,242,74,.07)}
   .tag.review{color:var(--amber);border-color:rgba(255,200,87,.3);background:rgba(255,200,87,.07)}
   /* ---------------- feed ---------------- */
-  .feed{list-style:none;margin:0;padding:0;max-height:290px;overflow:auto}
+  /* scrollbar-gutter: the scrollbar used to sit on top of the timestamps and
+     clip them ("15h ag"). Reserve the space whether or not it is showing. */
+  .feed{list-style:none;margin:0;padding:0 10px 0 0;max-height:290px;
+        overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable}
   .feed li{padding:9px 0;border-bottom:1px dashed #1d222c;font-size:12.5px;color:var(--dim);
            display:flex;gap:9px;align-items:baseline}
   .feed li:last-child{border:0}
   .feed .sev{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:0 0 6px;margin-top:6px}
   .feed .sev.warning{background:var(--amber)} .feed .sev.critical{background:var(--red)}
-  .feed .time{margin-left:auto;color:var(--faint);font-size:11px;white-space:nowrap}
+  .feed .time{margin-left:auto;color:var(--faint);font-size:11px;white-space:nowrap;
+              flex:0 0 auto;padding-left:10px}
   /* ---------------- misc ---------------- */
   .bar{height:8px;border-radius:6px;background:#1b212b;overflow:hidden}
   .bar > i{display:block;height:100%;border-radius:6px;background:linear-gradient(90deg,var(--cyan),var(--lime));
@@ -173,6 +188,9 @@
   th{color:var(--faint);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.07em}
   .ok{color:var(--lime)} .warn{color:var(--amber)} .bad{color:var(--red)}
   /* command palette */
+  .dlg{background:var(--panel-2);border:1px solid var(--line);border-radius:16px;
+       padding:22px 24px;width:min(460px,88vw);box-shadow:0 24px 70px rgba(0,0,0,.6)}
+  .dlg h2{margin:0;font-size:16px}
   .scrim{position:fixed;inset:0;background:rgba(4,6,9,.72);backdrop-filter:blur(3px);
          display:none;align-items:flex-start;justify-content:center;padding-top:12vh;z-index:80}
   .scrim.on{display:flex;animation:fade .12s ease both}
@@ -930,6 +948,23 @@
       </div>
     </section>
 
+    <!-- In-window dialogs. window.prompt/confirm/alert are blocked or
+         suppressed in WebView2 (the runtime this app ships against), so a
+         prompt() would return null and the button would look dead — the exact
+         failure the whole 0.5.1 pass was about. These are ours: styled,
+         keyboard-operable, and they cannot be silently suppressed. -->
+    <div class="scrim" id="dlgScrim" role="presentation">
+      <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+        <h2 id="dlgTitle">Confirm</h2>
+        <div class="sub" id="dlgBody" style="margin:8px 0 0"></div>
+        <input id="dlgInput" style="display:none;width:100%;margin-top:12px;padding:10px 12px"
+               autocomplete="off">
+        <div class="row" style="margin-top:18px;justify-content:flex-end;gap:10px">
+          <button class="btn ghost" id="dlgCancel">Cancel</button>
+          <button class="btn primary" id="dlgOk">OK</button>
+        </div>
+      </div>
+    </div>
     <div class="scrim" id="palScrim">
       <div class="pal" role="dialog" aria-label="Command palette">
         <input id="palInput" placeholder="Type a command…  (clean, fix, dns on, snap)"
@@ -961,6 +996,74 @@ const ago = (ms) => { const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 86400) return Math.floor(s / 3600) + "h ago"; return Math.floor(s / 86400) + "d ago"; };
 let STATE = {};
 
+
+/* In-window dialogs, because prompt()/confirm()/alert() are unreliable here.
+   ask() resolves to the typed string (or null if cancelled); confirmIt()
+   resolves to a boolean. Both are awaiting-friendly and used everywhere a
+   native dialog used to be. */
+function openDialog({ title, body, input, value, okLabel, cancelLabel, danger }) {
+  return new Promise((resolve) => {
+    const scrim = $("#dlgScrim"), ok = $("#dlgOk"), cancel = $("#dlgCancel"),
+          field = $("#dlgInput");
+    $("#dlgTitle").textContent = title || "Confirm";
+    $("#dlgBody").textContent = body || "";
+    ok.textContent = okLabel || "OK";
+    cancel.textContent = cancelLabel || "Cancel";
+    ok.classList.toggle("primary", !danger);
+    ok.classList.toggle("danger", !!danger);
+    field.style.display = input ? "" : "none";
+    field.value = value || "";
+    scrim.classList.add("on");
+    if (input) setTimeout(() => { field.focus(); field.select(); }, 30);
+
+    const done = (result) => {
+      scrim.classList.remove("on");
+      ok.onclick = cancel.onclick = field.onkeydown = scrim.onclick = null;
+      document.removeEventListener("keydown", onKey, true);
+      resolve(result);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); done(input ? null : false); }
+      if (e.key === "Enter" && (input || document.activeElement === ok)) {
+        e.preventDefault(); done(input ? field.value.trim() : true);
+      }
+    };
+    ok.onclick = () => done(input ? field.value.trim() : true);
+    cancel.onclick = () => done(input ? null : false);
+    scrim.onclick = (e) => { if (e.target === scrim) done(input ? null : false); };
+    document.addEventListener("keydown", onKey, true);
+    if (!input) setTimeout(() => ok.focus(), 30);
+  });
+}
+function showReport(html) {
+  const scrim = $("#dlgScrim");
+  $("#dlgTitle").textContent = "Health report";
+  $("#dlgBody").textContent = "Generated locally. Nothing left this machine.";
+  $("#dlgInput").style.display = "none";
+  $("#dlgOk").textContent = "Print…";
+  $("#dlgOk").className = "btn primary";
+  $("#dlgCancel").textContent = "Close";
+  const frame = document.createElement("iframe");
+  frame.setAttribute("title", "Health report");
+  frame.style.cssText = "width:min(820px,84vw);height:min(66vh,680px);border:0;" +
+                        "border-radius:12px;background:#fff;margin-top:14px";
+  frame.srcdoc = html;
+  scrim.querySelector(".dlg").append(frame);
+  scrim.classList.add("on");
+  const close = () => {
+    scrim.classList.remove("on");
+    frame.remove();
+    $("#dlgOk").onclick = $("#dlgCancel").onclick = scrim.onclick = null;
+  };
+  $("#dlgOk").onclick = () => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch { toast("Use Ctrl+P in the report."); } };
+  $("#dlgCancel").onclick = () => close();
+  scrim.onclick = (e) => { if (e.target === scrim) close(); };
+}
+
+const ask = (title, body, value) =>
+  openDialog({ title, body, input: true, value, okLabel: "Continue" });
+const confirmIt = (title, body, okLabel, danger) =>
+  openDialog({ title, body, okLabel: okLabel || "Yes, do it", danger });
 
 /* A screen that fails silently is the worst kind: the button moves, nothing
    happens, and there is no way to tell whether it worked. The ten chained
@@ -2251,8 +2354,10 @@ async function loadDrivers() {
 }
 
 async function blockDriver(x) {
-  const reason = prompt("Why block " + x.name + " " + x.version + "?",
-                        "crashes in this machine's history");
+  const reason = await ask("Block this driver?",
+    x.name + " " + x.version + " will be skipped by Windows Update. Say why — "
+    + "the reason is shown next to it later, so future-you knows.",
+    "crashes in this machine's history");
   if (!reason) return;
   try {
     const out = await api("/api/drivers/block", { driver_id: x.id,
@@ -2309,7 +2414,11 @@ async function loadRecipes() {
       const del = el("button", "btn ghost", "Delete");
       del.style.marginLeft = "8px";
       del.onclick = async () => {
-        if (!confirm("Delete \"" + r.name + "\"?")) return;
+        const sure = await confirmIt("Delete this recipe?",
+          "\"" + r.name + "\" stops existing. Anything it already applied stays "
+          + "applied — remove that from Home if you want it gone.",
+          "Delete it", true);
+        if (!sure) return;
         try {
           await api("/api/recipe/delete", { recipe_id: r.id });
           toast("Deleted " + r.name);
@@ -2563,7 +2672,12 @@ async function saveShellTheme() {
 
 /* ------------------------------------------------------------------ panic */
 async function panic() {
-  if (!confirm("Undo every active change, disable all recipes and turn blocking off?")) return;
+  const panic = await confirmIt("Put everything back?",
+    "This undoes every active change it can, disables all recipes and turns "
+    + "blocking off. It does not delete your vault — restored files stay where "
+    + "they were moved to.",
+    "Yes, put it all back", true);
+  if (!panic) return;
   const btn = $("#panicBtn");
   busy(btn, true);
   try {
@@ -3143,8 +3257,12 @@ $("#dnsOff").addEventListener("click", () => dns("off"));
 $("#dnsPause").addEventListener("click", () => dns("pause"));
 $("#verifyBtn").addEventListener("click", async () => {
   const r = await api("/api/status");
-  alert(r.engine.journal_ok ? "Journal verified: " + r.engine.journal_rows +
-        " rows, chain intact." : "Journal FAILED: " + r.engine.journal_detail);
+  // alert() is suppressed in WebView2: the button would appear to do nothing.
+  // A toast is the answer, and it stays on screen long enough to read.
+  toast(r.engine.journal_ok
+    ? "Journal verified: " + r.engine.journal_rows + " rows, chain intact."
+    : "Journal FAILED: " + r.engine.journal_detail,
+    !r.engine.journal_ok);
 });
 $("#driftBtn").addEventListener("click", async () => {
   try { const d = await api("/api/drift", {});
@@ -3182,7 +3300,19 @@ document.querySelectorAll("[data-pattern]").forEach((b) =>
     $("#monitorNote").textContent = b.dataset.pattern === "dead_pixel"
       ? "Look for a dot that never changes colour." : "Look for patches of uneven brightness.";
   }));
-$("#reportView").addEventListener("click", () => window.open("/api/report/html", "_blank"));
+$("#reportView").addEventListener("click", async (ev) => {
+  // window.open is blocked in the WebView2 shell, so this button did nothing.
+  // The document is fetched and shown in a viewer you can print from.
+  const btn = ev.currentTarget;
+  busy(btn, true);
+  try {
+    const r = await fetch("/api/report/html");
+    if (!r.ok) throw new Error("the report could not be generated (HTTP " + r.status + ")");
+    showReport(await r.text());
+  } catch (err) {
+    toast(err.message, true);
+  } finally { busy(btn, false); }
+});
 $("#reportMd").addEventListener("click", showReport);
 $("#askBtn").addEventListener("click", askJournal);
 $("#askBox").addEventListener("keydown", (e) => { if (e.key === "Enter") askJournal(); });
