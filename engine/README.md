@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (743 tests: 732 here, 11 that only a real Windows machine can run)
+## What works today (747 tests: 736 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -674,6 +674,24 @@ of those tests read the console as **text**. The page parsed. It never ran.
      The first attempt over-corrected: blanket-rejecting booleans broke
      `workspace.restore(dry_run=False)` and `spotify.write(look=42)`. Two
      existing tests caught it, which is the entire reason they exist.
+
+114. **Deleting something that was never there reported success.** `DELETE`
+     affects zero rows and raises nothing, so `workspace.delete` and
+     `recipe.delete` answered `{"deleted": "<any id you like>"}` — a green toast
+     for a deletion that did not happen. Both now check existence and refuse.
+115. **Restoring an unknown clean run answered `{"restored": 0}` with status
+     200.** "I put nothing back" delivered as a win. Now a 400 that says no such
+     run was ever moved. And a *valid* run with nothing left to put back no
+     longer says "Restored 0 item(s)" — it says the files are already back, and
+     a run where every item failed says so instead of looking quiet.
+116. **A failed lookup was reported as a missing field.** Both a missing JSON key
+     and a missing object raise `KeyError`, and the server wrapped whichever
+     arrived as "missing field". Deleting a workspace that did not exist told
+     the user *missing field 'unknown workspace nope'* — add a field named that.
+     `Absent` is now its own class: a lookup that found nothing is a **404**
+     naming the object, a missing argument is a **400** naming the field. An
+     unknown palette command is a bad request, not a missing object, so it is a
+     400 too.
 
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no

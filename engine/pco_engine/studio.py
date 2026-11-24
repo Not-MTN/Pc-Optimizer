@@ -9,6 +9,8 @@ Themes are documents (`pco.theme.v1`), so sharing is a file, not an account.
 """
 from __future__ import annotations
 
+from .absent import Absent
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -164,7 +166,7 @@ class Studio:
             "SELECT name,doc_json,cost_milli FROM desktop_themes WHERE id=?",
             (theme_id,)).fetchone()
         if row is None:
-            raise KeyError(f"unknown theme {theme_id}")
+            raise Absent(f"unknown theme {theme_id}")
         cost = row[2] / 1000
         verdict = _verify({"features": {"_": cost}})
         with self.conn:

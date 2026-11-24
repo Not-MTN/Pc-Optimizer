@@ -105,7 +105,11 @@ class Palette:
         cmd = next((c for c in self.commands()
                     if c.id == verb_or_id or c.verb == verb_or_id), None)
         if cmd is None:
-            raise KeyError(f"unknown command {verb_or_id!r}")
+            # Not Absent: the command was never a thing, so this is a bad
+            # request (400), not a missing object (404). KeyError here used to
+            # inherit the "missing field" wrapper and tell the user to add a
+            # field named "unknown command 'shell-anything'".
+            raise ValueError(f"unknown command {verb_or_id!r}")
         if cmd.executor != "engine" and not self.allow_shell:
             raise PermissionError(
                 f"'{cmd.verb}' needs the {cmd.executor} executor, which is disabled. "

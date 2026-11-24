@@ -911,3 +911,21 @@ def test_a_wallpaper_render_does_not_take_the_write_lock():
                    "dns.on", "safety.confirm"):
         assert not Handler._heavy_but_stateless(action), (
             f"{action} changes the machine and must take the write lock")
+
+
+def test_a_failed_lookup_is_not_reported_as_a_missing_field(live_server):
+    """`missing field 'unknown workspace nope'` is a nonsense instruction.
+
+    Both a missing JSON key and a failed object lookup raise KeyError, and the
+    server wrapped whichever arrived as "missing field". The user was told to
+    add a field whose name was the entire sentence. A short name means a missing
+    field (400); anything with spaces is an object that does not exist (404).
+    """
+    status, raw = _post(live_server, "/api/workspace/restore", {"id": "nope"})
+    assert status == 404, raw
+    assert "unknown workspace" in raw["error"]
+    assert "missing field" not in raw["error"]
+
+    status, raw = _post(live_server, "/api/workspace/restore", {})
+    assert status == 400, raw
+    assert raw["error"] == "missing field 'id'"

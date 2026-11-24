@@ -1493,7 +1493,15 @@ function renderVaultRuns(runs) {
       busy(b, true);
       try {
         const out = await api("/api/clean/restore", { run_id: r.run_id });
-        toast("Restored " + out.restored + " item(s)");
+        // "Restored 0 item(s)" is true and useless. Say which of the two zeroes
+        // it is: everything is already back, or every attempt failed.
+        if (out.restored === 0 && !(out.failed || []).length) {
+          toast("Nothing left to restore — this run's files are already back.", true);
+        } else if (out.restored === 0) {
+          toast("Nothing came back: " + (out.failed[0].error || "see the log"), true);
+        } else {
+          toast("Restored " + out.restored + " item(s)");
+        }
         await refreshAll();
       } catch (err) { toast(err.message, true); }
       busy(b, false);

@@ -69,6 +69,11 @@ class Recipes:
                               (int(enabled), recipe_id))
 
     def delete(self, recipe_id: str) -> None:
+        # Zero rows deleted is not a success: see workspace.delete.
+        row = self.conn.execute("SELECT 1 FROM recipes WHERE id=?",
+                                (recipe_id,)).fetchone()
+        if row is None:
+            raise RecipeError(f"no recipe {recipe_id!r}")
         with self.conn:
             self.conn.execute("DELETE FROM recipes WHERE id=?", (recipe_id,))
 

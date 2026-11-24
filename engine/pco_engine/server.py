@@ -35,6 +35,7 @@ from .engine import EngineError
 from .journal import JournalError
 from .recipes import RecipeError
 from .store import StoreError
+from .absent import Absent
 from .service import Service
 
 class _RWLock:
@@ -475,11 +476,18 @@ class Handler(BaseHTTPRequestHandler):
                          "plain": t.plain, "tier": t.tier, "risk": t.risk}
                         for t in svc.catalog.all()]})
                 return
+        except Absent as exc:
+            # A lookup that found nothing: "unknown workspace nope". The object
+            # is not there — 404 — and the message already says which one.
+            self._json(404, {"error": str(exc.args[0]) if exc.args else str(exc)})
+            return
         except KeyError as exc:
-            # A GET route needs a parameter the caller did not send. That is the
-            # caller's mistake, and naming the missing field is the whole fix:
-            # before this, every such request was a 500 with a traceback.
-            self._json(400, {"error": f"missing query parameter {exc}"})
+            # A missing argument: `a["run_id"]` never got a run_id. That is a
+            # malformed request, and naming the field is the whole fix. The two
+            # used to be the same exception, so a failed lookup came back as
+            # `missing field 'unknown workspace nope'`.
+            name = exc.args[0] if exc.args else ""
+            self._json(400, {"error": f"missing field '{name}'"})
             return
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
@@ -720,7 +728,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, out)
                 return
         except KeyError as exc:
-            self._json(400, {"error": f"missing field {exc}"})
+            # A KeyError has two completely different meanings and the UI must
+            # not confuse them. `{"run_id": ...}` reaching `a["run_id"]` raises
+            # KeyError whose arg is the *short* field name. A failed lookup like
+            # `self.get(workspace_id)` raises KeyError whose arg is a whole
+            # sentence — "unknown workspace nope". The first is a missing field;
+            # the second is not a field at all. Wrapping the sentence as
+            # `missing field 'unknown workspace nope'` told the user to add a
+            # field called that.
+            name = exc.args[0] if exc.args else ""
+            if isinstance(name, str) and " " not in name and len(name) < 40:
+                self._json(400, {"error": f"missing field '{name}'"})
+            else:
+                self._json(404, {"error": str(name)})
             return
         except ValueError as exc:
             # bad input from the client (invalid theme, bad level, bad maths) is a

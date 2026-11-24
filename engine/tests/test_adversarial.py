@@ -764,3 +764,52 @@ def test_every_action_refuses_wrongly_typed_arguments_cleanly():
     assert not crashes, (
         f"{len(crashes)} argument combinations escaped as server errors:\n  " +
         "\n  ".join(sorted(set(crashes))[:12]))
+
+
+def test_deleting_something_that_does_not_exist_is_not_reported_as_deleted():
+    """`{"deleted": "<id>"}` for an id that was never there is a lie.
+
+    DELETE on a missing row affects zero rows and raises nothing, so both
+    `workspace.delete` and `recipe.delete` answered `{"deleted": ...}` and the
+    console showed a green toast for a deletion that did not happen. That is
+    precisely the "nothing did anything" complaint, in its most convincing form:
+    the app says it worked.
+    """
+    import tempfile
+
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    ghost = "zzz-never-existed-999"
+
+    with pytest.raises((KeyError, ValueError)):
+        svc.run_action("workspace.delete", {"id": ghost})
+    with pytest.raises((KeyError, ValueError)):
+        svc.run_action("recipe.delete", {"recipe_id": ghost})
+
+    # The real thing still deletes, and only once.
+    ws = svc.run_action("workspace.save", {"name": "Real",
+                                           "entries": [{"app": "x.exe"}]})
+    assert svc.run_action("workspace.delete", {"id": ws["id"]}) == {
+        "deleted": ws["id"]}
+    with pytest.raises((KeyError, ValueError)):
+        svc.run_action("workspace.delete", {"id": ws["id"]})
+
+
+def test_restoring_an_unknown_clean_run_is_refused_not_a_zero_restore():
+    """`{"restored": 0}` with status 200 reads as success.
+
+    The user clicks Restore, the toast goes green, and the files are still in
+    the vault. "I put nothing back" must not be delivered as a win.
+    """
+    import tempfile
+
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    for ghost in ("zzz-never-existed-999", "", "0"):
+        with pytest.raises((KeyError, ValueError)) as caught:
+            svc.run_action("clean.restore", {"run_id": ghost})
+        assert "no clean run" in str(caught.value).lower()

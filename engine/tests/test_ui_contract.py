@@ -545,3 +545,18 @@ def test_every_utf8_character_in_the_console_survives_utf8():
     raw = (Path(srv.__file__).parent / "console.html").read_bytes()
     text = raw.decode("utf-8")          # raises if it is not valid UTF-8
     assert any(ord(c) > 127 for c in text), "no non-ASCII to trip over"
+
+
+def test_the_restore_toast_distinguishes_already_back_from_failed():
+    """"Restored 0 item(s)" is true and useless.
+
+    The user's oldest complaint is that the app reports nothing in a way they
+    cannot act on. A zero restore has two completely different meanings —
+    everything is already back, or every move failed — and the toast used to
+    print the same sentence for both.
+    """
+    html = (CONSOLE).read_text(encoding="utf-8")
+    assert "Nothing left to restore" in html, (
+        "the restore button must say when there is nothing left to put back")
+    assert "Nothing came back" in html, (
+        "a restore where every item failed must not read like a quiet success")

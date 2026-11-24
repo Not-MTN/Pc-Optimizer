@@ -229,6 +229,15 @@ class Cleaner:
 
     # ----------------------------------------------------------------- restore
     def restore(self, run_id: str) -> dict[str, Any]:
+        # An unknown run_id used to return {"restored": 0} with status 200 — a
+        # success response for putting nothing back. The user clicks Restore,
+        # gets a green toast, and the files are still in the vault. Refusing
+        # loudly is the only honest answer: there is no such run to restore.
+        known = self.conn.execute(
+            "SELECT 1 FROM clean_runs WHERE id=?", (run_id,)).fetchone()
+        if known is None:
+            raise ValueError(
+                f"no clean run {run_id!r} — nothing was ever moved by it")
         rows = self.conn.execute(
             "SELECT id,original_path,vault_path,size,sha256 FROM vault_items "
             "WHERE run_id=? AND restored_at IS NULL", (run_id,)).fetchall()

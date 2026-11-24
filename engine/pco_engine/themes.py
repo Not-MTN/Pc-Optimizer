@@ -23,6 +23,8 @@ Honesty rules that this module enforces:
 """
 from __future__ import annotations
 
+from .absent import Absent
+
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -419,7 +421,7 @@ def gallery() -> list[dict[str, Any]]:
 
 def get(theme_id: str) -> dict[str, Any]:
     if theme_id not in BUILTIN:
-        raise KeyError(f"unknown theme {theme_id!r}; try {', '.join(sorted(BUILTIN))}")
+        raise Absent(f"unknown theme {theme_id!r}; try {', '.join(sorted(BUILTIN))}")
     return json.loads(json.dumps(BUILTIN[theme_id]))
 
 

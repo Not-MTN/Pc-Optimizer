@@ -168,8 +168,12 @@ def test_imported_command_shows_a_permission_diff(engine):
 
 
 def test_unknown_command_is_a_clear_error(engine):
-    with pytest.raises(KeyError):
+    # ValueError, not KeyError: an unknown verb is a bad request (400), and
+    # KeyError is reserved for a missing argument so the server can tell them
+    # apart. The message must still name the verb.
+    with pytest.raises(ValueError) as caught:
         Palette(engine.conn, engine.clock).execute("nope")
+    assert "unknown command" in str(caught.value)
 
 
 def test_executing_writes_a_receipt(engine):

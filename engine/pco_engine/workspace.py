@@ -14,6 +14,8 @@ Rules that keep this from being another broken window-restorer:
 """
 from __future__ import annotations
 
+from .absent import Absent
+
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -90,10 +92,14 @@ class Workspaces:
             "SELECT id,name,doc_json,created_at,updated_at FROM workspaces WHERE id=?",
             (workspace_id,)).fetchone()
         if row is None:
-            raise KeyError(f"unknown workspace {workspace_id}")
+            raise Absent(f"unknown workspace {workspace_id}")
         return Workspace(row[0], row[1], _entries(_load(row[2])), row[3], row[4])
 
     def delete(self, workspace_id: str) -> None:
+        # DELETE on a row that is not there affects zero rows and raises
+        # nothing, so the caller used to answer {"deleted": "<anything>"} for an
+        # id that never existed. `get` is the existence check.
+        self.get(workspace_id)          # raises KeyError when there is no such row
         with self.conn:
             self.conn.execute("DELETE FROM workspaces WHERE id=?", (workspace_id,))
 
