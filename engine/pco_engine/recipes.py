@@ -69,13 +69,15 @@ class Recipes:
                               (int(enabled), recipe_id))
 
     def delete(self, recipe_id: str) -> None:
-        # Zero rows deleted is not a success: see workspace.delete.
-        row = self.conn.execute("SELECT 1 FROM recipes WHERE id=?",
+        # Zero rows deleted is not a success, and the count must come from the
+        # DELETE itself: a separate SELECT is a check-then-act race that let two
+        # concurrent callers both report success. See workspace.delete.
+        # RETURNING for the same reason as workspace.delete: rowcount is not
+        # attributable across the shared connection.
+        row = self.conn.execute("DELETE FROM recipes WHERE id=? RETURNING id",
                                 (recipe_id,)).fetchone()
         if row is None:
             raise RecipeError(f"no recipe {recipe_id!r}")
-        with self.conn:
-            self.conn.execute("DELETE FROM recipes WHERE id=?", (recipe_id,))
 
     # --------------------------------------------------------------- validate
     def _validate(self, spec: Spec) -> None:

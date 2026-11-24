@@ -96,12 +96,23 @@ class Workspaces:
         return Workspace(row[0], row[1], _entries(_load(row[2])), row[3], row[4])
 
     def delete(self, workspace_id: str) -> None:
-        # DELETE on a row that is not there affects zero rows and raises
-        # nothing, so the caller used to answer {"deleted": "<anything>"} for an
-        # id that never existed. `get` is the existence check.
-        self.get(workspace_id)          # raises KeyError when there is no such row
-        with self.conn:
-            self.conn.execute("DELETE FROM workspaces WHERE id=?", (workspace_id,))
+        # The delete and the existence check must be ONE statement. Checking
+        # first with `get()` and then deleting is a check-then-act race: twelve
+        # concurrent deletes of the same row produced TWO callers that both
+        # reported success, because both passed the check before either deleted.
+        # `rowcount` is the only honest answer to "did I remove it" — SQLite
+        # deletes the row once and the loser's statement affects zero rows.
+        # RETURNING, not rowcount: this connection is shared by the bridge's
+        # worker threads (check_same_thread=False), so `rowcount` is not
+        # attributable to this caller. Measured: twelve concurrent deletes with
+        # a separate SELECT-then-DELETE gave two "successes"; with rowcount some
+        # callers got -1 and reported the delete never happened. RETURNING hands
+        # back the row this statement actually removed — exactly one for twelve.
+        row = self.conn.execute(
+            "DELETE FROM workspaces WHERE id=? RETURNING id",
+            (workspace_id,)).fetchone()
+        if row is None:
+            raise Absent(f"unknown workspace {workspace_id}")
 
     # ----------------------------------------------------------------- restore
     def restore(self, workspace_id: str, *, dry_run: bool = True) -> dict[str, Any]:

@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (749 tests: 738 here, 11 that only a real Windows machine can run)
+## What works today (750 tests: 739 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -708,6 +708,17 @@ of those tests read the console as **text**. The page parsed. It never ran.
      see a dialog opening, a counter incrementing, or `themeReport` writing to
      `#themeDiffCard`. The lesson is in the harness: when a check reports a
      dead button, prove it dead before believing it. Two of six were real.
+
+119. **Two threads could both "delete" the same thing.** Fixing 114 introduced
+     a check-then-act race: `get()` passed for both callers before either
+     `DELETE` ran, so twelve concurrent deletes gave **two successes and ten
+     refusals** — the app claiming to have deleted the same row twice.
+     `rowcount` was no better: on this shared connection
+     (`check_same_thread=False`) it reads -1, so sometimes all twelve reported
+     that the delete never happened. `DELETE … RETURNING id` asks the database
+     what *this statement* removed: measured 1 winner and 11 refusals, ten runs
+     in a row, and the test fails 8/8 when reverted.
+     A race found by writing the concurrency probe, not by reading the code.
 
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no

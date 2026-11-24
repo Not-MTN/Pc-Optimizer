@@ -929,3 +929,44 @@ def test_a_failed_lookup_is_not_reported_as_a_missing_field(live_server):
     status, raw = _post(live_server, "/api/workspace/restore", {})
     assert status == 400, raw
     assert raw["error"] == "missing field 'id'"
+
+
+def test_twelve_threads_deleting_the_same_workspace_delete_it_once():
+    """A race on one row must produce one winner and eleven honest refusals.
+
+    Twelve concurrent deletes of the same workspace used to be unguarded DELETE
+    statements — every one reported success. With the existence check, exactly
+    one may win and the rest must say the workspace is gone. Anything else (two
+    winners, a crash, a corrupted row) is a bug.
+    """
+    import collections
+    import tempfile
+    import threading
+
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    ws = svc.run_action("workspace.save",
+                        {"name": "Race", "entries": [{"app": "x.exe"}]})
+    counts = collections.Counter()
+    lock = threading.Lock()
+
+    def one():
+        try:
+            svc.run_action("workspace.delete", {"id": ws["id"]})
+            outcome = "deleted"
+        except Exception as exc:      # noqa: BLE001
+            outcome = type(exc).__name__
+        with lock:
+            counts[outcome] += 1
+
+    threads = [threading.Thread(target=one) for _ in range(12)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert counts["deleted"] == 1, f"the workspace must be deleted once: {dict(counts)}"
+    assert sum(counts.values()) == 12
+    assert len(counts) == 2, f"every other caller must be refused: {dict(counts)}"
