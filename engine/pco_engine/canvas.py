@@ -92,25 +92,56 @@ class Canvas:
         # gradient in every theme, which the angle test now pins.
         rad = math.radians(angle)
         dx, dy = math.sin(rad), math.cos(rad)
+        # math.sin(pi) is 1.2e-16, not 0. Left alone, every "vertical" gradient
+        # took the general per-pixel path and the separable fast path below was
+        # dead code. The residue contributes at most 3e-13 to the ramp, far under
+        # one 8-bit step, so snapping it changes no pixel.
+        if abs(dx) < 1e-9:
+            dx = 0.0
+        if abs(dy) < 1e-9:
+            dy = 0.0
         # Projection range over the four corners, so the ramp always spans fully.
         corners = [(0, 0), (self.w, 0), (0, self.h), (self.w, self.h)]
         proj = [cx * dx + cy * dy for cx, cy in corners]
         lo, hi = min(proj), max(proj)
         span = (hi - lo) or 1.0
         b = self.buf
-        for y in range(self.h):
-            row = y * self.w
-            for x in range(self.w):
-                t = (x * dx + y * dy - lo) / span
-                t = 0.0 if t < 0 else (1.0 if t > 1 else t)
-                # Perceptual weighting: a linear ramp in sRGB bands on dark
-                # colours. Squaring t keeps the midtone from washing out.
-                tt = t * t * (3 - 2 * t)
-                i = (row + x) * 4
-                b[i] = int(c0[0] + (c1[0] - c0[0]) * tt)
-                b[i + 1] = int(c0[1] + (c1[1] - c0[1]) * tt)
-                b[i + 2] = int(c0[2] + (c1[2] - c0[2]) * tt)
-                b[i + 3] = 255
+        w = self.w
+
+        def ramp(t: float) -> float:
+            t = 0.0 if t < 0 else (1.0 if t > 1 else t)
+            # Perceptual weighting: a smoothstep ramp so the midtone of a dark
+            # theme does not wash out.
+            return t * t * (3 - 2 * t)
+
+        def px(tt: float) -> bytes:
+            return bytes((int(c0[0] + (c1[0] - c0[0]) * tt),
+                          int(c0[1] + (c1[1] - c0[1]) * tt),
+                          int(c0[2] + (c1[2] - c0[2]) * tt), 255))
+
+        # A linear gradient is separable. When it is axis-aligned one of the two
+        # coordinates drops out entirely: a horizontal ramp has one row repeated
+        # for every scanline, and a vertical ramp has one colour repeated across
+        # every row. Building the row once and using slice assignment turns
+        # ~3.7 million four-byte stores into 1440 memcpys. That is where most of
+        # the seven seconds behind "Save wallpaper" was going.
+        if dy == 0.0:
+            row = b"".join(px(ramp((x * dx - lo) / span)) for x in range(w))
+            for y in range(self.h):
+                b[y * w * 4:(y + 1) * w * 4] = row
+        elif dx == 0.0:
+            for y in range(self.h):
+                row = px(ramp((y * dy - lo) / span)) * w
+                b[y * w * 4:(y + 1) * w * 4] = row
+        else:
+            # Diagonal. The ramp along a row is still linear in x, so one row is
+            # built with a generator instead of a nested loop and each row is
+            # simply that generator shifted by the y term.
+            for y in range(self.h):
+                base = (y * dy - lo) / span
+                row = b"".join(px(ramp(base + (x * dx) / span))
+                               for x in range(w))
+                b[y * w * 4:(y + 1) * w * 4] = row
         if dither:
             self._dither()
 
@@ -156,19 +187,31 @@ class Canvas:
         y0, y1 = max(0, int(cy) - r), min(self.h, int(cy) + r)
         b = self.buf
         inv = 1.0 / (radius * radius)
+        # Hoisted arithmetic. The original did dx*dx + dy*dy, a float compare
+        # and three min() calls per pixel — 12 million min() calls for one
+        # 2560x1440 wallpaper, about six of the seven seconds a "Save wallpaper"
+        # click took. The dx term is constant down a column, so it lives in a
+        # list; f = base - dx2i is exactly the same expression, just regrouped.
+        cr, cg, cb = colour[0] * strength, colour[1] * strength, colour[2] * strength
+        cols = [(x, (x - cx) * (x - cx) * inv) for x in range(x0, x1)]
         for y in range(y0, y1):
             dy = y - cy
+            base = 1.0 - dy * dy * inv
+            if base <= 0.0:
+                continue
             row = y * self.w
-            for x in range(x0, x1):
-                dx = x - cx
-                f = 1.0 - (dx * dx + dy * dy) * inv
-                if f <= 0:
+            for x, dx2i in cols:
+                f = base - dx2i
+                if f <= 0.0:
                     continue
-                k = f * f * strength
+                k = f * f
                 i = (row + x) * 4
-                b[i] = min(255, int(b[i] + colour[0] * k))
-                b[i + 1] = min(255, int(b[i + 1] + colour[1] * k))
-                b[i + 2] = min(255, int(b[i + 2] + colour[2] * k))
+                v = b[i] + cr * k
+                b[i] = 255 if v > 255.0 else int(v)
+                v = b[i + 1] + cg * k
+                b[i + 1] = 255 if v > 255.0 else int(v)
+                v = b[i + 2] + cb * k
+                b[i + 2] = 255 if v > 255.0 else int(v)
 
     # -------------------------------------------------------------- shapes
     def rect(self, x: int, y: int, w: int, h: int, colour: RGBA,

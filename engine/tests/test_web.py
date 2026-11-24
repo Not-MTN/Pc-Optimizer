@@ -675,3 +675,100 @@ def test_a_missing_parameter_is_a_400_that_names_it(live_server):
         assert exc.code == 400
         body = exc.read().decode()
     assert "theme_id" in body
+
+
+# ---------------------------------------------------------------------------
+# The console is a local web server on a fixed port with no authentication. That
+# is fine — until any page you visit can talk to it. These four tests are the
+# attack, not a description of it.
+# ---------------------------------------------------------------------------
+
+def _raw(base, path, origin=None, method="GET", body=None):
+    """Make a request and return (status, headers) without raising on 4xx."""
+    import urllib.error
+    import urllib.request
+    headers = {}
+    if origin is not None:
+        headers["Origin"] = origin
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(base + path, headers=headers, data=data, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, dict(e.headers)
+
+
+def test_a_state_changing_action_is_not_reachable_by_get(live_server):
+    """An <img src="http://localhost:7788/api/safety/panic"> is a GET.
+
+    No CORS preflight, no prompt, no cookie needed — the browser sends it and
+    the server runs it. Twelve actions answered GET, including panic, clean.run
+    and startup.apply. Every one of them must now be a 405 over GET.
+    """
+    from pco_engine.server import Handler, ROUTES
+    dangerous = [r for r, a in ROUTES.items() if Handler._is_mutating(a)]
+    assert len(dangerous) >= 20, "the derived mutating set collapsed"
+    for route in dangerous:
+        code, _ = _raw(live_server, route)
+        assert code == 405, f"GET {route} returned {code}, not a refusal"
+
+
+def test_the_mutating_set_cannot_silently_lose_an_action():
+    """The old check was a hand-written set that had drifted by twelve entries.
+
+    Deriving it from the verb name means a new `*.apply` is covered without
+    anybody remembering. The named list below is the contract: these verbs
+    change something and a GET must never reach them.
+    """
+    from pco_engine.server import Handler
+    must_be_post = (
+        "theme.apply", "wallpaper.apply", "shell.apply",
+        "clean.run", "bench.run", "checkup.fix", "checkup.fix_safe",
+        "theme.apply_doc",
+        "dns.on", "dns.off", "dns.toggle",
+        "display.set", "display.confirm", "display.revert",
+        "startup.apply", "recipe.fire", "safety.panic", "safety.confirm",
+        "spotify.write", "workspace.capture", "workspace.restore",
+        "workspace.delete", "drivers.block", "drivers.rollback",
+        "theme.save", "theme.import", "x.anything.delete", "x.anything.rollback",
+    )
+    for verb in must_be_post:
+        assert Handler._is_mutating(verb), f"{verb} would be GET-reachable"
+    # And the converse: a read must not be locked behind POST, or the console
+    # cannot load a page without inventing a body.
+    for verb in ("status", "theme.gallery", "theme.get", "themes.export",
+                 "spotify.export", "clean.scan", "dupes.scan", "checkup.run",
+                 "space.forecast", "report.md", "drift.check"):
+        assert not Handler._is_mutating(verb), f"{verb} is a read but needs POST"
+
+
+def test_another_website_cannot_read_this_machine(live_server):
+    """ACAO was '*'. Any page could fetch /api/status and read your hardware."""
+    code, headers = _raw(live_server, "/api/status", origin="https://evil.example")
+    assert code in (403,), f"cross-origin read returned {code}"
+    acao = headers.get("Access-Control-Allow-Origin")
+    assert acao in (None, ""), f"wildcard CORS is back: {acao}"
+
+
+def test_another_website_cannot_post_a_change(live_server):
+    """The guard covered GET only at first; the POST went through."""
+    for origin in ("https://evil.example", "http://evil.example",
+                   "null", "http://127.0.0.1:1"):
+        code, _ = _raw(live_server, "/api/dns/on", origin=origin, method="POST",
+                       body={})
+        assert code == 403, f"cross-origin POST from {origin} returned {code}"
+
+
+def test_keel_still_works_from_its_own_window(live_server):
+    """A guard that breaks the product is not a fix."""
+    code, _ = _raw(live_server, "/api/status")
+    assert code == 200
+    code, _ = _raw(live_server, "/api/status", origin=live_server)
+    assert code == 200
+    code, _ = _raw(live_server, "/api/dns/on", origin=live_server, method="POST",
+                   body={})
+    assert code == 200, "the console's own POST was refused"

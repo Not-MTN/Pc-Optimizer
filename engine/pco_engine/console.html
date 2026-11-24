@@ -1516,9 +1516,16 @@ async function scanClean(run) {
     const scope = $("#cleanScope");
     if (scope) {
       if (data.looked_in) {
+        // "0 ms" reads as a broken counter even when it is exact. Say what a
+        // sub-millisecond scan means instead of printing a bare zero.
+        const took = data.elapsed_ms < 1
+          ? "less than a millisecond"
+          : data.elapsed_ms < 1000
+            ? data.elapsed_ms + " ms"
+            : (data.elapsed_ms / 1000).toFixed(1) + " s";
         scope.textContent = data.looked_in.length
-          ? "Looked in " + data.looked_in.length + " folders (" +
-            data.elapsed_ms + " ms) — " + data.scope_note
+          ? "Looked in " + data.looked_in.length + " folders in " + took +
+            " — " + data.scope_note
           : data.scope_note;
         scope.style.display = "";
       } else if (data.moved !== undefined) {
@@ -3096,12 +3103,22 @@ function themeReport(title, body, bad) {
 async function themeAction(btn, label, fn) {
   const original = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = label + "…"; }
+  // Rendering a 2560x1440 wallpaper takes seconds — it is a pure-Python canvas
+  // with no numpy in the installer. Showing "Rendering…" and then nothing for
+  // seven seconds is indistinguishable from a dead button, which is exactly how
+  // this one was reported. Count the seconds on the button itself.
+  const started = Date.now();
+  const tick = btn ? setInterval(() => {
+    const s = Math.round((Date.now() - started) / 1000);
+    btn.textContent = label + "… " + s + "s";
+  }, 1000) : null;
   try {
     await fn();
   } catch (err) {
     themeReport("Could not " + label.toLowerCase(),
                 (err && err.message) || String(err), true);
   } finally {
+    if (tick) clearInterval(tick);
     if (btn) { btn.disabled = false; btn.textContent = original; }
   }
 }

@@ -118,3 +118,32 @@ def test_installer_text_files_are_not_empty_and_mention_no_cloud(doc: str):
     assert len(text.strip()) > 200, f"{doc} is too thin to be useful"
     lowered = text.lower()
     assert "no cloud" in lowered or "no network" in lowered or "never makes a network" in lowered
+
+
+def test_a_failure_to_start_is_shown_and_not_only_printed():
+    """The exe is built with console=False, so `print(file=sys.stderr)` writes
+    to a closed handle. Before this, the engine failing to start looked exactly
+    like a double-click that did nothing: no window, no message, exit code 1."""
+    import os
+    import re
+
+    src = (ROOT / "engine" / "pco_engine" / "app.py").read_text(encoding="utf-8")
+    assert "console=False" in (PKG / "keel.spec").read_text(encoding="utf-8"), \
+        "the spec changed; this test's premise no longer holds"
+    assert "MessageBoxW" in src, "no dialog on a fatal path"
+    # Every path that abandons startup must reach the dialog.
+    for marker in ("could not start", "stopped"):
+        assert marker in src, f"no user-facing text for: {marker}"
+    # And the dialog helper must exist before its first use.
+    first_def = src.index("def _tell_the_user")
+    assert src.index("_tell_the_user(", first_def + 1) > first_def
+
+
+def test_the_dialog_falls_back_to_a_file_when_there_is_no_desktop():
+    """A locked-down session, a service account, an RDP box with no session:
+    MessageBoxW can fail. The message must still land somewhere readable."""
+    src = (ROOT / "engine" / "pco_engine" / "app.py").read_text(encoding="utf-8")
+    body = src[src.index("def _tell_the_user"):]
+    body = body[:body.index("\ndef ", 10)]
+    assert "startup-error.txt" in body, "no file fallback"
+    assert "except Exception" in body, "a failing dialog would raise instead"

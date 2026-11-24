@@ -376,3 +376,127 @@ def test_applying_a_theme_twice_is_idempotent_and_honest():
     again = svc.theme_apply("dusk")
     assert again["ok"]
     assert again["shell"]["changes"] == [] or again["shell"].get("already")
+
+
+def test_the_same_document_is_not_rendered_twice():
+    """Rendering a 2560x1440 theme is ~4 seconds of pure Python (the installer
+    ships no numpy). Without a cache, pressing "Save wallpaper" twice costs
+    eight. The cache must key on the document and the output name."""
+    import tempfile
+
+    from pco_engine import themes
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    doc = themes.get("aurora-glass")
+    first = svc.wallpaper_save(doc)
+    second = svc.wallpaper_save(doc)
+    assert not first.get("cached"), "the first render cannot be cached"
+    assert second.get("cached"), "the identical document rendered again"
+    assert first["path"] == second["path"]
+    assert second["bytes"] == first["bytes"]
+
+
+def test_a_changed_document_is_never_served_from_cache():
+    """A stale wallpaper is worse than a slow one: the user would see the old
+    image on their desktop after being told the new one was applied."""
+    import copy
+    import tempfile
+
+    from pco_engine import themes
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    doc = themes.get("aurora-glass")
+    base = svc.wallpaper_save(doc)
+    changed = copy.deepcopy(doc)
+    changed["wallpaper"]["vignette"] = 0.05
+    changed["wallpaper"]["seed"] = 4242
+    out = svc.wallpaper_save(changed)
+    assert not out.get("cached"), "a different document came back from cache"
+    assert out["bytes"] != base["bytes"], "the cached file was returned anyway"
+
+
+def test_saving_one_theme_does_not_invalidate_another():
+    """The first version kept one global stamp file, so rendering theme B made
+    theme A re-render. That is a cache with a hit rate of zero."""
+    import tempfile
+
+    from pco_engine import themes
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    a = themes.get("aurora-glass")
+    assert not svc.wallpaper_save(a).get("cached")
+    svc.wallpaper_save(themes.get("dusk"))
+    assert svc.wallpaper_save(themes.get("aurora-glass")).get("cached"), \
+        "saving another theme destroyed the first one's cache entry"
+
+
+def test_a_linear_gradient_is_pixel_identical_across_angles():
+    """The fast path (one row, memcpy per scanline) must not alter the image.
+    This compares against the original per-pixel algorithm written out longhand."""
+    import math
+
+    from pco_engine.canvas import Canvas
+
+    def longhand(w, h, c0, c1, angle):
+        rad = math.radians(angle)
+        dx, dy = math.sin(rad), math.cos(rad)
+        if abs(dx) < 1e-9:
+            dx = 0.0
+        if abs(dy) < 1e-9:
+            dy = 0.0
+        corners = [(0, 0), (w, 0), (0, h), (w, h)]
+        proj = [cx * dx + cy * dy for cx, cy in corners]
+        lo, hi = min(proj), max(proj)
+        span = (hi - lo) or 1.0
+        out = []
+        for y in range(h):
+            for x in range(w):
+                t = (x * dx + y * dy - lo) / span
+                t = 0.0 if t < 0 else (1.0 if t > 1 else t)
+                tt = t * t * (3 - 2 * t)
+                out += [int(c0[0] + (c1[0] - c0[0]) * tt),
+                        int(c0[1] + (c1[1] - c0[1]) * tt),
+                        int(c0[2] + (c1[2] - c0[2]) * tt), 255]
+        return out
+
+    for angle in (0, 90, 180, 270, 37, 45, 123):
+        for (w, h) in ((61, 47), (9, 1), (1, 9)):
+            want = longhand(w, h, (10, 20, 30), (200, 180, 160), angle)
+            cv = Canvas(w, h)
+            cv.linear((10, 20, 30), (200, 180, 160), angle=angle, dither=False)
+            assert list(cv.buf) == want, f"angle {angle} {w}x{h} changed"
+
+
+def test_an_axis_aligned_gradient_costs_one_row_not_one_per_scanline():
+    """"Save wallpaper" took seven seconds; most of it was per-pixel work in a
+    gradient that repeats every scanline.
+
+    Every branch fills row-at-a-time now, so counting writes proves nothing —
+    the first version of this test counted slice assignments and passed with the
+    optimisation removed. What distinguishes the fast path is how much work per
+    row happens, so this compares the two cases against each other. A ratio, not
+    an absolute threshold: CI machines are 20x apart, but both branches run on
+    the same machine in the same test.
+    """
+    import time
+
+    from pco_engine.canvas import Canvas
+
+    def elapsed(angle: float, w: int = 1200, h: int = 700) -> float:
+        cv = Canvas(w, h)
+        t = time.perf_counter()
+        cv.linear((10, 20, 30), (200, 180, 160), angle=angle, dither=False)
+        return time.perf_counter() - t
+
+    elapsed(180, 64, 64)          # warm up: first call pays import costs
+    axis = min(elapsed(180), elapsed(90), elapsed(180))
+    diagonal = min(elapsed(45), elapsed(37), elapsed(45))
+    assert axis * 5 < diagonal, (
+        f"axis-aligned {axis * 1000:.0f}ms vs diagonal {diagonal * 1000:.0f}ms "
+        f"at 1200x700 — the fast path is not being taken")

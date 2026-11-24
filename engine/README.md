@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (714 tests: 703 here, 11 that only a real Windows machine can run)
+## What works today (730 tests: 719 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -592,6 +592,39 @@ of those tests read the console as **text**. The page parsed. It never ran.
      never said so. `EnableTransparency` is the acrylic wash Microsoft still
      supports; full transparency needs an Explorer patch, which this app will
      not do. Both the description and a caveat now say that.
+
+103. **EVERY PAGE ON THE INTERNET COULD DRIVE KEEL.** The local server had
+     `Access-Control-Allow-Origin: *` and no Origin check. Worse, twelve actions
+     that change the machine answered a plain `GET` — `safety.panic`,
+     `clean.run`, `startup.apply`, `dns.on/off/toggle`, `display.set/confirm/
+     revert`, `bench.run`, `recipe.fire`. An `<img src="http://localhost:7788/
+     api/safety.panic">` on any web page fires it: no preflight, no prompt, no
+     cookie needed. Verified by sending exactly that request and getting 200
+     with `{"reverted": [...]}` back. Now: no wildcard CORS, an Origin check on
+     both verbs, and the mutating set is *derived* from the verb name instead of
+     hand-maintained — the old hand-written list had drifted by twelve entries.
+104. **A misspelled `PCO_BACKEND` silently became the demo machine.** This is
+     bug 98 wearing a disguise: `PCO_BACKEND=windwos` fell through to
+     `return None`, which is `FakeBackend`. Every invalid value, and `windows`
+     or `auto` on the wrong OS, now refuses to start with a readable reason.
+105. **A failure to start showed nothing at all.** The exe is built with
+     `console=False`, so `print(..., file=sys.stderr)` wrote to a handle that
+     does not exist. The window never appeared, the process exited 1, and from
+     outside that is a double-click that did nothing. Every fatal path now opens
+     a message box and falls back to a file when there is no desktop.
+106. **"Save wallpaper" was not broken; it was silent for seven seconds.** The
+     pure-Python canvas took 6.2s for one 2560x1440 image — a per-pixel loop for
+     a gradient identical on every scanline, plus 12 million `min()` calls in
+     `glow`. `math.sin(pi)` is 1.2e-16 rather than 0, so every "vertical"
+     gradient missed the separable path and it was dead code. Now 0.02s for the
+     gradient (pixel-identical, verified against the original algorithm at seven
+     angles), a render cache so a repeat save is instant, and — for the first
+     render, which is still seconds — the button counts the seconds out loud.
+107. **A comment claimed a behaviour the code did not have.** `linear`'s fast
+     path was unreachable and nothing caught it, because the test written for it
+     counted slice assignments and every branch fills row-at-a-time. Guards that
+     cannot fail are the theme of this release: three of this batch's first
+     drafts passed with the bug reintroduced.
 
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no

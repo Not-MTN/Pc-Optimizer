@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import re
 import os
 import sys
 import threading
@@ -37,6 +38,12 @@ from .store import StoreError
 from .service import Service
 
 _LOCK = threading.Lock()
+
+# The console is served by this process, so "same origin" is 127.0.0.1 or
+# localhost on whatever port we bound. Anything else is a web page that has no
+# business talking to a machine-management API.
+_LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "::1", "[::1]"}
+
 _INIT_LOCK = threading.Lock()     # guards one-time service construction
 _SVC: Service | None = None
 
@@ -52,14 +59,27 @@ def _pick_backend() -> Any:
     `PCO_BACKEND=windows` refuses to start on a non-Windows OS rather than
     pretending to be one.
     """
-    mode = os.environ.get("PCO_BACKEND", "demo")
+    mode = (os.environ.get("PCO_BACKEND") or "demo").strip().lower()
     if mode == "demo":
         return None                      # Service builds its own FakeBackend
-    if mode == "windows" or (mode == "auto" and sys.platform == "win32"):
-        from .windows_backend import WindowsBackend
-        return WindowsBackend(
-            allow_display=os.environ.get("PCO_WINDOWS_DISPLAY") == "1")
-    return None
+    if mode not in ("windows", "auto"):
+        # A typo used to fall through to `return None`, which is the simulator.
+        # Nobody setting PCO_BACKEND=windwos wants a fake machine: they want an
+        # error they can read and fix.
+        raise SystemExit(
+            f"PCO_BACKEND={mode!r} is not a backend. Use 'windows', 'auto' or "
+            f"'demo'. Refusing to start rather than silently simulate.")
+    if mode == "auto" and sys.platform != "win32":
+        raise SystemExit(
+            "PCO_BACKEND=auto on a non-Windows machine: there is no real backend "
+            "to drive. Use 'demo' if you meant the simulator.")
+    # mode is "windows", or "auto" which is only still reachable on win32.
+    if sys.platform != "win32":
+        raise SystemExit(
+            f"PCO_BACKEND={mode!r} needs Windows. This is {sys.platform!r}.")
+    from .windows_backend import WindowsBackend
+    return WindowsBackend(
+        allow_display=os.environ.get("PCO_WINDOWS_DISPLAY") == "1")
 
 
 def _service() -> Service:
@@ -167,10 +187,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        # preview runs in an iframe on another origin
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "content-type")
-        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        # No wildcard CORS. This was `Access-Control-Allow-Origin: *`, which let
+        # any page you happened to visit read every response from localhost —
+        # your hardware inventory, your scan results, your change journal.
+        # The console is served from this same origin, so it needs nothing.
+        origin = self.headers.get("Origin")
+        if origin and origin in self._origins():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Headers", "content-type")
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         self.end_headers()
         self.wfile.write(body)
 
@@ -182,11 +208,49 @@ class Handler(BaseHTTPRequestHandler):
         if " 500 " in (fmt % args):
             super().log_message(fmt, *args)
 
+    def _cross_origin(self) -> bool:
+        """Is this request coming from a page on another site?
+
+        `Origin` is sent by browsers on cross-origin POSTs and, since 2020, on
+        many GETs too. A same-origin fetch from our own console sends either no
+        Origin or a localhost one, so the rule is simply: if an Origin is
+        present and it speaks for a site we did not serve, refuse.
+        """
+        origin = self.headers.get("Origin")
+        if not origin:
+            return False
+        if origin in self._origins():
+            return False
+        # A file:// page (the packaged app used to use one) sends Origin: null.
+        # That is not a site we serve, and nothing legitimate needs it.
+        return True
+
+    def _origins(self) -> set[str]:
+        """Local origins for the port this request actually arrived on."""
+        try:
+            port = str(self.server.server_address[1])
+        except (AttributeError, IndexError, TypeError):
+            port = os.environ.get("PORT", "7788")
+        return {f"http://{h}:{port}" for h in _LOCAL_HOSTNAMES} | \
+               {f"https://{h}:{port}" for h in _LOCAL_HOSTNAMES}
+
+    def _refuse_cross_origin(self) -> bool:
+        if not self._cross_origin():
+            return False
+        self._json(403, {"error": "cross-origin request refused: Keel only talks "
+                                  "to its own window"})
+        return True
+
     def do_OPTIONS(self) -> None:  # noqa: N802
+        if self._cross_origin():
+            self._json(403, {"error": "cross-origin request refused"})
+            return
         self._send(204, b"", "text/plain")
 
     # --------------------------------------------------------------------- GET
     def do_GET(self) -> None:  # noqa: N802
+        if self._refuse_cross_origin():
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         if path in {"/", "/index.html"}:
@@ -290,9 +354,10 @@ class Handler(BaseHTTPRequestHandler):
                 # parameterised GET router ("theme.get": theme_id) raised a
                 # KeyError and returned 500 — the console asked, the server had
                 # the answer, and the wire between them dropped the argument.
-                if ROUTES[path] in self.MUTATING:
+                if self._is_mutating(ROUTES[path]):
                     self._json(405, {"error": f"{ROUTES[path]} changes state; "
-                                              "POST it to this same path"})
+                                              "POST it to this same path",
+                                     "path": path})
                     return
                 query = {k: v[0] for k, v in urlparse_qs(parsed.query).items() if v}
                 with _LOCK:
@@ -368,18 +433,48 @@ class Handler(BaseHTTPRequestHandler):
     # Verbs that change something. Reaching them over GET would let any web page
     # fire them at localhost with an <img> tag: no CORS, no preflight, and the
     # cookie-less request still arrives. They are POST-only.
-    MUTATING = {
-        "workspace.restore", "workspace.capture", "workspace.delete",
-        "drivers.block", "drivers.rollback",
-        "recipe.parse", "recipe.create", "recipe.toggle", "recipe.delete",
-        "theme.apply", "theme.save", "theme.import",
-        "wallpaper.save", "wallpaper.apply",
-        "shell.apply", "shell.theme.save", "shell.theme.import",
-        "safety.confirm", "spotify.write",
+    # Which verbs change something. The old version was a hand-maintained set
+    # that had drifted: twelve actions including safety.panic and clean.run
+    # answered a plain GET, so any web page could fire them with an <img> tag —
+    # no CORS preflight, no prompt, the request still arrives. Deriving the set
+    # from the verb's name means a new `*.apply` cannot silently miss the list;
+    # the explicit additions cover verbs whose names do not advertise danger.
+    _MUTATING_VERBS = re.compile(
+        r"\.(apply|run|on|off|toggle|fire|panic|set|confirm|revert|save|write|"
+        r"delete|block|rollback|restore|create|import|capture|erase|begin|finish|"
+        r"sample|inspect|scan|check|validate|preview|sweep|tune|clean|fix|"
+        r"fix_safe|fix_all|apply_doc|enable|disable|mute|unmute|switch|reset)"
+        r"$")
+    MUTATING = set()          # filled by _refresh_mutating() below
+
+    #: Reads despite the suffix (they compute, they do not persist).
+    _READ_ONLY = {
+        "clean.scan", "dupes.scan", "startup.inspect", "drift.check",
+        "theme.preview", "theme.validate", "theme.get", "theme.gallery",
+        "shell.preview", "space.sample", "space.forecast", "power.sample",
+        "power.drains", "power.summary", "display.mode", "checkup.run",
+        # bench.run is NOT here: it records an event in the sentinel feed, so a
+        # GET would let a web page write to the journal. It is also a
+        # multi-second measurement, which a link-fetch should not be able to
+        # trigger. POST-only.
+        "verify", "ask", "status", "report.weekly",
+        "report.md", "report.json", "sens.save",
+        # `theme_export` and `spotify_export` return text; neither writes. They
+        # were caught by the suffix rule, and keeping them POST-only would have
+        # been a lie about what they do.
+        "theme.export", "spotify.export",
     }
+
+    @classmethod
+    def _is_mutating(cls, action: str) -> bool:
+        if action in cls._READ_ONLY:
+            return False
+        return bool(cls._MUTATING_VERBS.search(action)) or action in cls.MUTATING
 
     # -------------------------------------------------------------------- POST
     def do_POST(self) -> None:  # noqa: N802
+        if self._refuse_cross_origin():
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         length = int(self.headers.get("Content-Length") or 0)

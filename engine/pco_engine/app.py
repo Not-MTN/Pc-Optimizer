@@ -199,11 +199,17 @@ def main(argv: list[str] | None = None) -> int:
         # log path only when it really did just time out.
         if _ENGINE_ERROR:
             why = _ENGINE_ERROR[0]
-            print(f"{APP_NAME}: the engine stopped: {type(why).__name__}: {why}",
-                  file=sys.stderr, flush=True)
+            detail = f"{type(why).__name__}: {why}"
         else:
-            print(f"{APP_NAME}: the engine did not start; see {store / 'keel.log'}",
-                  file=sys.stderr, flush=True)
+            detail = f"it did not answer within 20 seconds. See {store / 'keel.log'}"
+        # A windowed exe has no stderr. Printing the reason was the same as
+        # discarding it — the app vanished on launch and said nothing.
+        print(f"{APP_NAME}: the engine stopped: {detail}",
+              file=sys.stderr, flush=True)
+        _tell_the_user(
+            f"{APP_NAME} could not start",
+            f"The engine did not start, so nothing was changed.\n\n{detail}\n\n"
+            f"Details: {store / 'keel.log'}")
         return 1
 
     if "--no-window" in argv:
@@ -215,6 +221,37 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     return _open_window(url + "/", APP_NAME)
+
+
+
+def _tell_the_user(title: str, message: str) -> None:
+    """Show a failure where a person will actually see it.
+
+    The packaged exe is built with console=False, so `print(..., file=sys.stderr)`
+    writes to a handle that does not exist: the window never appears, the process
+    exits 1, and from the outside that is indistinguishable from a double-click
+    that did nothing. Everything that can stop the app from starting has to end
+    up in this function.
+
+    Order matters. A native message box is best and needs no imports. If that
+    fails (headless session, locked-down policy) the message is appended to a
+    file whose path is on screen in the same directory a user is told to look.
+    """
+    try:
+        if os.name == "nt":
+            import ctypes
+            # MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST
+            ctypes.windll.user32.MessageBoxW(None, message, title, 0x10 | 0x10000 | 0x40000)
+            return
+    except Exception:          # noqa: BLE001 - fall through to the file
+        pass
+    try:
+        path = data_dir() / "startup-error.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n{message}\n")
+    except Exception:          # noqa: BLE001 - nothing left to try
+        pass
 
 
 # A list, not an attribute: the engine runs on its own thread and the main
@@ -245,4 +282,9 @@ if __name__ == "__main__":
         raise
     except BaseException as exc:      # noqa: BLE001 - last line of defence
         _crash_log(exc)
+        # Re-raising in a windowed build shows "Unhandled exception in script"
+        # with a traceback, or for pywebview nothing at all. Say it plainly.
+        _tell_the_user(f"{APP_NAME} stopped",
+                       f"{type(exc).__name__}: {exc}\n\n"
+                       f"A crash log was written to {data_dir() / 'crash.log'}")
         raise

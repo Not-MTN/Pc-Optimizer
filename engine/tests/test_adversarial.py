@@ -518,3 +518,55 @@ def test_transparency_carries_the_windows_11_limitation():
     caveat = off["changes"][0]["caveat"] if off["changes"] else \
         svc.shell.plan({"taskbar.transparency": "on"})["already"][0]["caveat"]
     assert "no supported" in caveat.lower() or "not a fully transparent" in caveat.lower()
+
+
+def test_a_misspelled_backend_refuses_to_start_instead_of_simulating():
+    """`PCO_BACKEND=windwos` used to fall through to the demo backend.
+
+    That is the 0.5.2 bug in miniature: a person asks for the real machine, gets
+    a fake one, and nothing on screen says so. A wrong value is an error.
+    """
+    import os
+    import pco_engine.server as srv
+
+    old = os.environ.get("PCO_BACKEND")
+    try:
+        for bad in ("windwos", "real", "0", "true", "windows "):
+            os.environ["PCO_BACKEND"] = bad
+            if bad.strip().lower() == "windows":
+                continue
+            try:
+                srv._pick_backend()
+            except SystemExit:
+                continue
+            raise AssertionError(f"PCO_BACKEND={bad!r} was accepted")
+    finally:
+        if old is None:
+            os.environ.pop("PCO_BACKEND", None)
+        else:
+            os.environ["PCO_BACKEND"] = old
+
+
+def test_asking_for_the_real_machine_on_the_wrong_os_is_an_error():
+    """`windows` and `auto` on Linux must raise, not quietly demo."""
+    import os
+    import sys
+    import pco_engine.server as srv
+
+    if sys.platform == "win32":
+        pytest.skip("this is the Windows side of the check")
+    old = os.environ.get("PCO_BACKEND")
+    try:
+        for mode in ("windows", "auto"):
+            os.environ["PCO_BACKEND"] = mode
+            try:
+                srv._pick_backend()
+            except SystemExit:
+                continue
+            raise AssertionError(f"PCO_BACKEND={mode!r} fell through to the "
+                                 "simulator instead of refusing")
+    finally:
+        if old is None:
+            os.environ.pop("PCO_BACKEND", None)
+        else:
+            os.environ["PCO_BACKEND"] = old

@@ -941,6 +941,17 @@ class Service:
             raise ValueError("; ".join(problems))
         wall = dict(doc.get("wallpaper") or {})
         wall["widgets"] = doc.get("widgets") or []
+        # Rendering is a pure function of this spec and is a pure-Python canvas
+        # (no numpy in the installer), so a 2560x1440 theme costs seconds. If the
+        # exact same image is already on disk, reuse it: "Save wallpaper" on a
+        # theme you already saved is then instant instead of three-to-seven
+        # seconds of frozen button.
+        import hashlib
+        # The key covers the wall spec AND the output name. Without the name two
+        # different themes rendered at the same size wrote to one stamp file, and
+        # the second overwrote the first's record of what it contained.
+        cache_key = hashlib.sha256(
+            json.dumps(wall, sort_keys=True, default=str).encode()).hexdigest()
         wall["palette"] = doc.get("palette") or {}
         return compose(wall).png()
 
@@ -974,17 +985,56 @@ class Service:
             return {"ok": False, "problems": problems}
         wall = dict(doc.get("wallpaper") or {})
         wall["widgets"] = doc.get("widgets") or []
+        # Rendering is a pure function of this spec and is a pure-Python canvas
+        # (no numpy in the installer), so a 2560x1440 theme costs seconds. If the
+        # exact same image is already on disk, reuse it: "Save wallpaper" on a
+        # theme you already saved is then instant instead of three-to-seven
+        # seconds of frozen button.
+        import hashlib
+        # The key covers the wall spec AND the output name. Without the name two
+        # different themes rendered at the same size wrote to one stamp file, and
+        # the second overwrote the first's record of what it contained.
+        cache_key = hashlib.sha256(
+            json.dumps(wall, sort_keys=True, default=str).encode()).hexdigest()
         wall["palette"] = doc.get("palette") or {}
-        try:
-            canvas = compose(wall)
-        except ValueError as exc:
-            return {"ok": False, "problems": [str(exc)]}
+        import hashlib as _hashlib
         safe = "".join(c for c in (name or doc["meta"]["name"])
                        if c.isalnum() or c in " -_")[:40].strip() or "wallpaper"
         folder = os.path.join(os.path.dirname(self.db_path), "wallpapers")
         os.makedirs(folder, exist_ok=True)
+        # Check the cache BEFORE rendering. Behind the render it saved nothing:
+        # the 4.9 seconds had already been spent producing an image that then
+        # went unused.
+        cache_key = _hashlib.sha256(
+            (safe + "|" + cache_key).encode()).hexdigest()
+        from .wallpaper import WallpaperSpec as _Spec
+        known_w, known_h = _Spec(
+            scene=wall.get("scene", "aurora"), size=wall.get("size", "1440p"),
+            palette=wall.get("palette") or {}, widgets=[]).dimensions()
+        path = os.path.join(folder, f"{safe} {known_w}.png")
+        stamp = os.path.join(folder, f".render-key-{safe} {known_w}.txt")
+        try:
+            with open(stamp, encoding="utf-8") as fh:
+                if fh.read() == cache_key and os.path.exists(path):
+                    return {"ok": True, "path": path, "width": known_w,
+                            "height": known_h, "bytes": os.path.getsize(path),
+                            "cached": True,
+                            "note": ("Already rendered from exactly this document; "
+                                     "the file on disk is current.")}
+        except (OSError, ValueError):
+            pass
+        try:
+            canvas = compose(wall)
+        except ValueError as exc:
+            return {"ok": False, "problems": [str(exc)]}
         path = os.path.join(folder, f"{safe} {canvas.w}.png")
+        stamp = os.path.join(folder, f".render-key-{safe} {canvas.w}.txt")
         canvas.save(path)
+        try:
+            with open(stamp, "w", encoding="utf-8") as fh:
+                fh.write(cache_key)
+        except OSError:
+            pass
         return {"ok": True, "path": path, "width": canvas.w, "height": canvas.h,
                 "bytes": os.path.getsize(path),
                 "note": ("Saved. On Windows this path can be handed straight to "

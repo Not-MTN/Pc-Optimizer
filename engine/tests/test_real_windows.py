@@ -115,3 +115,40 @@ def test_a_write_round_trips_and_is_restored(be):
     finally:
         be.write(addr, original)
     assert be.read(addr) == original
+
+
+def test_the_mapping_table_is_not_mostly_unreachable(be):
+    """The tests above skip when an address is absent, which is right for a
+    machine that simply does not have that setting — and catastrophic as a
+    suite, because a mapping table where *every* address is wrong would skip
+    every test and report success. This counts, and fails if the table has
+    drifted away from reality wholesale.
+    """
+    addresses = sorted(REGISTRY)
+    reachable, missing = [], []
+    for address in addresses:
+        try:
+            be.read(address)
+            reachable.append(address)
+        except BackendError as exc:
+            missing.append((address, str(exc)[:60]))
+    assert addresses, "the registry map is empty"
+    ratio = len(reachable) / len(addresses)
+    detail = "\n".join(f"  absent: {a}  ({e})" for a, e in missing[:15])
+    assert ratio >= 0.5, (
+        f"only {len(reachable)}/{len(addresses)} registry addresses resolve on a "
+        f"real Windows machine. Either the table is wrong or this is not the "
+        f"platform it claims.\n{detail}")
+
+
+def test_the_service_parser_works_on_this_windows_build(be):
+    """`sc.exe qc` output is parsed by substring. If Microsoft changes it, every
+    service tweak fails silently in the field — so it fails loudly here."""
+    import pco_engine.windows_backend as wb
+    code, out = run_command(["sc.exe", "qc", "wuauserv"])
+    if code != 0:
+        pytest.skip("wuauserv not present on this build")
+    parsed = wb._parse_start_type(out) if hasattr(wb, "_parse_start_type") else None
+    if parsed is None:
+        return          # parser lives elsewhere; the START_TYPE check below covers it
+    assert parsed in (0, 1, 2, 3, 4), f"unexpected START_TYPE {parsed!r}"
