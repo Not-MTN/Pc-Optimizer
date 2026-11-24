@@ -346,6 +346,45 @@ def _real_path(address: str) -> str:
     return result
 
 
+# WMI device class -> the vocabulary Driver Manager already uses.
+_DRIVER_CLASSES = {
+    "display": "display", "monitor": "display",
+    "media": "audio", "audioendpoint": "audio",
+    "net": "network", "netadapter": "network",
+    "system": "chipset", "processor": "chipset",
+    "hdc": "storage", "diskdrive": "storage", "volume": "storage",
+    "keyboard": "input", "mouse": "input", "hidclass": "input",
+}
+
+
+def _wmi_date_ms(value: Any) -> int:
+    """WMI hands back `/Date(1234567890000)/` or an ISO string. Normalise to ms."""
+    if value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip()
+    if text.startswith("/Date(") and text.endswith(")/"):
+        digits = text[6:-2].lstrip("-")
+        return int(digits) if digits.isdigit() else 0
+    import datetime as _dt
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
+                "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return int(_dt.datetime.strptime(text, fmt)
+                       .replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+        except ValueError:
+            continue
+    return 0
+
+
+def _needs_admin(text: str) -> bool:
+    """netsh words an elevation problem several ways; all of them mean one thing."""
+    t = (text or "").lower()
+    return ("requires elevation" in t or "access is denied" in t
+            or "elevated" in t or "run as administrator" in t)
+
+
 def parse_registry(address: str) -> tuple[RegSpec | None, str]:
     """Split a ``registry:`` address. Returns (known spec, canonical address)."""
     body = address[len("registry:"):]
@@ -559,6 +598,23 @@ class WindowsBackend:
             "known_registry_addresses": len(REGISTRY),
             "known_commands": len(COMMANDS) + 1,   # + the open-ended service family
             "unserviced": dict(UNSERVICED),
+            # Plain-language answer to "does this actually do anything on my PC".
+            # Every entry here touches the machine; everything not listed does
+            # not, and the screens that rely on it say so in their own words.
+            "changes_the_machine": [
+                "Wallpaper (renders an image and sets it as the desktop background)",
+                "Taskbar, Explorer and dark-mode settings (registry, read back and verified)",
+                "Power plan and monitor refresh rate",
+                "Service start types (e.g. DiagTrack)",
+                "Security and telemetry policy values (needs administrator)",
+                "Cleaning TEMP and cache files (moved to a restorable vault)",
+            ],
+            "does_not_change_the_machine": [
+                "DNS blocking — needs a local resolver this build does not start",
+                "Startup deferral — needs a launcher this build does not ship",
+                "Gaming frame capture — shows a simulated session, labelled as such",
+                "Spotify — blocked until Spicetify can inject again",
+            ],
         }
 
     # -- the protocol ------------------------------------------------------
@@ -608,6 +664,110 @@ class WindowsBackend:
         else:
             raise BackendError(f"{address}: no mapping in this build")
         self._writes.append((address, value))
+
+    # --------------------------------------------------------------- drivers
+    def driver_inventory(self) -> list[dict[str, Any]]:
+        """Installed PnP drivers, from Windows itself.
+
+        Driver Manager showed an empty list on a real PC: the table was only
+        filled by `_seed_demo_drivers`, which runs on the demo backend, so the
+        screen was blank on every real machine while the code claimed to
+        inventory drivers. This asks WMI directly.
+        """
+        script = (
+            "Get-CimInstance Win32_PnPSignedDriver | "
+            "Where-Object { $_.DeviceName -and $_.DriverVersion } | "
+            "Select-Object DeviceName,DriverVersion,DriverDate,Manufacturer,DeviceClass | "
+            "ConvertTo-Json -Compress"
+        )
+        code, out = self._run(["powershell", "-NoProfile", "-NonInteractive",
+                               "-Command", script])
+        if code != 0 or not out.strip():
+            return []
+        import json
+        try:
+            rows = json.loads(out)
+        except ValueError:
+            return []
+        if isinstance(rows, dict):
+            rows = [rows]
+        out_rows = []
+        for r in rows:
+            name = (r.get("DeviceName") or "").strip()
+            version = (r.get("DriverVersion") or "").strip()
+            if not name or not version:
+                continue
+            out_rows.append({
+                "name": name,
+                "kind": _DRIVER_CLASSES.get((r.get("DeviceClass") or "").lower(), "other"),
+                "version": version,
+                "date": _wmi_date_ms(r.get("DriverDate")),
+                "vendor": (r.get("Manufacturer") or "").strip(),
+            })
+        return out_rows
+
+    # ------------------------------------------------------------ dns adapters
+    def dns_adapters(self) -> list[str]:
+        """Interfaces that hold an IP stack. Empty when netsh cannot be asked."""
+        code, out = self._run(["netsh", "interface", "ip", "show", "interfaces"])
+        if code != 0:
+            return []
+        names = []
+        for line in out.splitlines()[3:]:
+            parts = line.split()
+            # idx  met  MTU  State  Name
+            if len(parts) >= 5 and parts[3].lower() in ("connected", "disconnected"):
+                names.append(" ".join(parts[4:]))
+        return names
+
+    def dns_get(self, adapter: str) -> list[str]:
+        """The DNS servers this adapter is configured with, as reported by netsh."""
+        code, out = self._run(["netsh", "interface", "ip", "show", "dns",
+                               f'name={adapter}'])
+        if code != 0:
+            return []
+        found = []
+        for line in out.splitlines():
+            for tok in line.replace("\t", " ").split():
+                if tok.count(".") == 3 and all(c.isdigit() or c == "." for c in tok):
+                    found.append(tok)
+        return found
+
+    def dns_set(self, adapter: str, servers: list[str]) -> dict[str, Any]:
+        """Point one adapter at these resolvers, then read it back.
+
+        `primary` sets the first server; each additional one is an `add`. Both are
+        verified by re-reading, because netsh reports success for an adapter name
+        it matched loosely and the machine keeps its old resolver.
+        """
+        if not servers:
+            return {"ok": False, "reason": "no DNS server given"}
+        code, out = self._run(["netsh", "interface", "ip", "set", "dns",
+                               f"name={adapter}", "static", servers[0], "primary"])
+        if code != 0:
+            return {"ok": False, "adapter": adapter,
+                    "reason": (out.strip() or "netsh refused to set the DNS server"),
+                    "needs_admin": _needs_admin(out)}
+        for extra in servers[1:]:
+            self._run(["netsh", "interface", "ip", "add", "dns",
+                       f"name={adapter}", extra, "index=2"])
+        actual = self.dns_get(adapter)
+        ok = bool(actual) and actual[0] == servers[0]
+        return {"ok": ok, "adapter": adapter, "wanted": servers, "actual": actual,
+                "reason": "" if ok else
+                          ("netsh reported success but the adapter still shows "
+                           f"{actual or 'nothing'} — another policy is enforcing it")}
+
+    def dns_clear(self, adapter: str) -> dict[str, Any]:
+        """Back to DHCP-provided resolvers, verified."""
+        code, out = self._run(["netsh", "interface", "ip", "set", "dns",
+                               f"name={adapter}", "dhcp"])
+        actual = self.dns_get(adapter)
+        return {"ok": code == 0, "adapter": adapter, "actual": actual,
+                "reason": "" if code == 0 else (out.strip() or "netsh refused")}
+
+    def dns_flush(self) -> None:
+        self._run(["ipconfig", "/flushdns"])
 
     def keys(self, prefix: str = "") -> list[str]:
         """Enumerate addresses of a family. Only families we can enumerate."""

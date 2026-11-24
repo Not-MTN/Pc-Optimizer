@@ -689,3 +689,29 @@ def test_the_startup_button_does_not_claim_imaginary_successes():
     receipts = svc.conn.execute(
         "SELECT COUNT(*) FROM receipts WHERE kind='startup'").fetchone()[0]
     assert receipts == 0, "a no-op must not appear in the history"
+
+
+def test_every_id_passed_to_the_selector_helper_exists_in_the_markup():
+    """`$` is `document.querySelector`, so it needs a leading `#`.
+
+    `$("truthCard")` looks up a *tag* named truthCard, finds nothing, returns
+    null, and the renderer's `if (!card) return;` swallows it. The panel was
+    invisible, no error was raised, and the console was clean — a whole feature
+    that appeared to be missing because a selector was one character wrong.
+    """
+    import re
+
+    html = (Path(__file__).resolve().parent.parent
+            / "pco_engine" / "console.html").read_text(encoding="utf-8")
+    ids = set(re.findall(r'\bid="([A-Za-z0-9_-]+)"', html))
+
+    bad = []
+    for match in re.finditer(r'\$\("([^"#.\[]+)"\)', html):
+        name = match.group(1)
+        # Only a flag when a real element carries that name: the call can never
+        # resolve it, and `if (!el) return` turns the failure into silence.
+        if name in ids:
+            bad.append((name, match.start()))
+    assert not bad, (
+        "passed to $() without '#', so they can never match, and the caller's "
+        f"null-guard hides it: {sorted(set(n for n, _ in bad))}")

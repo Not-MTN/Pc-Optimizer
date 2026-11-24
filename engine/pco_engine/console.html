@@ -407,6 +407,20 @@
     </section>
 
     <section class="sect on" id="view-home">
+      <div class="card" id="truthCard" style="display:none;margin-bottom:16px">
+        <h2 id="truthTitle">What Keel can change on this PC</h2>
+        <p class="sub" id="truthSub"></p>
+        <div class="grid g2" style="gap:16px">
+          <div>
+            <div class="sub" style="margin-bottom:6px">Actually changes your PC</div>
+            <ul id="truthYes" style="margin:0;padding-left:18px"></ul>
+          </div>
+          <div>
+            <div class="sub" style="margin-bottom:6px">Does NOT — and says so</div>
+            <ul id="truthNo" style="margin:0;padding-left:18px"></ul>
+          </div>
+        </div>
+      </div>
       <div class="grid g3" style="margin-bottom:16px">
         <div class="card">
           <h2>Health</h2>
@@ -1296,6 +1310,7 @@ function renderMachine(st) {
     : "DEMO MODE: nothing here affects your computer. Every number is invented.";
   document.body.classList.toggle("is-demo", !b.real);
   renderElevation(b);
+  renderTruth(b);
 }
 
 /* A standard-user process reads everything and writes almost nothing
@@ -1307,6 +1322,28 @@ function renderMachine(st) {
    "Access is denied", so a working app looked broken. The banner is markup
    (hidden by default): creating it at runtime meant `$("#elevBar")` could be
    null at the moment a status poll landed. */
+/* The user's question was "make sure it actually does things on my PC".
+   The honest answer is a list of what this build can genuinely change and a
+   list of what it cannot — shown before the user presses anything, not
+   discovered by pressing. */
+function renderTruth(b) {
+  const card = $("#truthCard");
+  if (!card) return;
+  const yes = b.changes_the_machine || [];
+  const no = b.does_not_change_the_machine || [];
+  if (!yes.length && !no.length) { card.style.display = "none"; return; }
+  card.style.display = "";
+  $("#truthSub").textContent = b.real
+    ? "On this machine, straight from the backend that would do the work."
+    : "Simulated PC — nothing here touches your computer.";
+  const fill = (id, items, fallback) => {
+    const ul = $(id); if (!ul) return; ul.replaceChildren();
+    (items.length ? items : [fallback]).forEach((t) => ul.append(el("li", null, t)));
+  };
+  fill("#truthYes", yes, "Nothing yet.");
+  fill("#truthNo", no, "Nothing — everything listed works on this PC.");
+}
+
 function renderElevation(b) {
   const bar = $("#elevBar");
   if (!bar) return;
@@ -1891,8 +1928,10 @@ function onChatterKey(e) {
   if (e.key.length !== 1) return;
   const t = Math.round(performance.now());
   chatterEvents.push([e.key, t]);
-  $("chatterVerdict") && (document.getElementById("chatterVerdict").textContent =
-    chatterEvents.length + " keystrokes — keep going");
+  // `$` is querySelector: without the "#" this looked up a *tag* named
+  // chatterVerdict, matched nothing, and the keystroke counter never moved.
+  const verdict = $("#chatterVerdict");
+  if (verdict) verdict.textContent = chatterEvents.length + " keystrokes — keep going";
   if (chatterEvents.length >= 30) {
     api("/api/peripheral/test",
         { kind: "keyboard_chatter", payload: { events: chatterEvents } })

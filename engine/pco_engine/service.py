@@ -121,7 +121,9 @@ class Service:
                                self.clock)
         self.bench = Bench(self.conn, self.clock)
         self.sentinel = Sentinel(self.conn, self.clock)
-        self.dns = DnsBlocker(self.conn, self.clock)
+        # The backend is passed in: without it, `on()` had no way to reach an
+        # adapter and quietly reported success while changing nothing.
+        self.dns = DnsBlocker(self.conn, self.clock, backend=self.backend)
         if self._demo:
             self._install_demo_lists()
         self.recipes = Recipes(self.conn, self.clock, run_action=self.run_action)
@@ -776,12 +778,40 @@ class Service:
 
     # =================================================================== drivers
     def driver_inventory(self) -> dict[str, Any]:
+        """What is installed, asked from Windows if we can.
+
+        The screen used to be blank on every real machine: `inventory()` reads a
+        table only `_seed_demo_drivers` fills, and that runs on the demo backend
+        alone. Nothing enumerated drivers, and nothing said so.
+        """
+        source, reason = "cache", ""
+        lister = getattr(self.backend, "driver_inventory", None)
+        if lister is not None:
+            try:
+                found = lister()
+            except Exception as exc:          # a WMI fault must not blank the screen
+                found, reason = [], f"could not read the driver list: {exc}"
+            if found:
+                from .drivers import Driver
+                self.drivers.record([
+                    Driver(id=(f"{d['kind']}:{d['name']}:{d['version']}").lower().replace(" ", "_"),
+                           name=d["name"], kind=d["kind"], version=d["version"],
+                           date=int(d.get("date") or 0), vendor=d.get("vendor", ""))
+                    for d in found])
+                source = "windows"
+            elif not reason:
+                reason = ("Windows returned no signed drivers; the list may be "
+                          "unavailable without administrator rights.")
         inv = self.drivers.inventory()
         scored = []
         for d in inv:
-            s = self.drivers.score(d["version"])
-            scored.append({**d, "score": s})
-        return {"drivers": scored, "blocks": self.drivers.blocks()}
+            sc = self.drivers.score(d["version"])
+            scored.append({**d, "score": sc})
+        out = {"drivers": scored, "blocks": self.drivers.blocks(), "source": source}
+        if not scored:
+            out["reason"] = reason or ("No drivers were enumerated. Keel will not "
+                                       "invent a list to fill this screen.")
+        return out
 
     # ================================================================ shell lab
     def shell_options(self) -> dict[str, Any]:
@@ -1400,6 +1430,10 @@ class Service:
                              if hasattr(self.backend, "is_elevated") else True),
                 "can_write_system": (self.backend.is_elevated()
                                      if hasattr(self.backend, "is_elevated") else True),
+                # What this build can and cannot actually change, in plain words.
+                "changes_the_machine": _caps(self.backend, "changes_the_machine"),
+                "does_not_change_the_machine": _caps(
+                    self.backend, "does_not_change_the_machine"),
             },
             "engine": {
                 "journal_rows": rows, "journal_ok": ok, "journal_detail": detail,
@@ -1771,6 +1805,17 @@ CLEAN_ROOTS = {
 }
 
 # ------------------------------------------------------------- action catalog
+def _caps(backend: Any, key: str) -> list[str]:
+    """One capability list, or [] when the backend does not publish it."""
+    fn = getattr(backend, "capabilities", None)
+    if fn is None:
+        return []
+    try:
+        return list((fn() or {}).get(key) or [])
+    except Exception:
+        return []
+
+
 ACTIONS = {
     "checkup.run": lambda s, a: s.checkup(),
     "checkup.fix_safe": lambda s, a: s.checkup(fix_safe=True),

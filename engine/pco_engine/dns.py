@@ -17,6 +17,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from .backend import BackendError
+
 GROUPS = {"ads", "trackers", "telemetry", "malware", "phishing", "regional", "adult"}
 MODES = {"off", "on", "strict"}
 
@@ -94,9 +96,14 @@ class ListSource:
 
 
 class DnsBlocker:
-    def __init__(self, conn, clock) -> None:
+    def __init__(self, conn, clock, *, backend=None, listener=None) -> None:
         self.conn = conn
         self.clock = clock
+        # What `on()` can reach. `None` means the demo machine: there is no
+        # adapter to change and no lie to tell.
+        self.backend = backend
+        self.listener = listener
+        self._engaged_on: str | None = None
         self._matcher: Matcher | None = None
         self._lists: dict[str, ListSource] = {}
         self._load_state()
@@ -146,14 +153,84 @@ class DnsBlocker:
         return self._state.get("mode", "off")
 
     def on(self) -> str:
-        self._save("mode", "on")
+        """Turn blocking on. Returns the mode, and refuses to pretend.
+
+        This used to write `mode = "on"` into Keel's own SQLite and nothing else.
+        No socket, no listener, no adapter change: every domain in every list
+        stayed resolvable, while the window said "blocking on". A flag about
+        myself is not a change to the machine.
+        """
         self._save("pause_until", "0")
+        refused = self._engage()
+        if refused:
+            self._save("mode", "off")
+            self._last_refusal = refused
+            raise BackendError(refused)
+        self._save("mode", "on")
         return self.mode
 
     def off(self) -> str:
         self._save("mode", "off")
         self._save("pause_until", "0")
+        self._release()
         return self.mode
+
+    # ------------------------------------------------------------- enforcement
+    def _engage(self) -> str:
+        """Put the lists into force. Returns a reason string, or "" on success.
+
+        Blocking is only real if name resolution changes. This build points the
+        adapter at a resolver it controls; when no such resolver is listening it
+        says so instead of flipping a flag.
+        """
+        backend = getattr(self, "backend", None)
+        listener = getattr(self, "listener", None)
+        if backend is None:
+            # No backend at all (demo) — nothing to enforce, nothing to lie about.
+            return ""
+        if getattr(backend, "environment", "demo") != "windows":
+            # A simulated machine: the pill already says nothing here is real.
+            return ""
+        if listener is None or not getattr(listener, "running", False):
+            return ("Blocking needs Keel's local DNS resolver, which this build "
+                    "does not start. Nothing was blocked — your network settings "
+                    "are unchanged.")
+        adapters = getattr(backend, "dns_adapters", None)
+        setter = getattr(backend, "dns_set", None)
+        if adapters is None or setter is None:
+            # No adapter API at all means a simulated machine. There is nothing
+            # to change and nothing to warn about: the pill already says the
+            # whole session is simulated.
+            if getattr(backend, "environment", "demo") != "windows":
+                return ""
+            return ("This build cannot change network adapters, so blocking "
+                    "cannot be switched on. Your DNS is unchanged.")
+        servers = getattr(listener, "addresses", None) or []
+        if not servers:
+            return "The local resolver reported no address; nothing was blocked."
+        targets = [a for a in adapters() if a]
+        if not targets:
+            return ("No network adapter could be found to point at the resolver. "
+                    "Your DNS is unchanged.")
+        out = setter(targets[0], servers)
+        if not out.get("ok"):
+            return (f"Windows would not take the DNS change on '{targets[0]}': "
+                    f"{out.get('reason') or 'no reason given'}. Your DNS is unchanged.")
+        flush = getattr(backend, "dns_flush", None)
+        if flush is not None:
+            flush()
+        self._engaged_on = targets[0]
+        return ""
+
+    def _release(self) -> None:
+        backend = getattr(self, "backend", None)
+        adapter = getattr(self, "_engaged_on", None)
+        if backend is None or not adapter:
+            return
+        clear = getattr(backend, "dns_clear", None)
+        if clear is not None:
+            clear(adapter)
+        self._engaged_on = None
 
     def toggle(self) -> str:
         return self.off() if self.mode != "off" else self.on()

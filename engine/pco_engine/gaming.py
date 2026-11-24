@@ -372,6 +372,12 @@ class Gaming:
     def capture(self, game_id: str, *, seconds: float = 45.0) -> dict[str, Any]:
         """Watch gameplay and return a *receipt* for what was observed."""
         self.get_game(game_id)
+        # `simulated_capture` invents a plausible session with random.Random. It
+        # is the right answer on the demo machine and a lie on a real one: the
+        # window showed an FPS graph and a bottleneck verdict for gameplay that
+        # was never observed. A real capture source is not wired yet, so the
+        # result must carry that fact to the caller.
+        synthetic = self._capture is None
         capture = self._capture or simulated_capture
         frames, readings = capture(game_id, seconds)
         stats = analyse_frames(frames)
@@ -388,12 +394,20 @@ class Gaming:
                  _json({"stats": stats.as_dict(), "readings": readings.as_dict(),
                         "bottleneck": bottleneck.as_dict()}),
                  bottleneck.key, grade_letter))
-        return {"session_id": session_id, "game_id": game_id,
-                "game": self.get_game(game_id).name,
-                "stats": stats.as_dict(), "readings": readings.as_dict(),
-                "bottleneck": bottleneck.as_dict(), "grade": grade_letter,
-                "seconds": seconds,
-                "verdict": self._verdict(stats, bottleneck)}
+        out = {"session_id": session_id, "game_id": game_id,
+               "game": self.get_game(game_id).name,
+               "stats": stats.as_dict(), "readings": readings.as_dict(),
+               "bottleneck": bottleneck.as_dict(), "grade": grade_letter,
+               "seconds": seconds,
+               "verdict": self._verdict(stats, bottleneck),
+               "synthetic": synthetic}
+        if synthetic:
+            out["verdict"] = (
+                "This is a SIMULATED session — no gameplay was observed. Keel has "
+                "no frame-time capture wired to your GPU yet, so the numbers "
+                "below are generated, not measured. Do not judge your machine "
+                "by them.\n\n" + out["verdict"])
+        return out
 
     @staticmethod
     def _verdict(stats: FrameStats, b: Bottleneck) -> str:

@@ -821,6 +821,68 @@ since the first release and the bridge test pins that contract, so the
 single-finding path got its own route.
 
 
+### 0.5.8 — does it actually change this PC?
+
+The ask was blunt: *"make sure it actually does things on my pc."* So the whole
+product was measured against one question — does this reach the machine, or does
+it only change Keel's own database? The answer, feature by feature, from the code
+that would do the work:
+
+| Screen | Verdict |
+|---|---|
+| Themes / wallpaper | **Real.** Renders a PNG, sets it via `SystemParametersInfo`. |
+| Desktop Lab (taskbar, Explorer, dark mode) | **Real.** 7 of 8 settings write HKCU and read back. |
+| Cleaner | **Real.** Walks TEMP/cache, moves files to a restorable vault. |
+| Power plan, refresh rate, service start types | **Real.** Native calls, verified. |
+| Checkup fixes | **Real for 2 findings**, honest refusal for the rest. |
+| DNS blocking | **Was nothing.** Wrote `mode='on'` to SQLite. No socket, no adapter. |
+| Driver Manager | **Was nothing.** Table only filled by `_seed_demo_drivers`. |
+| Gaming "Watch gameplay" | **Was invented.** `random.Random` frames presented as a session. |
+
+Three of those were outright lies and are fixed in this release:
+
+129. **DNS blocking blocked nothing.** `DnsBlocker.on()` wrote `mode = "on"` into
+     Keel's own SQLite and returned. No socket, no listener, no `netsh` — every
+     domain in every list stayed resolvable while the window said "blocking on".
+     A flag about myself is not a change to the machine.
+     The blocker now has a backend, and `on()` either genuinely points an adapter
+     at a resolver it controls (with read-back) or refuses with the reason:
+     *"Blocking needs Keel's local DNS resolver, which this build does not start.
+     Nothing was blocked — your network settings are unchanged."* The mode stays
+     `off` when it refuses, so the next launch cannot claim otherwise.
+
+130. **Driver Manager was blank on every real PC.** `inventory()` reads a table
+     that only `_seed_demo_drivers` fills, and that runs on the demo backend
+     alone. Nothing enumerated drivers and nothing said so. `WindowsBackend` now
+     asks WMI (`Win32_PnPSignedDriver`), maps device classes onto the existing
+     vocabulary, normalises WMI dates, and feeds `DriverManager.record()`. When it
+     cannot, the response carries `source` and `reason` instead of an empty list
+     that looks like "no drivers installed".
+
+131. **Gaming invented a gameplay session.** `capture = self._capture or
+     simulated_capture`, and `Service` never passed a capture source — so
+     "Watch gameplay" on a real PC analysed `random.Random` frames and reported an
+     FPS graph, a bottleneck verdict and a grade for gameplay that was never
+     observed. Sessions are now marked `synthetic: true` and the verdict opens
+     with *"This is a SIMULATED session — no gameplay was observed."*
+
+Also fixed:
+
+132. **`$("truthCard")` without the `#`.** `$` is `querySelector`, so it looked
+     for a *tag* named `truthCard`, matched nothing, and the renderer's
+     `if (!card) return;` turned the failure into silence — a whole panel that
+     simply never appeared, with a clean console. The new capability panel was
+     written this way, and a contract test caught **a second instance already in
+     the code**: `chatterVerdict`, where the keystroke counter never moved.
+     `test_every_id_passed_to_the_selector_helper_exists_in_the_markup` now fails
+     on the whole class.
+
+**New: Keel states what it can and cannot do, on Home, before you press
+anything.** `status.backend` carries `changes_the_machine` (6 entries) and
+`does_not_change_the_machine` (4 entries) straight from the backend that would do
+the work, and Home renders both lists. No dead end requires discovering it first.
+
+93 was:
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no
     `unhandledrejection`. A broken handler and a handler that worked looked
