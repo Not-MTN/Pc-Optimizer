@@ -191,6 +191,13 @@
   .dlg{background:var(--panel-2);border:1px solid var(--line);border-radius:16px;
        padding:22px 24px;width:min(460px,88vw);box-shadow:0 24px 70px rgba(0,0,0,.6)}
   .dlg h2{margin:0;font-size:16px}
+  /* A simulation must never look like a real machine. */
+  body.is-demo::before{content:"DEMO MODE — nothing on this screen touches your PC";
+    position:fixed;top:0;left:0;right:0;z-index:60;text-align:center;
+    font-size:11.5px;font-weight:700;letter-spacing:.04em;padding:4px 8px;
+    background:rgba(255,195,107,.16);color:#FFC36B;border-bottom:1px solid rgba(255,195,107,.4);
+    pointer-events:none}
+  body.is-demo{padding-top:24px}
   .scrim{position:fixed;inset:0;background:rgba(4,6,9,.72);backdrop-filter:blur(3px);
          display:none;align-items:flex-start;justify-content:center;padding-top:12vh;z-index:80}
   .scrim.on{display:flex;animation:fade .12s ease both}
@@ -287,6 +294,7 @@
         <div class="sub" id="subtitle">Loading the engine…</div>
       </div>
       <div class="row">
+        <span class="pill" id="machinePill" title="Which machine this window is looking at">—</span>
         <input id="askBox" placeholder="Ask: what did I change?" aria-label="Ask the journal"
                style="width:230px;padding:8px 12px">
         <button class="btn ghost" id="askBtn" aria-label="Ask">Ask</button>
@@ -461,6 +469,7 @@
           <h2>Cleanable, by rule</h2>
           <div class="big" id="cleanTotal">—</div>
           <div class="sub" id="cleanFiles">Nothing scanned yet</div>
+          <div class="sub" id="cleanScope" style="display:none;margin-top:6px"></div>
           <div class="bar" style="margin:14px 0 16px"><i id="cleanBar"></i></div>
           <div class="row">
             <button class="btn" id="scanBtn">Scan</button>
@@ -1249,7 +1258,22 @@ function setRing(id, numId, value) {
   num.textContent = Math.round(value);
 }
 
+function renderMachine(st) {
+  const pill = $("#machinePill");
+  if (!pill) return;
+  const b = st.backend || { real: false, label: "Simulated PC" };
+  pill.textContent = b.real ? "● This PC" : "⚠ Simulated PC";
+  pill.style.borderColor = b.real ? "rgba(182,242,74,.45)" : "rgba(255,195,107,.55)";
+  pill.style.color = b.real ? "var(--lime)" : "var(--amber)";
+  pill.style.cursor = "help";
+  pill.title = b.real
+    ? "Changes here are made to this computer and are journaled."
+    : "DEMO MODE: nothing here affects your computer. Every number is invented.";
+  document.body.classList.toggle("is-demo", !b.real);
+}
+
 function renderStatus(st) {
+  renderMachine(st);
   STATE.status = st;
   const ck = st.checkup;
   if (ck) {
@@ -1347,7 +1371,9 @@ function renderFindings(data) {
 async function loadReceipts() {
   const { receipts } = await api("/api/receipts");
   const tb = $("#receipts"); tb.replaceChildren();
-  if (!receipts.length) { tb.append(el("tr"), el("td", "empty", "Nothing yet.")); }
+  if (!receipts.length) {
+    const tr = el("tr"); tr.append(el("td", "empty", "Nothing yet.")); tb.append(tr);
+  }
   receipts.forEach((r) => {
     const tr = el("tr");
     tr.append(el("td", "mono", ago(r.at)), el("td", null, r.title),
@@ -1442,7 +1468,7 @@ async function fixSafe() {
 function renderVaultRuns(runs) {
   const tb = $("#vaultRuns"); tb.replaceChildren();
   if (!runs || !runs.length) {
-    tb.append(el("tr"), el("td", "empty", "Nothing in the vault."));
+    const tr = el("tr"); tr.append(el("td", "empty", "Nothing in the vault.")); tb.append(tr);
     return;
   }
   runs.forEach((r) => {
@@ -1485,6 +1511,22 @@ async function scanClean(run) {
   try {
     const data = await api(run ? "/api/clean/run" : "/api/clean/scan", {});
     if (run) toast(data.summary || "Cleaned.");
+    // "Scanned my whole PC in one second" is a fair question. Answer it where
+    // the number is, not in a doc.
+    const scope = $("#cleanScope");
+    if (scope) {
+      if (data.looked_in) {
+        scope.textContent = data.looked_in.length
+          ? "Looked in " + data.looked_in.length + " folders (" +
+            data.elapsed_ms + " ms) — " + data.scope_note
+          : data.scope_note;
+        scope.style.display = "";
+      } else if (data.moved !== undefined) {
+        scope.textContent = "Moved " + data.moved + " item(s) to the vault. "
+          + "Restorable for 30 days.";
+        scope.style.display = "";
+      }
+    }
     const totalBytes = data.total_bytes || data.bytes_moved || 0;
     $("#cleanTotal").textContent = fmtGB(totalBytes);
     $("#cleanFiles").textContent = (data.total_files || data.moved || 0) + " files";
@@ -1496,7 +1538,11 @@ async function scanClean(run) {
         rules.append(tr);
       });
     }
-    if (!rules.children.length) rules.append(el("tr"), el("td", "empty", "Scan to fill this."));
+    if (!rules.children.length) {
+      const tr = el("tr");
+      tr.append(el("td", "empty", "Scan to fill this."));
+      rules.append(tr);
+    }
     await refreshAll();
   } catch (err) { toast(err.message, true); }
   busy(btn, false);
@@ -1520,7 +1566,8 @@ async function loadDns() {
         el("td", null, String(e.payload.hits || ""))); $("#dnsTop").append(tr);
     });
     if (!$("#dnsTop").children.length)
-      $("#dnsTop").append(el("tr"), el("td", "empty", "No hits yet."));
+      { const tr = el("tr"); tr.append(el("td", "empty", "No hits yet."));
+        $("#dnsTop").append(tr); }
   } catch (err) { /* non-fatal */ }
 }
 
@@ -1610,7 +1657,7 @@ async function loadSpace() {
       : "Take two samples a day apart to get a forecast.";
     const tb = $("#spaceTable"); tb.replaceChildren();
     if (!grew.available || !grew.changed.length) {
-      tb.append(el("tr"), el("td", "empty", "Nothing changed in the window."));
+      const tr = el("tr"); tr.append(el("td", "empty", "Nothing changed in the window.")); tb.append(tr);
     } else {
       grew.changed.forEach((d) => {
         const tr = el("tr");
@@ -1677,8 +1724,11 @@ async function loadStartup() {
                    k.refusal ? k.refusal.split(":")[0] : (k.recommended + " · " + row.action)));
       tb.append(tr);
     });
-    if (!d.knowledge || !d.knowledge.length)
-      tb.append(el("tr"), el("td", "empty", "Nothing inventoried."));
+    if (!d.knowledge || !d.knowledge.length) {
+      const tr = el("tr");
+      tr.append(el("td", "empty", "Nothing inventoried."));
+      tb.append(tr);
+    }
   } catch (err) { toast(err.message, true); }
 }
 
@@ -1738,7 +1788,7 @@ async function loadLab() {
     const d = await api("/api/peripheral");
     const tb = $("#labHistory"); tb.replaceChildren();
     if (!d.history || !d.history.length) {
-      tb.append(el("tr"), el("td", "empty", "No tests run yet."));
+      const tr = el("tr"); tr.append(el("td", "empty", "No tests run yet.")); tb.append(tr);
       return;
     }
     d.history.forEach((t) => {
@@ -1858,7 +1908,7 @@ function renderSessionList(list) {
   const tb = $("#sessions"); tb.replaceChildren();
   sessionsRendered = true;
   if (!list || !list.length) {
-    tb.append(el("tr"), el("td", "empty", "No sessions yet — watch one."));
+    const tr = el("tr"); tr.append(el("td", "empty", "No sessions yet — watch one.")); tb.append(tr);
     return;
   }
   list.forEach((s) => {
@@ -1968,7 +2018,7 @@ async function loadAutopsy() {
     const data = await api("/api/autopsy");
     const tb = $("#autopsyList"); tb.replaceChildren();
     if (!data.autopsies.length) {
-      tb.append(el("tr"), el("td", "empty", "Nothing watched yet."));
+      const tr = el("tr"); tr.append(el("td", "empty", "Nothing watched yet.")); tb.append(tr);
       return;
     }
     data.autopsies.forEach((a) => {

@@ -154,6 +154,22 @@ def main(argv: list[str] | None = None) -> int:
         return 3
     os.environ.setdefault("PCO_DATA", str(store))
 
+    # THE APP IS THE REAL APP.
+    #
+    # server._pick_backend() defaults to "demo" — a simulated machine — even on
+    # Windows, on the reasoning that a browser tab you leave open should not be
+    # able to change a real PC. That reasoning is right for someone running the
+    # server by hand. It is exactly wrong for a double-clicked desktop app: the
+    # one thing a user cannot be expected to know is to set an environment
+    # variable before launching, so every install ran against a simulation and
+    # every button was honest about a machine that does not exist.
+    #
+    # A person who installs Keel on Windows and opens it wants Keel to look at
+    # the PC they are sitting at. PCO_BACKEND is still honoured if set, so the
+    # demo remains one variable away.
+    if sys.platform == "win32" and not os.environ.get("PCO_BACKEND"):
+        os.environ["PCO_BACKEND"] = "windows"
+
     port = _port()
     url = f"http://127.0.0.1:{port}"
 

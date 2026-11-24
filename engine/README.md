@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (707 tests: 696 here, 11 that only a real Windows machine can run)
+## What works today (714 tests: 703 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -560,6 +560,38 @@ of those tests read the console as **text**. The page parsed. It never ran.
     Escape and Enter, a danger variant, and a toast for the journal result.
 97. **`window.open` is blocked there too**, so "Open printable report" did
     nothing. The report is fetched and shown in an iframe with a Print button.
+
+**98. THE APP WAS A SIMULATOR.** `server._pick_backend()` defaults to `"demo"` —
+    deliberately, because a browser tab left open should not be able to change a
+    real PC. `app.py` never overrode it. So **every installed copy of Keel ran
+    against `FakeBackend`**: a scan walked five seeded files under
+    `demo_machine/`, which is why it finished in one second; every theme wrote
+    to an in-memory dict, which is why no wallpaper changed; and
+    `wallpaper_apply` correctly reported "the simulated machine has no desktop
+    to change" instead of failing. Nothing on screen said which machine was
+    being described. The one thing a person double-clicking an installer cannot
+    be expected to know is to set an environment variable first.
+    `app.py` now selects the Windows backend on Windows unless `PCO_BACKEND`
+    says otherwise, and the window shows **"⚠ Simulated PC"** with a banner
+    when it is a simulation, so the two can never look alike again.
+99. **A scan did not say what it scanned.** "How can it scan my whole PC in one
+    second?" It cannot and does not — it walks a specific list of temp and cache
+    folders. The result now lists them, the elapsed time, and the sentence
+    "these folders only — not your whole drive".
+100. **Nine empty-state rows appended their cell beside the row.** The fix for
+     the chained-`.append()` crash became `tb.append(el("tr"), el("td", …))`,
+     which puts the `<td>` as a *sibling* of the `<tr>`. The throw was gone, the
+     markup was invalid, and an empty table rendered as a stray cell. Fixed in
+     all nine, and there is now a runtime check that every `<td>` has a `<tr>`
+     parent (242 table parts, 0 orphans).
+101. **A setting that was already correct said nothing.** Choosing
+     "transparent taskbar" on a machine that already had it produced zero
+     changes and no reason — the same shape as a dead button. Already-set
+     choices are now reported by name.
+102. **Windows 11 has no supported fully-transparent taskbar,** and the app
+     never said so. `EnableTransparency` is the acrylic wash Microsoft still
+     supports; full transparency needs an Explorer patch, which this app will
+     not do. Both the description and a caveat now say that.
 
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no

@@ -486,3 +486,35 @@ def test_an_identifier_that_is_not_a_scalar_is_refused(base):
             status, raw = post(base, route, {key: value})
             assert status == 400, f"{route} {key}={value!r} -> {status}"
             assert key.encode() in raw, raw[:120]
+
+
+# ------------------------------------------------- nothing may change silently
+def test_a_setting_that_is_already_correct_says_so():
+    """Choosing "transparent taskbar" on a machine that already had it reported
+    zero changes and no reason — indistinguishable from a dead button."""
+    import tempfile
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/x.db", catalog_dir="catalog")
+    svc.shell_apply({"taskbar.transparency": "on"})
+    again = svc.shell_apply({"taskbar.transparency": "on"})
+    assert again["applied"] is True
+    assert again["already"] is True
+    assert again["already_set"], "an already-set choice must be named"
+    assert "Already set" in again["summary"]
+    assert "transparency" in again["summary"]
+
+
+def test_transparency_carries_the_windows_11_limitation():
+    """Windows 11 has no supported full-transparency taskbar. Saying so is the
+    difference between a limit and a bug the user blames on the app."""
+    import tempfile
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/x.db", catalog_dir="catalog")
+    off = svc.shell.plan({"taskbar.transparency": "off"})
+    caveat = off["changes"][0]["caveat"] if off["changes"] else \
+        svc.shell.plan({"taskbar.transparency": "on"})["already"][0]["caveat"]
+    assert "no supported" in caveat.lower() or "not a fully transparent" in caveat.lower()

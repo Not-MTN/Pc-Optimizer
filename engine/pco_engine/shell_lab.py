@@ -97,7 +97,12 @@ TASKBAR = {
         "path": r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
         "options": {"off": 0, "on": 1},
         "default": "on",
-        "plain": "The acrylic wash behind the bar, Start and Action Center.",
+        "plain": ("The acrylic wash behind the bar, Start and Action Center. "
+                  "Windows 11 removed the setting for a fully see-through "
+                  "taskbar; this is the transparency Microsoft still supports."),
+        "caveat": ("Not a fully transparent bar: Windows 11 has no supported "
+                   "registry value for that any more. Third-party tools do it by "
+                   "patching Explorer, which this app will not do."),
         "restart": "none",
     },
     "taskbar.accent": {
@@ -331,6 +336,7 @@ class ShellLab:
     def plan(self, desired: dict[str, str]) -> dict[str, Any]:
         """Validate a set of choices and return the writes, or the reasons not to."""
         changes: list[Change] = []
+        satisfied: list[dict[str, Any]] = []
         problems: list[str] = []
         refused: list[dict[str, str]] = []
 
@@ -356,7 +362,18 @@ class ShellLab:
                 previous = None
             value = spec["options"][choice]
             if previous == value:
-                continue                     # already correct: not a change
+                # Already correct is *not* the same as "nothing to say". The
+                # first version `continue`d, so choosing "transparent taskbar"
+                # on a machine that already had it reported zero changes and no
+                # reason — indistinguishable from the button being broken.
+                satisfied.append({
+                    "key": key,
+                    "label": key.split(".", 1)[1].replace("_", " "),
+                    "already": True,
+                    "plain": spec["plain"],
+                    "caveat": spec.get("caveat", ""),
+                })
+                continue
             changes.append(Change(
                 key=key, label=key.split(".", 1)[1].replace("_", " "),
                 address=address, value=value, previous=previous,
@@ -369,6 +386,7 @@ class ShellLab:
             "ok": not problems and bool(changes),
             "changes": [c.as_dict() for c in changes],
             "problems": problems,
+            "already": satisfied,
             "refused": refused,
             "explorer_restart_needed": "explorer" in restarts,
             "addresses": [c.address for c in changes],

@@ -444,3 +444,48 @@ def test_an_unwritable_data_folder_explains_itself_and_exits_clean(tmp_path):
     assert "cannot use its data folder" in r.stderr
     assert "PCO_DATA" in r.stderr          # tells them how to fix it
     assert "Traceback" not in r.stderr     # a message, not a crash
+
+
+def test_the_desktop_app_targets_the_real_machine_not_the_simulator():
+    """The shipped app ran against FakeBackend on every install.
+
+    server._pick_backend() defaults to "demo" — deliberately, for a person
+    starting a web server by hand — and app.py never overrode it. So the
+    packaged .exe reported on a simulated PC: a "scan" walked five seeded demo
+    files, every theme wrote to an in-memory dict, and the wallpaper renderer
+    correctly said "the simulated machine has no desktop to change". All of it
+    was honest, none of it was true, and nothing on screen said which machine
+    was being described.
+    """
+    import re
+    from pathlib import Path
+
+    app = (Path(srv.__file__).parent / "app.py").read_text(encoding="utf-8")
+    # The override must exist, be conditional on Windows, and honour an explicit
+    # PCO_BACKEND so the demo stays one variable away.
+    assert 'os.environ["PCO_BACKEND"] = "windows"' in app, (
+        "app.py must select the Windows backend or the packaged app simulates")
+    assert 'sys.platform == "win32"' in app
+    assert 'not os.environ.get("PCO_BACKEND")' in app, (
+        "an explicitly chosen backend must win")
+
+
+def test_status_says_which_machine_it_is_talking_to():
+    """A simulation and a real PC must not look identical on screen."""
+    from pco_engine.service import Service
+    import tempfile
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/x.db", catalog_dir="catalog")
+    st = svc.status()
+    assert "backend" in st, "status() must report the backend"
+    assert st["backend"]["real"] is False          # this one is the demo
+    assert "Simulated" in st["backend"]["label"]
+
+
+def test_demo_mode_is_visible_in_the_window():
+    """The banner is the difference between a demo and a lie."""
+    text = (Path(srv.__file__).parent / "console.html").read_text(encoding="utf-8")
+    assert "function renderMachine" in text
+    assert "body.is-demo" in text, "no visual for demo mode"
+    assert ["DEMO MODE"] or "DEMO MODE" in text
+    assert 'id="machinePill"' in text

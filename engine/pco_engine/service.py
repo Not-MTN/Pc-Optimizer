@@ -464,8 +464,22 @@ class Service:
         return {"tx_id": res.tx_id, "reverted": res.reverted, "failed": res.failed}
 
     def clean_scan(self, *, classes: set[str] | None = None) -> dict[str, Any]:
+        # Report what was actually walked. "Scanned your whole PC in one second"
+        # deserves an answer: it did not. It looked in a specific list of temp
+        # and cache folders, and that list belongs on screen next to the number.
+        import time as _t
+        started = _t.perf_counter()
         scan = self.cleaner.scan(classes)
-        return scan.as_dict()
+        out = scan.as_dict()
+        roots = getattr(self.cleaner, "roots", {}) or {}
+        out["looked_in"] = [{"name": k, "path": str(v)}
+                            for k, v in sorted(roots.items())]
+        out["elapsed_ms"] = int((_t.perf_counter() - started) * 1000)
+        out["scope_note"] = (
+            "These folders only — not your whole drive. A full-disk scan would "
+            "take minutes and is not what this does." if roots else
+            "No folders were configured, so nothing was read.")
+        return out
 
     def clean_run(self) -> dict[str, Any]:
         scan = self.cleaner.scan({"free", "auto_regen"})
@@ -684,8 +698,12 @@ class Service:
                 return {"applied": False, "already": False, "changes": [],
                         "refused": plan["refused"],
                         "summary": plan["summary"]}
+            done = plan.get("already", [])
             return {"applied": True, "already": True, "changes": [],
-                    "refused": [], "summary": plan["summary"]}
+                    "refused": [], "already_set": done,
+                    "summary": (f"Already set: {', '.join(d['label'] for d in done)}. "
+                                "Nothing needed writing."
+                                if done else plan["summary"])}
         tx = self.engine.apply_customization(plan["changes"], source="shell")
         if restart_explorer and plan["explorer_restart_needed"]:
             restarted = self.restart_explorer()
@@ -696,6 +714,7 @@ class Service:
                          if plan["explorer_restart_needed"] else "not needed"}
         return {"applied": True, "tx_id": tx.tx_id, "changes": plan["changes"],
                 "refused": plan["refused"], "explorer": restarted,
+                "already_set": plan.get("already", []),
                 "summary": plan["summary"]}
 
     def restart_explorer(self) -> dict[str, Any]:
@@ -1140,7 +1159,18 @@ class Service:
         latest = self.checker.latest_run()
         ok, rows, detail = self.engine.journal.verify_chain()
         vault = self.cleaner.vault_summary()
+        # Which machine this is talking to. Without it a simulation and a real
+        # PC look identical on screen, which is how a whole release shipped
+        # reporting on imaginary files while the user waited for something to
+        # happen to their actual computer.
+        env = getattr(self.backend, "environment", "demo")
         return {
+            "backend": {
+                "kind": env,
+                "real": env == "windows",
+                "label": ("This PC" if env == "windows"
+                          else "Simulated PC — nothing here touches your computer"),
+            },
             "engine": {
                 "journal_rows": rows, "journal_ok": ok, "journal_detail": detail,
                 "managed": len(self.engine.managed()),

@@ -260,3 +260,36 @@ def test_no_class_is_used_in_the_ui_without_a_style():
     allowed = {"on", "here", "row", "col", "mono", "big", "empty"}
     unstyled = sorted(c for c in used if c and c not in styled and c not in allowed)
     assert not unstyled, f"classes with no rule: {unstyled}"
+
+
+def test_no_cell_or_row_is_appended_outside_a_table():
+    """`tb.append(el("tr"), el("td", ...))` puts a <td> beside the row, not in it.
+
+    This is what the fix for the chained-append crash turned into: the throw was
+    gone, the markup was invalid, and an empty table rendered as a stray cell
+    floating under it. Nine of these shipped. The parser accepts them silently,
+    which is why only a runtime check catches it.
+    """
+    import re
+    bad = []
+    for n, line in enumerate(JS.splitlines(), 1):
+        if re.search(r'append\(el\("tr"\),\s*el\("td"', line):
+            bad.append((n, line.strip()[:100]))
+    assert not bad, f"a <td> appended as a sibling of its <tr>: {bad}"
+
+
+def test_a_scan_reports_what_it_looked_at():
+    """"How can it scan my whole PC in a second?" — it does not, and it should
+    say so rather than leave the user to guess."""
+    import tempfile
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/x.db", catalog_dir="catalog")
+    out = svc.clean_scan()
+    assert "looked_in" in out and out["looked_in"], "no scope reported"
+    for entry in out["looked_in"]:
+        assert entry["name"] and entry["path"]
+    assert "elapsed_ms" in out
+    assert "whole drive" in out["scope_note"].lower() or \
+           "not your whole" in out["scope_note"].lower()
