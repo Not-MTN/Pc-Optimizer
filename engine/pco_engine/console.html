@@ -3092,6 +3092,25 @@ function renderSpotifyStatus(st) {
     : "Writing a theme is unavailable here — you can still copy both files and install them yourself.");
   box.textContent = lines.join("\n");
   box.style.whiteSpace = "pre-wrap";
+  // If this machine cannot take a theme, say so ON the button rather than
+  // letting the user click and read a refusal. "spotify does nothing" is what
+  // an enabled button that always refuses feels like.
+  const write = $("#spotifyWrite");
+  if (write) {
+    const why = (st.reasons || [])[0];
+    write.disabled = !st.can_apply;
+    write.textContent = st.can_apply ? "Write it to Spicetify"
+                                     : "Cannot write on this PC — see above";
+    write.title = st.can_apply
+      ? "Write two text files into the Spicetify themes folder."
+      : (why || "Spotify or Spicetify is missing.");
+  }
+  const exp = $("#spotifyExport");
+  if (exp) {
+    // Copying both files always works; it never depended on Spicetify at all.
+    exp.textContent = st.can_apply ? "Copy both files"
+                                   : "Copy both files instead (always works)";
+  }
 }
 
 function spotifyRequire() {

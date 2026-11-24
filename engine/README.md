@@ -752,6 +752,13 @@ of those tests read the console as **text**. The page parsed. It never ran.
      a process, so a GET must not reach it), a banner that appears **only** on a
      real unelevated PC, and `status.backend.elevated` / `.can_write_system`.
 
+123. **"spotify does nothing" was an enabled button that always refused.**
+     On a machine without Spicetify, "Write it to Spicetify" looked ready and
+     answered "Not written". The write button is now disabled and says *"Cannot
+     write on this PC — see above"* with the first blocker as its tooltip, and
+     the copy path — which never needed Spicetify — is offered as *"Copy both
+     files instead (always works)"*.
+
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no
     `unhandledrejection`. A broken handler and a handler that worked looked

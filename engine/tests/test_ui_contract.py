@@ -646,3 +646,17 @@ def test_the_undo_toast_says_how_many_changes_came_back():
         "the undo toast must report the count the server returned")
     assert "nothing needed putting back" in html, (
         "a zero revert must not be dressed up as a normal undo")
+
+
+def test_the_spotify_button_says_when_this_pc_cannot_take_a_theme():
+    """"spotify does nothing" is what an always-refusing enabled button feels like.
+
+    On a machine without Spicetify the write button used to look ready, then
+    refuse. It must state the blocker on the button itself, and the copy path —
+    which never needed Spicetify — must be offered as the alternative.
+    """
+    html = (CONSOLE).read_text(encoding="utf-8")
+    assert "Cannot write on this PC" in html, (
+        "the write button must name the blocker instead of inviting a refusal")
+    assert "always works" in html, (
+        "the copy path must be offered as the thing that does work")
