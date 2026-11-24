@@ -480,6 +480,21 @@ class Service:
         return rid
 
     def undo(self, tx_id: str) -> dict[str, Any]:
+        # Undoing the same transaction twice used to answer {"reverted": 0}
+        # with status 200 and the UI toasted "Undone." — the second, third and
+        # fourth clicks all claimed to have put something back. Nothing was
+        # wrong; the honest answer is that this was already undone.
+        done = self.conn.execute(
+            "SELECT undone_at FROM receipts WHERE tx_id=? AND undone_at IS NOT NULL",
+            (tx_id,)).fetchone()
+        if done is not None:
+            # A raw epoch is not a time a person can read.
+            import datetime as _dt
+            when = _dt.datetime.fromtimestamp(done[0] / 1000).strftime(
+                "%H:%M on %d %b")
+            raise EngineError(
+                f"{tx_id} was already undone ({when}). There is nothing left "
+                f"to put back.")
         res = self.engine.revert(tx_id, reason="ui")
         with self.conn:
             self.conn.execute("UPDATE receipts SET undone_at=? WHERE tx_id=?",

@@ -637,3 +637,12 @@ def test_the_report_button_can_fail_and_says_so():
     assert "toast(" in block, "the failure has to be visible"
     assert "JSON.stringify(v)" not in block, (
         "raw JSON is not a report; render the value readably")
+
+
+def test_the_undo_toast_says_how_many_changes_came_back():
+    """"Undone." was the same sentence for four changes and for zero."""
+    html = (CONSOLE).read_text(encoding="utf-8")
+    assert "change(s) put back" in html, (
+        "the undo toast must report the count the server returned")
+    assert "nothing needed putting back" in html, (
+        "a zero revert must not be dressed up as a normal undo")

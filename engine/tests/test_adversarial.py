@@ -813,3 +813,32 @@ def test_restoring_an_unknown_clean_run_is_refused_not_a_zero_restore():
         with pytest.raises((KeyError, ValueError)) as caught:
             svc.run_action("clean.restore", {"run_id": ghost})
         assert "no clean run" in str(caught.value).lower()
+
+
+def test_undoing_the_same_transaction_twice_does_not_claim_success():
+    """`{"reverted": 0}` with status 200 is not an undo.
+
+    The console toasted "Undone." for every click, so the second click said the
+    same thing as the first while putting nothing back. The honest answer is
+    that this transaction was already undone — named, with when.
+    """
+    import tempfile
+
+    from pco_engine.service import Service
+
+    d = tempfile.mkdtemp()
+    svc = Service(f"{d}/s.db", catalog_dir="catalog")
+    svc.run_action("checkup.run", {})
+    tx = svc.run_action("checkup.fix", {})["tx_id"]
+    first = svc.run_action("tx.undo", {"tx_id": tx})
+    assert first["reverted"] > 0, "the first undo must actually revert something"
+
+    with pytest.raises(Exception) as caught:
+        svc.run_action("tx.undo", {"tx_id": tx})
+    message = str(caught.value)
+    assert "already undone" in message, message
+    # A raw epoch in an error message is not a time a person can read.
+    assert " on " in message, f"the time must be readable, not an epoch: {message}"
+    import re as _re
+    assert not _re.search(r"\d{11,}", message), (
+        f"no millisecond epoch in a message a person reads: {message}")

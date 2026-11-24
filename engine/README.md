@@ -73,7 +73,7 @@ Nothing is applied without a declared tweak, and every batch is undone in one cl
 Every response is JSON with the exact keys the future WinUI shell consumes, so
 the console is a reference client, not a toy.
 
-## What works today (750 tests: 739 here, 11 that only a real Windows machine can run)
+## What works today (751 tests: 740 here, 11 that only a real Windows machine can run)
 
 | Guarantee | Where it's proven |
 |---|---|
@@ -719,6 +719,14 @@ of those tests read the console as **text**. The page parsed. It never ran.
      what *this statement* removed: measured 1 winner and 11 refusals, ten runs
      in a row, and the test fails 8/8 when reverted.
      A race found by writing the concurrency probe, not by reading the code.
+
+120. **Undoing the same transaction four times claimed to work four times.**
+     `tx.undo` answered `{"reverted": 0}` with status 200 once there was nothing
+     left, and the console toasted "Undone." every time. The second, third and
+     fourth clicks said exactly what the first one said. It now refuses with the
+     time of the first undo — "was already undone (19:39 on 24 Nov), there is
+     nothing left to put back" — and the toast reports the count instead of one
+     fixed sentence for four changes and for none.
 
 93 was:
 93. **A JavaScript throw was invisible.** No `window.onerror`, no

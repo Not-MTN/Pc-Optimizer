@@ -1394,8 +1394,14 @@ async function loadReceipts() {
       const b = el("button", "btn ghost", "Undo"); b.style.padding = "4px 10px";
       b.onclick = async () => {
         b.disabled = true;
-        try { await api("/api/undo", { tx_id: r.tx_id }); toast("Undone."); }
-        catch (err) { toast(err.message, true); b.disabled = false; }
+        try {
+          const out = await api("/api/undo", { tx_id: r.tx_id });
+          // Say what actually came back. "Undone." for {"reverted": 0} was the
+          // same sentence whether four things were restored or none.
+          toast(out.reverted
+            ? "Undone — " + out.reverted + " change(s) put back."
+            : "Undone, but nothing needed putting back.");
+        } catch (err) { toast(err.message, true); b.disabled = false; }
         refreshAll();
       };
       td.append(b);
